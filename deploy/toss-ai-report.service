@@ -1,0 +1,25 @@
+[Unit]
+Description=Toss AI Agent Telegram daily PAPER report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# 메시지 한 번을 보내고 종료하며, 반복 실행은 report.timer가 담당합니다.
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/toss-api/apps/toss-ai-agent
+EnvironmentFile=/home/ubuntu/toss-api/apps/toss-ai-agent/.env
+# Oracle 인스턴스에 IPv6 경로가 없으므로 Node가 Telegram 연결에 IPv4를 우선 사용하게 합니다.
+Environment="NODE_OPTIONS=--dns-result-order=ipv4first --no-network-family-autoselection"
+ExecStart=/home/ubuntu/.nvm/versions/node/v24.18.0/bin/node src/telegram/daily-report.js
+# Telegram 전송 기록을 쓰는 data 폴더만 쓰기 가능하게 둡니다.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/toss-api/apps/toss-ai-agent/data
+
+[Install]
+WantedBy=multi-user.target

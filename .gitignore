@@ -1,0 +1,70 @@
+# -----------------------------------------------------------------------------
+# Secrets and local environment
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+
+# Credentials, private keys, and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials*.json
+service-account*.json
+
+# -----------------------------------------------------------------------------
+# Private runtime data
+# Toss account snapshots, PAPER positions/trades, macro caches, Telegram state,
+# and generated reports can contain financial or user-identifying information.
+# -----------------------------------------------------------------------------
+data/
+logs/
+reports/
+output/
+tmp/
+*.log
+*.pid
+
+# Local Codex permissions/configuration
+.codex/
+
+# -----------------------------------------------------------------------------
+# Node.js
+# -----------------------------------------------------------------------------
+node_modules/
+coverage/
+.nyc_output/
+dist/
+build/
+.cache/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# -----------------------------------------------------------------------------
+# Editors and operating systems
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Toss AI Agent PAPER cycle every 15 minutes
+
+[Timer]
+# 서버 부팅 2분 후 시작하고, 이후 PAPER 작업 완료 시점부터 15분 간격으로 실행합니다.
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=30s
+AccuracySec=1s
+Unit=toss-ai-paper.service
+
+[Install]
+WantedBy=timers.target
