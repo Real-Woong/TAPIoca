@@ -27,3 +27,18 @@ test("주문액은 현금, 주문 한도, 요청액 중 가장 작은 값을 넘
   assert.equal(sizePaperOrder({ cashUsd: 3.456, maxOrderUsd: 5 }), 3.45);
   assert.equal(sizePaperOrder({ cashUsd: 70, maxOrderUsd: 5, requestedUsd: 2.999 }), 2.99);
 });
+
+test("최소 주문금액보다 작은 요청은 주문하지 않는다", () => {
+  assert.equal(sizePaperOrder({
+    cashUsd: 70,
+    maxOrderUsd: 5,
+    minOrderUsd: 1,
+    requestedUsd: 0.99,
+  }), 0);
+  assert.equal(sizePaperOrder({
+    cashUsd: 70,
+    maxOrderUsd: 5,
+    minOrderUsd: 1,
+    requestedUsd: 1,
+  }), 1);
+});

@@ -153,3 +153,114 @@ test("거시경제 신호가 null이면 청산 판단은 유지하고 신규 매
   assert.equal(Object.keys(result.state.positions).length, 0);
   assert.equal(result.decisions[0].reason, "MACRO_SIGNAL_UNAVAILABLE");
 });
+
+test("청산한 종목은 쿨다운 중 재매수하지 않고 만료 후 다시 살 수 있다", () => {
+  const cooldownPolicy = loadTradingPolicy({
+    MAX_ORDER_USD: "5",
+    MAX_DAILY_BUY_USD: "10",
+    REENTRY_COOLDOWN_HOURS: "24",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const signal = macroSignal("NEUTRAL");
+  runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    cooldownPolicy,
+    new Date("2026-07-14T00:00:00Z"),
+    signal,
+  );
+
+  const sold = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 96 }],
+    cooldownPolicy,
+    new Date("2026-07-15T00:00:00Z"),
+    signal,
+  );
+  assert.equal(sold.state.positions.AAA, undefined);
+  assert.equal(sold.state.trades.at(-1).side, "SELL");
+
+  const reentered = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 96 }],
+    cooldownPolicy,
+    new Date("2026-07-16T01:00:00Z"),
+    signal,
+  );
+  assert.ok(reentered.state.positions.AAA);
+  assert.equal(reentered.state.trades.at(-1).side, "BUY");
+});
+
+test("누적 손실 한도에 도달하면 신규 매수를 중단한다", () => {
+  const lossPolicy = loadTradingPolicy({
+    MAX_ORDER_USD: "5",
+    MAX_DAILY_BUY_USD: "10",
+    MAX_TOTAL_LOSS_USD: "0.2",
+    MAX_DAILY_LOSS_USD: "100",
+    STOP_LOSS_RATE: "1",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const signal = macroSignal("NEUTRAL");
+  runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    lossPolicy,
+    new Date("2026-07-14T00:00:00Z"),
+    signal,
+  );
+  const tradeCount = state.trades.length;
+
+  const result = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 95 }],
+    lossPolicy,
+    new Date("2026-07-15T00:00:00Z"),
+    signal,
+  );
+
+  assert.equal(result.state.trades.length, tradeCount);
+  assert.equal(result.state.risk.lastCheck.buyPaused, true);
+  assert.equal(result.decisions.at(-1).reason, "TOTAL_LOSS_LIMIT");
+});
+
+test("일일 손실 한도에 도달하면 신규 매수를 중단한다", () => {
+  const lossPolicy = loadTradingPolicy({
+    MAX_ORDER_USD: "5",
+    MAX_DAILY_BUY_USD: "10",
+    MAX_TOTAL_LOSS_USD: "100",
+    MAX_DAILY_LOSS_USD: "0.2",
+    STOP_LOSS_RATE: "1",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const signal = macroSignal("NEUTRAL");
+  runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    lossPolicy,
+    new Date("2026-07-14T00:00:00Z"),
+    signal,
+  );
+
+  const result = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 95 }],
+    lossPolicy,
+    new Date("2026-07-15T00:00:00Z"),
+    signal,
+  );
+
+  assert.equal(result.state.risk.lastCheck.buyPaused, true);
+  assert.equal(result.decisions.at(-1).reason, "DAILY_LOSS_LIMIT");
+});
