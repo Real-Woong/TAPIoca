@@ -15,7 +15,7 @@ export function createPaperState({ budget, watchlist, now = new Date() }) {
     completedSymbols: [],
     dailyBuyUsd: {},
     trades: [],
-    // 마지막으로 매매 판단에 사용한 FRED 거시경제 신호를 보관합니다.
+    // 마지막으로 매매 판단에 사용한 FRED + X 통합 신호를 보관합니다.
     macro: null,
     lastRunAt: null,
   };
@@ -274,6 +274,13 @@ function compactMacroSignal(signal) {
     indicators: signal.indicators,
     reasons: signal.reasons,
     source: signal.source,
+    signalSource: signal.signalSource,
+    macroScore: signal.macroScore,
+    sentimentContribution: signal.sentimentContribution,
+    sentiment: signal.sentiment,
+    baseScore: signal.baseScore,
+    macdContribution: signal.macdContribution,
+    macd: signal.macd,
     stale: Boolean(signal.stale),
   };
 }

@@ -27,10 +27,23 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     : ["• 없음"];
   const macroLines = state.macro
     ? [
-        `거시경제 상태: ${state.macro.regime} (점수 ${state.macro.score})`,
+        `통합 시장 상태: ${state.macro.regime} (점수 ${state.macro.score})`,
+        ...(state.macro.sentiment
+          ? [
+              `무료 뉴스 감성: ${state.macro.sentiment.sentiment_score} ` +
+                `(신뢰도 ${state.macro.sentiment.confidence}, ${state.macro.sentiment.articleCount}건)`,
+            ]
+          : []),
+        ...(state.macro.macd
+          ? [
+              `MACD: ${state.macro.macd.score} ` +
+                `(신뢰도 ${state.macro.macd.confidence}, ` +
+                `${state.macro.macd.readySymbols}/${state.macro.macd.totalSymbols}종목)`,
+            ]
+          : []),
         `목표 비중: ${formatAllocation(state.macro.targetAllocation)}`,
       ]
-    : ["거시경제 상태: 사용 가능한 신호 없음"];
+    : ["통합 시장 상태: 사용 가능한 신호 없음"];
 
   return [
     "📊 Toss ETF PAPER 일일 보고서",

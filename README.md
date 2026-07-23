@@ -14,6 +14,7 @@ src/
 ├── market/        # 시장가격 진단과 미국 정규장 시간 판정
 ├── paper/         # PAPER 장부, 매매 정책, 진입·청산 계산
 ├── telegram/      # Telegram 전송과 일일 보고서
+├── sentiment/     # Fed RSS·GDELT 뉴스 수집, 무료 로컬 감성 분석, FRED 점수 결합
 └── FRED_data/     # 미국 경제지표 수집과 거시경제 상태 판정
 ```
 
@@ -127,6 +128,73 @@ PAPER 실행기는 FRED 결과를 `data/macro-snapshot.json`에 6시간 캐시�
 현금 10%, `RISK_OFF`는 IWM을 제외하고 현금 40%를 목표로 합니다. 거시 신호만으로
 즉시 매도하지는 않으며 기존 손절·추적청산 정책은 그대로 적용합니다. FRED와 캐시를
 모두 사용할 수 없을 때는 기존 포지션의 청산 판단만 수행하고 신규 매수는 중단합니다.
+
+## API 키 없는 공식 뉴스·전문가 의견 감성
+
+Federal Reserve 공식 통화정책·연설 RSS와 GDELT DOC 2.0의 최근 경제뉴스를 병렬로
+수집합니다. 선택한 Bluesky 공개 작성자 피드와 Substack·개인 블로그 RSS도 함께
+수집할 수 있습니다. 모든 소스는 별도의 API 키가 필요하지 않습니다. 결과는
+`data/free-news-cache.json`에 기본 15분간 저장하며, 일부 소스 장애는 격리하고 모든
+소스가 실패하면 마지막 캐시를 `stale` 상태로 사용합니다. 캐시도 없으면 뉴스 계층을
+제외하고 FRED·MACD 점수로 폴백합니다.
+
+```dotenv
+SENTIMENT_PROVIDER=local
+SENTIMENT_SCORE_WEIGHT=2
+NEWS_MAX_RECORDS=75
+BLUESKY_AUTHORS=economist.example,analyst.bsky.social
+OPINION_RSS_FEEDS=https://writer.substack.com/feed,https://example.com/rss.xml
+OPINION_SCORE_WEIGHT=0.1
+# 선택: 기본 경제뉴스 검색식을 바꿀 때만 설정
+# NEWS_QUERY=("Federal Reserve" OR FOMC OR inflation OR recession)
+```
+
+`BLUESKY_AUTHORS`에는 `@` 없이 공개 계정 핸들을 적습니다. `OPINION_RSS_FEEDS`에는
+작성자가 직접 공개한 RSS 주소만 등록합니다. Substack의 기본 피드 주소는
+`https://발행물이름.substack.com/feed`입니다. 전문가 의견은 사실 보도와 분리해서
+분석하며 기본적으로 공식 뉴스 대비 10%만 보조 반영합니다. 공식 뉴스가 하나도 없으면
+전문가 의견 신뢰도 자체를 10%로 제한합니다.
+
+`local` 분석기는 프로젝트 안에서 실행되는 단어·문맥·부정어 기반 점수기이므로
+OpenAI나 Anthropic API를 호출하지 않고 자연어 분석 비용이 0원입니다. 반환값은
+`sentiment_score`, `confidence`, `summary_reason`, `bullish_signals`,
+`bearish_signals`의 고정 JSON 구조를 검증합니다. 뉴스 감성 기여도는
+`sentiment_score × confidence × SENTIMENT_SCORE_WEIGHT`로 계산해 FRED 점수에 더합니다.
+
+## MACD 시장가격 보조 신호
+
+PAPER 실행기는 15분마다 조회한 ETF 현재가를 `data/macd-snapshot.json`에 누적하고,
+종목별 12·26·9 MACD를 계산합니다. 최소 34개 표본이 쌓이기 전에는 준비 중으로 표시되며
+FRED·감성 판정에 영향을 주지 않습니다. 준비가 끝나면 다음 공식으로 작은 확인 신호만
+추가합니다.
+
+```text
+기본점수 = FRED 점수 + 감성 점수 × 감성 신뢰도 × 감성 가중치
+최종점수 = 기본점수 + MACD 점수 × MACD 신뢰도 × MACD 가중치
+```
+
+기본 MACD 가중치는 `0.15`입니다. 여러 ETF가 같은 방향일수록 신뢰도가 높아지고,
+방향이 엇갈리면 기여도가 줄어듭니다. 이 값은 매수·매도 신호가 아니라 기존 시장 상태를
+확인하는 후행 보조지표입니다.
+
+```dotenv
+MACD_SCORE_WEIGHT=0.15
+```
+
+실제 로컬 LLM을 쓰고 싶다면 Ollama 설치 및 모델 다운로드 후 아래처럼 바꿀 수 있습니다.
+이 경우에도 외부 LLM API 요금은 없지만 로컬 CPU/GPU 자원을 사용합니다.
+
+```dotenv
+SENTIMENT_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:4b
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+```
+
+감성 결과만 확인하는 진단 명령은 다음과 같습니다.
+
+```bash
+npm run sentiment:status
+```
 
 PAPER 장부를 최초 100,000원 상당의 USD로 한 번만 초기화하고 한 사이클 실행합니다.
 첫 실행 시 하루 매수 한도 안에서만 가상 매수하며, 이후 실행은 같은 장부를 이어서

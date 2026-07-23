@@ -1,0 +1,13 @@
+default_permissions = "toss-safe"
+
+[permissions.toss-safe.filesystem]
+":minimal" = "read"
+
+[permissions.toss-safe.filesystem.":workspace_roots"]
+"." = "write"
+
+# Codex가 읽거나 수정할 수 없는 파일
+".env" = "deny"
+".env.*" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"

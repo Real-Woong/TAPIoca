@@ -4,11 +4,14 @@ import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 
 import { loadMacroSignal } from "../FRED_data/macro-snapshot.js";
+import { loadMarketSentiment } from "../sentiment/market-sentiment.js";
+import { combineMarketSignals } from "../sentiment/market-signal.js";
 import { createPaperState, runPaperCycle } from "./paper-engine.js";
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
 import { createUsdBudget } from "./trading-budget.js";
 import { loadTradingPolicy } from "./trading-policy.js";
 import { getUsRegularSessionStatus } from "../market/us-market-session.js";
+import { updateMacdSignal } from "../market/macd-signal.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
 const statePath = path.join(dataDir, "paper-state.json");
@@ -75,12 +78,39 @@ async function run() {
     console.error(`FRED 거시 신호를 사용할 수 없습니다: ${error.message}`);
     return null;
   });
-  const [exchangeRate, rawPrices, macroSignal] = await Promise.all([
+  // Fed RSS와 GDELT는 API 키 없이 사용합니다. 장애 시 FRED·MACD 경로는 계속 동작합니다.
+  const sentimentRequest = loadMarketSentiment({
+    dataDir,
+    provider: process.env.SENTIMENT_PROVIDER || "local",
+    ollamaModel: process.env.OLLAMA_MODEL,
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
+    query: process.env.NEWS_QUERY,
+    maxResults: process.env.NEWS_MAX_RECORDS,
+    blueskyAuthors: readCsv(process.env.BLUESKY_AUTHORS),
+    opinionFeeds: readCsv(process.env.OPINION_RSS_FEEDS),
+    opinionWeight: process.env.OPINION_SCORE_WEIGHT || 0.1,
+    now,
+  }).catch((error) => {
+    console.error(`무료 시장 뉴스를 사용할 수 없습니다: ${error.message}`);
+    return null;
+  });
+  const [exchangeRate, rawPrices, macroSignal, sentiment] = await Promise.all([
     client.getExchangeRate("USD", "KRW"),
     client.getPrices(watchlist),
     macroRequest,
+    sentimentRequest,
   ]);
   const prices = normalizePrices(rawPrices);
+  // 현재가 스냅샷을 15분 단위로 누적합니다. 실패하거나 표본이 부족하면 MACD 없이 진행합니다.
+  const macd = await updateMacdSignal({ dataDir, prices, now }).catch((error) => {
+    console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
+    return null;
+  });
+  const marketSignal = combineMarketSignals(macroSignal, sentiment, {
+    sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
+    macd,
+    macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
+  });
   let state = await readState();
 
   if (!state) {
@@ -89,9 +119,9 @@ async function run() {
     state = createPaperState({ budget, watchlist, now });
   }
 
-  const result = runPaperCycle(state, prices, policy, now, macroSignal);
+  const result = runPaperCycle(state, prices, policy, now, marketSignal);
   await writeState(result.state);
-  printResult(result, exchangeRate, macroSignal);
+  printResult(result, exchangeRate, marketSignal);
 }
 
 async function readState() {
@@ -125,7 +155,30 @@ function readWatchlist(value) {
   return [...new Set(symbols)];
 }
 
-function printResult({ decisions, summary }, exchangeRate, macroSignal) {
+function readCsv(value) {
+  if (!value) return [];
+  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+}
+
+function readSentimentWeight(value) {
+  if (value === undefined || value === "") return 2;
+  const weight = Number(value);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 5) {
+    throw new Error("SENTIMENT_SCORE_WEIGHT는 0~5 숫자여야 합니다.");
+  }
+  return weight;
+}
+
+function readMacdWeight(value) {
+  if (value === undefined || value === "") return 0.15;
+  const weight = Number(value);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 1) {
+    throw new Error("MACD_SCORE_WEIGHT는 0~1 숫자여야 합니다.");
+  }
+  return weight;
+}
+
+function printResult({ decisions, summary }, exchangeRate, marketSignal) {
   console.log(`PAPER 실행 완료: ${new Date().toISOString()}`);
   console.log(`적용 환율: 1 USD = ${exchangeRate.rate} KRW`);
   console.log(`고정 원금: ${summary.fundingKrw.toLocaleString("ko-KR")} KRW`);
@@ -133,11 +186,35 @@ function printResult({ decisions, summary }, exchangeRate, macroSignal) {
   console.log(`현금: ${summary.cashUsd.toFixed(2)} USD`);
   console.log(`ETF 평가액: ${summary.marketValueUsd.toFixed(2)} USD`);
   console.log(`총손익: ${summary.totalPnlUsd.toFixed(2)} USD`);
-  if (macroSignal) {
+  if (marketSignal) {
     console.log(
-      `거시경제 판정: ${macroSignal.regime} ` +
-        `(점수 ${macroSignal.score}, ${macroSignal.source}${macroSignal.stale ? ", 오래된 캐시" : ""})`,
+      `통합 시장 판정: ${marketSignal.regime} ` +
+        `(점수 ${marketSignal.score}, ${marketSignal.signalSource || marketSignal.source})`,
     );
+    if (marketSignal.sentiment) {
+      console.log(
+        `무료 뉴스 감성: ${marketSignal.sentiment.sentiment_score} ` +
+          `(신뢰도 ${marketSignal.sentiment.confidence}, ${marketSignal.sentiment.provider}, ` +
+          `${marketSignal.sentiment.articleCount}건)`,
+      );
+      if (marketSignal.sentiment.opinionArticleCount > 0) {
+        console.log(
+          `전문가 의견: ${marketSignal.sentiment.opinionArticleCount}건 ` +
+            `(보조 비중 ${marketSignal.sentiment.opinionWeight})`,
+        );
+      }
+    } else {
+      console.log("무료 뉴스 감성: 사용 불가 (FRED·MACD로 폴백)");
+    }
+    if (marketSignal.macd) {
+      console.log(
+        `MACD: ${marketSignal.macd.score} ` +
+          `(신뢰도 ${marketSignal.macd.confidence}, ` +
+          `${marketSignal.macd.readySymbols}/${marketSignal.macd.totalSymbols}종목)`,
+      );
+    } else {
+      console.log("MACD: 준비 중 (12·26·9 계산에 최소 34개 가격 표본 필요)");
+    }
   } else {
     console.log("거시경제 판정: 사용 불가 — 신규 매수를 중단했습니다.");
   }

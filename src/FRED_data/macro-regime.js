@@ -167,13 +167,3 @@ function metric(observation, change3m) {
 function round(value) {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
-
-// FRED 원본 데이터
-//     ↓
-// 최근 금리·물가·고용 변화 계산
-//     ↓
-// 각 신호에 점수 부여
-//     ↓
-// RISK_ON / NEUTRAL / RISK_OFF
-//     ↓
-// ETF 목표 비중 계산
