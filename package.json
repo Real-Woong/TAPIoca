@@ -16,7 +16,8 @@
     "telegram:test": "node --env-file=.env src/telegram/telegram-check.js",
     "telegram:report": "node --env-file=.env src/telegram/daily-report.js",
     "portfolio": "node --env-file=.env src/portfolio/cli.js",
-    "test": "node --test"
+    "test": "node scripts/shorttest.mjs",
+    "test:verbose": "node --test"
   },
   "engines": {
     "node": ">=20.12"
