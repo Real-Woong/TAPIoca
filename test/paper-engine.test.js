@@ -5,7 +5,8 @@ import { createPaperState, runPaperCycle } from "../src/paper/paper-engine.js";
 import { createUsdBudget } from "../src/paper/trading-budget.js";
 import { loadTradingPolicy } from "../src/paper/trading-policy.js";
 
-const policy = loadTradingPolicy({ MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10" });
+// 기존 테스트는 정확한 체결 수량을 단언하므로 거래비용을 0으로 두고, 비용은 별도 테스트에서 검증합니다.
+const policy = loadTradingPolicy({ MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0" });
 const prices = [
   { symbol: "AAA", lastPrice: 100 },
   { symbol: "BBB", lastPrice: 50 },
@@ -209,6 +210,34 @@ test("첫 실행에 벤치마크를 개설하고 이후 초과성과(alpha)를 �
   );
 });
 
+test("거래비용을 반영하면 체결 수량이 줄고 누적 수수료가 쌓인다", () => {
+  const costPolicy = loadTradingPolicy({
+    MAX_ORDER_USD: "5",
+    MAX_DAILY_BUY_USD: "10",
+    TRADE_COST_RATE: "0.01",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  const result = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    costPolicy,
+    new Date("2026-07-14T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+
+  // 하루 $10 매수, 수수료율 1% → 누적 수수료 약 $0.10
+  assert.ok(Math.abs(result.summary.feesUsd - 0.1) < 0.001);
+  // 가격이 그대로여도 비용만큼 즉시 미실현손실이 생긴다.
+  assert.ok(result.summary.positions[0].unrealizedPnlUsd < 0);
+  // 모든 매수 체결에 수수료가 기록된다.
+  assert.ok(result.state.trades.every((trade) => trade.side !== "BUY" || trade.feeUsd > 0));
+});
+
 test("거시경제 신호가 null이면 청산 판단은 유지하고 신규 매수만 중단한다", () => {
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),
@@ -233,6 +262,7 @@ test("청산한 종목은 쿨다운 중 재매수하지 않고 만료 후 다시
     MAX_ORDER_USD: "5",
     MAX_DAILY_BUY_USD: "10",
     REENTRY_COOLDOWN_HOURS: "24",
+    TRADE_COST_RATE: "0",
   });
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),
@@ -276,6 +306,7 @@ test("누적 손실 한도에 도달하면 신규 매수를 중단한다", () =>
     MAX_TOTAL_LOSS_USD: "0.2",
     MAX_DAILY_LOSS_USD: "100",
     STOP_LOSS_RATE: "1",
+    TRADE_COST_RATE: "0",
   });
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),
@@ -312,6 +343,7 @@ test("일일 손실 한도에 도달하면 신규 매수를 중단한다", () =>
     MAX_TOTAL_LOSS_USD: "100",
     MAX_DAILY_LOSS_USD: "0.2",
     STOP_LOSS_RATE: "1",
+    TRADE_COST_RATE: "0",
   });
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),

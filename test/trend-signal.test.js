@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   buildTrendSignal,
   calculateTrend,
+  calculateVolatility,
   loadTrendSignal,
   parseStooqCloses,
 } from "../src/market/trend-signal.js";
@@ -120,6 +121,29 @@ test("요청이 실패해도 이전 캐시가 있으면 그 캐시로 폴백한�
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test("표본이 부족하면 변동성을 계산하지 않는다", () => {
+  const result = calculateVolatility([100, 101, 102], { window: 20 });
+  assert.equal(result.ready, false);
+});
+
+test("일정한 가격은 변동성 0, 등락이 크면 변동성이 커진다", () => {
+  const flat = calculateVolatility(Array(30).fill(100), { window: 20 });
+  assert.equal(flat.ready, true);
+  assert.equal(flat.annualized, 0);
+
+  // ±5% 지그재그는 큰 변동성을 만든다.
+  const zigzag = Array.from({ length: 30 }, (_, i) => (i % 2 === 0 ? 100 : 105));
+  const volatile = calculateVolatility(zigzag, { window: 20 });
+  assert.ok(volatile.annualized > flat.annualized);
+});
+
+test("집계 신호에 시장 변동성(연율) 대리치를 포함한다", () => {
+  const zigzag = Array.from({ length: 210 }, (_, i) => (i % 2 === 0 ? 100 : 106));
+  const signal = buildTrendSignal({ VTI: zigzag }, { maPeriod: 200 });
+  assert.ok(signal.volatility);
+  assert.ok(signal.volatility.annualized > 0);
 });
 
 test("Stooq CSV에서 종가 열만 추출한다", () => {

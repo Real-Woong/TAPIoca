@@ -585,15 +585,34 @@ Change:
 
 - Added separate realized and unrealized P&L lines
 
+## 15.5 Transaction Costs and Volatility Management (2026-07-26)
+
+### Combined transaction cost
+
+Each simulated fill now applies a per-side cost rate (`TRADE_COST_RATE`,
+default 0.1%) as a single combined proxy for brokerage fees, FX spread, and
+slippage. On a buy it reduces the shares received for the same cash outlay; on a
+sell it reduces proceeds. Cumulative cost is tracked as `feesUsd` and shown in
+the report. The buy-and-hold benchmark also pays this cost once on entry, so the
+comparison is net of costs on both sides.
+
+### Volatility-managed exposure
+
+Based on Moreira & Muir (2017), "Volatility-Managed Portfolios." Using the daily
+closes already fetched for the trend signal, the system estimates recent
+annualized volatility and scales equity exposure by
+`clamp(volTarget / realizedVol, minExposure, 1)`
+(`VOL_TARGET_ANNUALIZED` default 0.15, `MIN_EXPOSURE` default 0.3). When markets
+are calmer than target the multiplier is 1 (no change); when they are more
+volatile, equity weights shrink and the remainder moves to cash. The symmetric
+rebalancing logic then trims real exposure down to the reduced target.
+
 ## 16. Known Modeling Limitations
 
-The current PAPER results may be materially optimistic or incomplete because
-the model does not yet include:
+Transaction costs are now modeled as a single combined per-trade rate; the items
+below are still not separately modeled and may make results optimistic:
 
-- Bid/ask spread
-- Brokerage fees
-- Foreign-exchange costs
-- Slippage
+- Separate bid/ask spread, brokerage fee, and FX components (currently one blended rate)
 - Partial fills
 - Rejected orders
 - Market impact

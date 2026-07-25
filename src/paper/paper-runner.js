@@ -119,6 +119,8 @@ async function run() {
     trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
     macd,
     macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
+    volTarget: readRate01(process.env.VOL_TARGET_ANNUALIZED, 0.15, "VOL_TARGET_ANNUALIZED"),
+    minExposure: readRate01(process.env.MIN_EXPOSURE, 0.3, "MIN_EXPOSURE"),
   });
   let state = await readState();
 
@@ -200,6 +202,15 @@ function readMacdWeight(value) {
   return weight;
 }
 
+function readRate01(value, fallback, name) {
+  if (value === undefined || value === "") return fallback;
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    throw new Error(`${name}는 0~1 숫자여야 합니다.`);
+  }
+  return rate;
+}
+
 function printResult({ decisions, summary }, exchangeRate, marketSignal) {
   console.log(`PAPER 실행 완료: ${new Date().toISOString()}`);
   console.log(`적용 환율: 1 USD = ${exchangeRate.rate} KRW`);
@@ -208,6 +219,9 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal) {
   console.log(`현금: ${summary.cashUsd.toFixed(2)} USD`);
   console.log(`ETF 평가액: ${summary.marketValueUsd.toFixed(2)} USD`);
   console.log(`총손익: ${summary.totalPnlUsd.toFixed(2)} USD (${summary.returnPct}%)`);
+  if (summary.feesUsd) {
+    console.log(`누적 거래비용: -${summary.feesUsd.toFixed(2)} USD`);
+  }
   if (summary.benchmark) {
     console.log(
       `벤치마크 ${summary.benchmark.symbol} 매수후보유: ` +
@@ -243,6 +257,12 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal) {
       );
     } else {
       console.log("추세(200일선): 준비 중 (일봉 200개 필요)");
+    }
+    if (Number(marketSignal.exposureMultiplier) < 1) {
+      console.log(
+        `변동성 관리: 연율 ${(Number(marketSignal.volatilityAnnualized) * 100).toFixed(1)}% → ` +
+          `주식 익스포저 ×${marketSignal.exposureMultiplier}`,
+      );
     }
     if (marketSignal.macd) {
       console.log(

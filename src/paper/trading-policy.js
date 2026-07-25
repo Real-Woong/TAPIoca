@@ -8,6 +8,9 @@ const DEFAULTS = Object.freeze({
   maxDailyLossUsd: 3,
   // 목표 비중을 자산 대비 이 비율 이상 초과한 ETF만 리밸런싱 매도합니다(잔챙이 매매 방지).
   rebalanceBandRate: 0.05,
+  // 체결 1건마다 부과하는 거래비용(수수료+FX 스프레드+슬리피지 가정, 편도 비율).
+  // 실제 손익을 정직하게 만들기 위한 보수적 가정값이며 실측으로 보정해야 합니다.
+  tradeCostRate: 0.001,
   reentryCooldownHours: 24,
   stopLossRate: 0.03,
   trailingActivationRate: 0.025,
@@ -35,6 +38,7 @@ export function loadTradingPolicy(env = process.env) {
     maxTotalLossUsd: readPositive(env.MAX_TOTAL_LOSS_USD, DEFAULTS.maxTotalLossUsd),
     maxDailyLossUsd: readPositive(env.MAX_DAILY_LOSS_USD, DEFAULTS.maxDailyLossUsd),
     rebalanceBandRate: readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate),
+    tradeCostRate: readNonNegativeRate(env.TRADE_COST_RATE, DEFAULTS.tradeCostRate),
     reentryCooldownHours: readPositiveInteger(
       env.REENTRY_COOLDOWN_HOURS,
       DEFAULTS.reentryCooldownHours,
@@ -60,6 +64,16 @@ function readPositive(value, fallback) {
 function readRate(value, fallback) {
   const number = readPositive(value, fallback);
   if (number > 1) throw new Error(`비율 설정값은 0보다 크고 1 이하여야 합니다: ${value}`);
+  return number;
+}
+
+// 거래비용처럼 0(비용 없음)을 허용해야 하는 0~1 비율 설정값 리더입니다.
+function readNonNegativeRate(value, fallback) {
+  if (value === undefined || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > 1) {
+    throw new Error(`비율 설정값은 0 이상 1 이하여야 합니다: ${value}`);
+  }
   return number;
 }
 

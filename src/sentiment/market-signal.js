@@ -8,7 +8,16 @@ const ALLOCATIONS = {
 export function combineMarketSignals(
   macroSignal,
   sentiment,
-  { sentimentWeight = 2, trend = null, trendWeight = 1, macd = null, macdWeight = 0.15 } = {},
+  {
+    sentimentWeight = 2,
+    trend = null,
+    trendWeight = 1,
+    macd = null,
+    macdWeight = 0.15,
+    // Moreira & Muir(2017) 변동성 관리: 목표 연율 변동성보다 시장이 요동치면 익스포저를 줄입니다.
+    volTarget = 0.15,
+    minExposure = 0.3,
+  } = {},
 ) {
   if (!macroSignal) return null;
   validateWeight(trendWeight, "TREND_SCORE_WEIGHT", 3);
@@ -47,11 +56,29 @@ export function combineMarketSignals(
         `${macdContribution >= 0 ? "+" : ""}${macdContribution}`,
     );
   }
+
+  // 변동성 관리: 최근 연율 변동성이 목표보다 높으면 주식 비중을 그 비율만큼 줄이고 현금을 늘립니다.
+  const annualizedVol = usableTrend ? Number(trend.volatility?.annualized) : NaN;
+  let exposureMultiplier = 1;
+  if (volTarget > 0 && Number.isFinite(annualizedVol) && annualizedVol > 0) {
+    exposureMultiplier = clamp(round(volTarget / annualizedVol), minExposure, 1);
+  }
+  const regimeAllocation = allocationFor(regime, macroSignal.targetAllocation);
+  const targetAllocation = exposureMultiplier < 1
+    ? scaleForExposure(regimeAllocation, exposureMultiplier)
+    : regimeAllocation;
+  if (exposureMultiplier < 1) {
+    reasons.push(
+      `변동성 관리: 연율 변동성 ${round(annualizedVol * 100)}% > 목표 ${round(volTarget * 100)}% → ` +
+        `주식 익스포저 ×${exposureMultiplier}`,
+    );
+  }
+
   return {
     ...macroSignal,
     regime,
     score,
-    targetAllocation: allocationFor(regime, macroSignal.targetAllocation),
+    targetAllocation,
     reasons,
     signalSource: signalSource(Boolean(sentiment), usableTrend, usableMacd),
     macroScore: macroSignal.score,
@@ -62,7 +89,26 @@ export function combineMarketSignals(
     trend: usableTrend ? trend : null,
     macdContribution,
     macd: usableMacd ? macd : null,
+    volatilityAnnualized: Number.isFinite(annualizedVol) ? annualizedVol : null,
+    exposureMultiplier,
   };
+}
+
+function scaleForExposure(allocation, multiplier) {
+  const scaled = {};
+  let equitySum = 0;
+  for (const [symbol, weight] of Object.entries(allocation)) {
+    if (symbol === "CASH") continue;
+    scaled[symbol] = round(Number(weight) * multiplier);
+    equitySum += scaled[symbol];
+  }
+  // 줄인 주식 비중만큼 현금으로 돌립니다.
+  scaled.CASH = round(Math.max(0, 1 - equitySum));
+  return scaled;
+}
+
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
 }
 
 function signalSource(hasSentiment, hasTrend, hasMacd) {

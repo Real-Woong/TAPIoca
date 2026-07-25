@@ -45,6 +45,8 @@ export function buildPaperEvent({ now = new Date(), marketSignal, result }) {
         }
       : null,
     targetAllocation: marketSignal?.targetAllocation ?? null,
+    volatilityAnnualized: marketSignal?.volatilityAnnualized ?? null,
+    exposureMultiplier: marketSignal?.exposureMultiplier ?? null,
     decisions: (result.decisions ?? []).map((decision) => ({
       symbol: decision.symbol,
       action: decision.action,
@@ -57,6 +59,7 @@ export function buildPaperEvent({ now = new Date(), marketSignal, result }) {
     realizedPnlUsd: summary.realizedPnlUsd,
     unrealizedPnlUsd: summary.unrealizedPnlUsd,
     totalPnlUsd: summary.totalPnlUsd,
+    feesUsd: summary.feesUsd ?? null,
     returnPct: summary.returnPct ?? null,
     benchmark: summary.benchmark
       ? {

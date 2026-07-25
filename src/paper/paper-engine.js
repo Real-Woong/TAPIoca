@@ -10,6 +10,8 @@ export function createPaperState({ budget, watchlist, now = new Date() }) {
     funding: budget,
     cashUsd: budget.fundedUsd,
     realizedPnlUsd: 0,
+    // 지금까지 부과된 누적 거래비용(수수료+FX+슬리피지 가정)입니다.
+    feesUsd: 0,
     watchlist: [...watchlist],
     positions: {},
     // 청산 직후 같은 종목을 곧바로 다시 사지 않도록 종목별 재진입 시각을 기록합니다.
@@ -45,8 +47,10 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   prepareRiskState(state, priceMap, dateKey);
   state.symbolCooldowns ??= {};
   state.completedSymbols ??= [];
+  state.feesUsd ??= 0;
+  const costRate = Number(policy.tradeCostRate) || 0;
   // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
-  updateBenchmark(state, priceMap, now);
+  updateBenchmark(state, priceMap, now, costRate);
 
   // 매수보다 청산 판단을 먼저 수행해 손절/수익실현 조건을 우선 처리합니다.
   for (const [symbol, position] of Object.entries(state.positions)) {
@@ -59,16 +63,20 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
     decisions.push({ symbol, ...exit });
 
     if (exit.action === "SELL") {
-      const proceedsUsd = roundUsd(position.quantity * market.lastPrice);
+      const grossUsd = position.quantity * market.lastPrice;
+      const feeUsd = roundUsd(grossUsd * costRate);
+      const proceedsUsd = roundUsd(grossUsd - feeUsd);
       const pnlUsd = roundUsd(proceedsUsd - position.costUsd);
       state.cashUsd = roundUsd(state.cashUsd + proceedsUsd);
       state.realizedPnlUsd = roundUsd(state.realizedPnlUsd + pnlUsd);
+      state.feesUsd = roundUsd(state.feesUsd + feeUsd);
       state.trades.push({
         side: "SELL",
         symbol,
         quantity: position.quantity,
         price: market.lastPrice,
         amountUsd: proceedsUsd,
+        feeUsd,
         pnlUsd,
         reason: exit.reason,
         executedAt: now.toISOString(),
@@ -167,13 +175,16 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
       sellQuantity = position.quantity;
     }
 
-    const proceedsUsd = roundUsd(sellQuantity * price);
+    const grossUsd = sellQuantity * price;
+    const feeUsd = roundUsd(grossUsd * (Number(policy.tradeCostRate) || 0));
+    const proceedsUsd = roundUsd(grossUsd - feeUsd);
     // 평균 원가를 매도 수량 비율만큼 덜어내 실현손익을 정확히 계산합니다.
     const soldCostUsd = roundUsd(position.costUsd * (sellQuantity / position.quantity));
     const pnlUsd = roundUsd(proceedsUsd - soldCostUsd);
 
     state.cashUsd = roundUsd(state.cashUsd + proceedsUsd);
     state.realizedPnlUsd = roundUsd(state.realizedPnlUsd + pnlUsd);
+    state.feesUsd = roundUsd((state.feesUsd ?? 0) + feeUsd);
 
     const reason = `MACRO_${macroSignal.regime}_REBALANCE_SELL`;
     state.trades.push({
@@ -182,6 +193,7 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
       quantity: sellQuantity,
       price,
       amountUsd: proceedsUsd,
+      feeUsd,
       pnlUsd,
       reason,
       macroRegime: macroSignal.regime,
@@ -287,6 +299,7 @@ function runMacroTargetBuys({
       now,
       reason: `MACRO_${macroSignal.regime}_TARGET_BUY`,
       macroSignal,
+      costRate: Number(policy.tradeCostRate) || 0,
     });
     dailyBought = roundUsd(dailyBought + amountUsd);
     decisions.push({
@@ -325,6 +338,7 @@ function runLegacyBuys({ state, priceMap, policy, now, dailyBought, decisions })
       amountUsd,
       now,
       reason: "INITIAL_PAPER_ENTRY",
+      costRate: Number(policy.tradeCostRate) || 0,
     });
     dailyBought = roundUsd(dailyBought + amountUsd);
     decisions.push({ symbol, action: "BUY", reason: "INITIAL_PAPER_ENTRY", amountUsd });
@@ -333,11 +347,15 @@ function runLegacyBuys({ state, priceMap, policy, now, dailyBought, decisions })
 }
 
 // 신규 포지션 생성과 기존 포지션 추가 매수를 한 함수에서 처리합니다.
-function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSignal }) {
-  const addedQuantity = amountUsd / market.lastPrice;
+function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSignal, costRate = 0 }) {
+  // 거래비용은 같은 현금으로 살 수 있는 수량을 줄이는 방식으로 반영합니다.
+  // 현금은 amountUsd 전액이 나가고, 실제로 받는 주식은 비용만큼 적어집니다(즉시 미실현손실 = 비용).
+  const feeUsd = roundUsd(amountUsd * costRate);
+  const addedQuantity = (amountUsd - feeUsd) / market.lastPrice;
   const existing = state.positions[symbol];
 
   state.cashUsd = roundUsd(state.cashUsd - amountUsd);
+  state.feesUsd = roundUsd((state.feesUsd ?? 0) + feeUsd);
   if (existing) {
     const quantity = existing.quantity + addedQuantity;
     const costUsd = roundUsd(existing.costUsd + amountUsd);
@@ -368,6 +386,7 @@ function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSig
     quantity: addedQuantity,
     price: market.lastPrice,
     amountUsd,
+    feeUsd,
     reason,
     macroRegime: macroSignal?.regime,
     macroScore: macroSignal?.score,
@@ -376,7 +395,8 @@ function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSig
 }
 
 // 벤치마크는 원금 전액을 기준 종목(기본 VTI)에 한 번 넣고 그대로 두는 매수후보유입니다.
-function updateBenchmark(state, priceMap, now) {
+// 공정한 비교를 위해 진입 1회분 거래비용은 벤치마크도 동일하게 부담합니다.
+function updateBenchmark(state, priceMap, now, costRate = 0) {
   const preferred = state.benchmark?.symbol
     ?? (priceMap.has("VTI") ? "VTI" : (state.watchlist ?? []).find((symbol) => priceMap.has(symbol)));
   if (!preferred) return;
@@ -388,7 +408,7 @@ function updateBenchmark(state, priceMap, now) {
     const fundedUsd = state.funding.fundedUsd;
     state.benchmark = {
       symbol: preferred,
-      quantity: fundedUsd / price,
+      quantity: (fundedUsd * (1 - costRate)) / price,
       entryPriceUsd: price,
       fundedUsd,
       startedAt: now.toISOString(),
@@ -434,6 +454,8 @@ function compactMacroSignal(signal) {
     trend: signal.trend,
     macdContribution: signal.macdContribution,
     macd: signal.macd,
+    volatilityAnnualized: signal.volatilityAnnualized,
+    exposureMultiplier: signal.exposureMultiplier,
     stale: Boolean(signal.stale),
   };
 }
@@ -474,6 +496,7 @@ export function summarizePaperState(state, prices = new Map()) {
     realizedPnlUsd: state.realizedPnlUsd,
     unrealizedPnlUsd,
     totalPnlUsd,
+    feesUsd: roundUsd(state.feesUsd ?? 0),
     // 전략 수익률과 벤치마크 대비 초과성과(alpha)를 함께 보여줍니다.
     returnPct: state.funding.fundedUsd > 0
       ? round3((totalPnlUsd / state.funding.fundedUsd) * 100)

@@ -48,6 +48,12 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
                 `${state.macro.macd.readySymbols}/${state.macro.macd.totalSymbols}종목)`,
             ]
           : []),
+        ...(Number(state.macro.exposureMultiplier) < 1
+          ? [
+              `변동성 관리: 연율 ${(Number(state.macro.volatilityAnnualized) * 100).toFixed(1)}% → ` +
+                `주식 익스포저 ×${state.macro.exposureMultiplier}`,
+            ]
+          : []),
         `목표 비중: ${formatAllocation(state.macro.targetAllocation)}`,
       ]
     : ["통합 시장 상태: 사용 가능한 신호 없음"];
@@ -63,6 +69,7 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     `누적손익: ${signedUsd(summary.totalPnlUsd)} (${summary.returnPct}%)`,
     `실현손익: ${signedUsd(summary.realizedPnlUsd)}`,
     `미실현손익: ${signedUsd(summary.unrealizedPnlUsd)}`,
+    ...(summary.feesUsd ? [`누적 거래비용: -$${summary.feesUsd.toFixed(2)}`] : []),
     ...(summary.benchmark
       ? [
           `벤치마크(${summary.benchmark.symbol} 매수후보유): ` +

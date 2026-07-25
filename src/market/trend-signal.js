@@ -39,13 +39,48 @@ export function calculateTrend(values, options = {}) {
   };
 }
 
+/**
+ * 일봉 종가의 최근 변동성(연율화)을 계산합니다.
+ * Moreira & Muir(2017) "Volatility-Managed Portfolios"의 변동성 타이밍에 사용합니다.
+ */
+export function calculateVolatility(values, options = {}) {
+  const window = Number(options.window ?? 20);
+  const tradingDays = Number(options.tradingDays ?? 252);
+  const closes = (values ?? []).map(Number).filter((value) => Number.isFinite(value) && value > 0);
+  if (closes.length < window + 1) {
+    return { ready: false, sampleDays: Math.max(0, closes.length - 1), minimumDays: window };
+  }
+
+  const recent = closes.slice(-(window + 1));
+  const returns = [];
+  for (let index = 1; index < recent.length; index += 1) {
+    returns.push(recent[index] / recent[index - 1] - 1);
+  }
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length;
+  const dailyStdev = Math.sqrt(variance);
+  return {
+    ready: true,
+    annualized: round(dailyStdev * Math.sqrt(tradingDays)),
+    dailyStdev: round(dailyStdev),
+    sampleDays: returns.length,
+  };
+}
+
 /** 여러 종목의 종가를 모아 하나의 시장 추세 신호로 집계합니다. */
 export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Date()) {
   const config = { ...DEFAULT_TREND_OPTIONS, ...options };
   const indicators = {};
+  const annualizedVols = [];
   for (const [symbol, closes] of Object.entries(closesBySymbol)) {
     indicators[symbol] = calculateTrend(closes, config);
+    const vol = calculateVolatility(closes, config);
+    if (vol.ready) annualizedVols.push(vol.annualized);
   }
+  // 종목별 연율화 변동성의 평균을 시장 변동성 대리치로 사용합니다.
+  const volatility = annualizedVols.length
+    ? { annualized: round(annualizedVols.reduce((sum, value) => sum + value, 0) / annualizedVols.length), symbols: annualizedVols.length }
+    : null;
 
   const all = Object.values(indicators);
   const ready = all.filter((indicator) => indicator.ready);
@@ -57,6 +92,7 @@ export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Da
       confidence: 0,
       readySymbols: 0,
       totalSymbols: all.length,
+      volatility,
       indicators,
     };
   }
@@ -74,6 +110,7 @@ export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Da
     confidence: round(coverage * directionalAgreement),
     readySymbols: ready.length,
     totalSymbols: all.length,
+    volatility,
     indicators,
   };
 }

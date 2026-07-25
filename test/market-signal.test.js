@@ -93,3 +93,42 @@ test("사용할 수 없는 추세는 기존 판정에 영향을 주지 않는다
   assert.equal(combined.trend, null);
   assert.equal(combined.signalSource, "FRED_ONLY");
 });
+
+test("변동성이 목표보다 높으면 주식 익스포저를 줄이고 현금을 늘린다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.3 } },
+    trendWeight: 0, // 배분 변화만 검증하기 위해 점수 기여는 0으로 둔다.
+    volTarget: 0.15,
+    minExposure: 0.3,
+  });
+
+  // 연율 변동성 0.30, 목표 0.15 → 배수 0.5
+  assert.equal(combined.exposureMultiplier, 0.5);
+  // NEUTRAL 기본 VTI 0.7 → 0.35, SCHD 0.2 → 0.1, 현금은 그만큼 증가
+  assert.equal(combined.targetAllocation.VTI, 0.35);
+  assert.equal(combined.targetAllocation.SCHD, 0.1);
+  assert.ok(combined.targetAllocation.CASH > 0.5);
+});
+
+test("변동성이 목표 이하이면 익스포저를 줄이지 않는다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.1 } },
+    trendWeight: 0,
+    volTarget: 0.15,
+  });
+
+  assert.equal(combined.exposureMultiplier, 1);
+  assert.equal(combined.targetAllocation.VTI, 0.7);
+});
+
+test("minExposure 아래로는 익스포저를 줄이지 않는다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0, confidence: 1, volatility: { annualized: 0.9 } },
+    trendWeight: 0,
+    volTarget: 0.15,
+    minExposure: 0.3,
+  });
+
+  // 0.15/0.9 = 0.167 < 0.3 → 하한 0.3으로 고정
+  assert.equal(combined.exposureMultiplier, 0.3);
+});
