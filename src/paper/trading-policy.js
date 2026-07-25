@@ -6,6 +6,8 @@ const DEFAULTS = Object.freeze({
   maxDailyBuyUsd: 10,
   maxTotalLossUsd: 10,
   maxDailyLossUsd: 3,
+  // 목표 비중을 자산 대비 이 비율 이상 초과한 ETF만 리밸런싱 매도합니다(잔챙이 매매 방지).
+  rebalanceBandRate: 0.05,
   reentryCooldownHours: 24,
   stopLossRate: 0.03,
   trailingActivationRate: 0.025,
@@ -32,6 +34,7 @@ export function loadTradingPolicy(env = process.env) {
     maxDailyBuyUsd: readPositive(env.MAX_DAILY_BUY_USD, DEFAULTS.maxDailyBuyUsd),
     maxTotalLossUsd: readPositive(env.MAX_TOTAL_LOSS_USD, DEFAULTS.maxTotalLossUsd),
     maxDailyLossUsd: readPositive(env.MAX_DAILY_LOSS_USD, DEFAULTS.maxDailyLossUsd),
+    rebalanceBandRate: readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate),
     reentryCooldownHours: readPositiveInteger(
       env.REENTRY_COOLDOWN_HOURS,
       DEFAULTS.reentryCooldownHours,

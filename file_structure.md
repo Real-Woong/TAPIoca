@@ -56,6 +56,7 @@ toss-ai-agent/
 │   │   └── macro-status.js
 │   ├── market/
 │   │   ├── macd-signal.js
+│   │   ├── trend-signal.js
 │   │   ├── market-check.js
 │   │   └── us-market-session.js
 │   ├── sentiment/
@@ -105,6 +106,7 @@ data/
 ├── macro-snapshot.json
 ├── free-news-cache.json
 ├── macd-snapshot.json
+├── trend-snapshot.json
 └── paper-runner.lock
 ```
 
@@ -186,9 +188,14 @@ Owns market-time and price-signal utilities.
   - Stores one price snapshot per 15-minute bucket
   - Calculates 12/26/9 MACD after at least 34 samples
   - Produces a bounded score and confidence value
+- `trend-signal.js`
+  - Faber (2007) moving-average trend filter
+  - Fetches daily closes from the free Stooq CSV endpoint (no API key)
+  - Caches to `trend-snapshot.json`, refreshed at most once per ~20 hours
+  - Scores price vs the 200-day average with `tanh`, aggregated across symbols
 
 Important limitation: MACD uses scheduled price snapshots, not official OHLCV
-candles.
+candles. The trend layer uses official daily closes from Stooq.
 
 ### `src/paper/`
 

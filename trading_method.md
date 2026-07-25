@@ -89,6 +89,8 @@ FRED macro score
     +
 confidence-adjusted news sentiment
     +
+confidence-adjusted moving-average trend (Faber 200-day)
+    +
 small confidence-adjusted MACD contribution
 ```
 
@@ -198,14 +200,32 @@ MACD contribution
 Important limitation: these samples are periodic observations, not exchange
 OHLCV candles. MACD is therefore treated as a small confirmation signal only.
 
-### 5.4 Combined score
+### 5.4 Moving-average trend (Faber)
+
+Based on Faber (2007), "A Quantitative Approach to Tactical Asset Allocation."
+Daily closes are fetched from the free Stooq CSV endpoint (no API key) and cached
+in `data/trend-snapshot.json`, refreshed at most once per ~20 hours with a
+stale-cache fallback on failure.
+
+```text
+Moving average:            200 trading days (≈ 10 months)
+Score:                     tanh((price / MA - 1) / 5%)   bounded to [-1, 1]
+Default trend weight:      1.0
+```
+
+Faber's original rule is binary (hold above the average, cash below). This
+implementation keeps the trend-filter intent but converts it to a continuous
+score to soften whipsaw near the average. The aggregate confidence combines
+symbol coverage and directional agreement, like the MACD layer.
+
+### 5.5 Combined score
 
 ```text
 base score
     = FRED score + sentiment contribution
 
 final score
-    = base score + MACD contribution
+    = base score + trend contribution + MACD contribution
 ```
 
 Regime thresholds:
@@ -245,8 +265,11 @@ IWM    0%
 CASH  40%
 ```
 
-The regime changes target weights for new purchases. A regime change by itself
-does not force an immediate sale.
+The regime changes target weights for both purchases and sales. When a holding
+exceeds its target weight by more than the rebalance band (default 5% of
+equity), the engine trims the surplus back toward target in the same cycle. This
+runs even while a loss brake has paused new purchases, so a defensive regime
+change reduces exposure immediately instead of only stopping further buys.
 
 ## 7. PAPER Cycle
 

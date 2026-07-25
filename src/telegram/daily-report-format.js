@@ -34,6 +34,13 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
                 `(신뢰도 ${state.macro.sentiment.confidence}, ${state.macro.sentiment.articleCount}건)`,
             ]
           : []),
+        ...(state.macro.trend
+          ? [
+              `추세(200일선): ${state.macro.trend.score} ` +
+                `(신뢰도 ${state.macro.trend.confidence}, ` +
+                `${state.macro.trend.readySymbols}/${state.macro.trend.totalSymbols}종목)`,
+            ]
+          : []),
         ...(state.macro.macd
           ? [
               `MACD: ${state.macro.macd.score} ` +
@@ -53,9 +60,16 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     `현재 총자산: $${summary.equityUsd.toFixed(2)}`,
     `현금: $${summary.cashUsd.toFixed(2)}`,
     `ETF 평가액: $${summary.marketValueUsd.toFixed(2)}`,
-    `누적손익: ${signedUsd(summary.totalPnlUsd)}`,
+    `누적손익: ${signedUsd(summary.totalPnlUsd)} (${summary.returnPct}%)`,
     `실현손익: ${signedUsd(summary.realizedPnlUsd)}`,
     `미실현손익: ${signedUsd(summary.unrealizedPnlUsd)}`,
+    ...(summary.benchmark
+      ? [
+          `벤치마크(${summary.benchmark.symbol} 매수후보유): ` +
+            `${signedUsd(summary.benchmark.pnlUsd)} (${summary.benchmark.returnPct}%)`,
+          `초과성과(alpha): ${signedUsd(summary.alphaUsd)}`,
+        ]
+      : []),
     `누적 거래: ${summary.tradeCount}건`,
     ...(state.risk?.lastCheck?.buyPaused
       ? [`안전 중단: ${formatRiskReason(state.risk.lastCheck.reason)} — 신규 매수 중단`]

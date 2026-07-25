@@ -135,6 +135,80 @@ test("다음 거래일에도 목표 비중이 덜 찬 기존 포지션을 추가
   assert.equal(second.state.trades.filter((trade) => trade.side === "BUY").length, 4);
 });
 
+test("목표 비중을 밴드 이상 초과하면 방어적 레짐 전환 시 초과분을 매도한다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  // 전액 AAA를 보유한(익스포저 100%) 목표 초과 상태를 수동으로 만듭니다.
+  const equity = state.cashUsd;
+  state.positions.AAA = {
+    symbol: "AAA",
+    openedByAgent: true,
+    quantity: equity / 100,
+    entryPrice: 100,
+    peakPrice: 100,
+    lastPrice: 100,
+    lastPriceAt: "2026-07-14T00:00:00Z",
+    costUsd: equity,
+    openedAt: "2026-07-14T00:00:00Z",
+  };
+  state.cashUsd = 0;
+
+  // RISK_OFF에서 AAA 목표는 40%이므로 초과 60%p를 덜어내야 합니다.
+  const result = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    policy,
+    new Date("2026-07-14T02:00:00Z"),
+    macroSignal("RISK_OFF"),
+  );
+
+  const sell = result.state.trades.at(-1);
+  assert.equal(sell.side, "SELL");
+  assert.equal(sell.reason, "MACRO_RISK_OFF_REBALANCE_SELL");
+  // 매도 후 AAA 평가액은 목표(자산의 40%)에 수렴합니다.
+  const aaaValue = result.summary.positions[0].marketValueUsd;
+  assert.ok(Math.abs(aaaValue - equity * 0.4) < 0.05);
+  assert.ok(result.state.cashUsd > equity * 0.55);
+});
+
+test("첫 실행에 벤치마크를 개설하고 이후 초과성과(alpha)를 계산한다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const funded = state.funding.fundedUsd;
+
+  const first = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 100 }],
+    policy,
+    new Date("2026-07-14T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+  // 원금 전액을 AAA에 넣은 매수후보유 기준선이 만들어집니다.
+  assert.equal(first.state.benchmark.symbol, "AAA");
+  assert.ok(Math.abs(first.state.benchmark.quantity - funded / 100) < 1e-9);
+  assert.equal(first.summary.benchmark.pnlUsd, 0);
+
+  // AAA가 10% 오르면 벤치마크는 원금의 약 +10%가 되고, alpha는 전략−벤치마크입니다.
+  const second = runPaperCycle(
+    state,
+    [{ symbol: "AAA", lastPrice: 110 }],
+    policy,
+    new Date("2026-07-15T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+  assert.ok(second.summary.benchmark.pnlUsd > funded * 0.09);
+  assert.equal(
+    second.summary.alphaUsd,
+    Math.round((second.summary.totalPnlUsd - second.summary.benchmark.pnlUsd) * 100) / 100,
+  );
+});
+
 test("거시경제 신호가 null이면 청산 판단은 유지하고 신규 매수만 중단한다", () => {
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),

@@ -7,11 +7,13 @@ import { loadMacroSignal } from "../FRED_data/macro-snapshot.js";
 import { loadMarketSentiment } from "../sentiment/market-sentiment.js";
 import { combineMarketSignals } from "../sentiment/market-signal.js";
 import { createPaperState, runPaperCycle } from "./paper-engine.js";
+import { appendPaperEvent, buildPaperEvent } from "./event-log.js";
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
 import { createUsdBudget } from "./trading-budget.js";
 import { loadTradingPolicy } from "./trading-policy.js";
 import { getUsRegularSessionStatus } from "../market/us-market-session.js";
 import { updateMacdSignal } from "../market/macd-signal.js";
+import { loadTrendSignal } from "../market/trend-signal.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
 const statePath = path.join(dataDir, "paper-state.json");
@@ -106,8 +108,15 @@ async function run() {
     console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
     return null;
   });
+  // Faber 이동평균 추세: Stooq 무료 일봉으로 200일선을 계산합니다. 실패하면 추세 없이 진행합니다.
+  const trend = await loadTrendSignal({ dataDir, symbols: watchlist, now }).catch((error) => {
+    console.error(`이동평균 추세 신호를 사용할 수 없습니다: ${error.message}`);
+    return null;
+  });
   const marketSignal = combineMarketSignals(macroSignal, sentiment, {
     sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
+    trend,
+    trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
     macd,
     macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
   });
@@ -121,6 +130,10 @@ async function run() {
 
   const result = runPaperCycle(state, prices, policy, now, marketSignal);
   await writeState(result.state);
+  // 모든 사이클을 append-only 로그에 남깁니다. 실패해도 매매·저장은 이미 끝났으므로 진행합니다.
+  await appendPaperEvent(dataDir, buildPaperEvent({ now, marketSignal, result })).catch((error) => {
+    console.error(`이벤트 로그 기록 실패: ${error.message}`);
+  });
   printResult(result, exchangeRate, marketSignal);
 }
 
@@ -169,6 +182,15 @@ function readSentimentWeight(value) {
   return weight;
 }
 
+function readTrendWeight(value) {
+  if (value === undefined || value === "") return 1;
+  const weight = Number(value);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 3) {
+    throw new Error("TREND_SCORE_WEIGHT는 0~3 숫자여야 합니다.");
+  }
+  return weight;
+}
+
 function readMacdWeight(value) {
   if (value === undefined || value === "") return 0.15;
   const weight = Number(value);
@@ -185,7 +207,14 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal) {
   console.log(`최초 PAPER 지갑: ${summary.fundedUsd.toFixed(2)} USD`);
   console.log(`현금: ${summary.cashUsd.toFixed(2)} USD`);
   console.log(`ETF 평가액: ${summary.marketValueUsd.toFixed(2)} USD`);
-  console.log(`총손익: ${summary.totalPnlUsd.toFixed(2)} USD`);
+  console.log(`총손익: ${summary.totalPnlUsd.toFixed(2)} USD (${summary.returnPct}%)`);
+  if (summary.benchmark) {
+    console.log(
+      `벤치마크 ${summary.benchmark.symbol} 매수후보유: ` +
+        `${summary.benchmark.pnlUsd.toFixed(2)} USD (${summary.benchmark.returnPct}%), ` +
+        `초과성과 ${summary.alphaUsd.toFixed(2)} USD`,
+    );
+  }
   if (marketSignal) {
     console.log(
       `통합 시장 판정: ${marketSignal.regime} ` +
@@ -204,7 +233,16 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal) {
         );
       }
     } else {
-      console.log("무료 뉴스 감성: 사용 불가 (FRED·MACD로 폴백)");
+      console.log("무료 뉴스 감성: 사용 불가 (FRED·추세로 폴백)");
+    }
+    if (marketSignal.trend) {
+      console.log(
+        `추세(200일선): ${marketSignal.trend.score} ` +
+          `(신뢰도 ${marketSignal.trend.confidence}, ` +
+          `${marketSignal.trend.readySymbols}/${marketSignal.trend.totalSymbols}종목)`,
+      );
+    } else {
+      console.log("추세(200일선): 준비 중 (일봉 200개 필요)");
     }
     if (marketSignal.macd) {
       console.log(

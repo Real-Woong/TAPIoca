@@ -25,6 +25,9 @@ export function createPaperState({ budget, watchlist, now = new Date() }) {
     trades: [],
     // 마지막으로 매매 판단에 사용한 FRED + X 통합 신호를 보관합니다.
     macro: null,
+    // 같은 원금을 벤치마크 종목에 한 번에 넣고 그대로 보유했을 때의 성과입니다.
+    // 전략이 단순 매수후보유를 실제로 이기는지 비교하는 기준선입니다.
+    benchmark: null,
     lastRunAt: null,
   };
 }
@@ -42,6 +45,8 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   prepareRiskState(state, priceMap, dateKey);
   state.symbolCooldowns ??= {};
   state.completedSymbols ??= [];
+  // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
+  updateBenchmark(state, priceMap, now);
 
   // 매수보다 청산 판단을 먼저 수행해 손절/수익실현 조건을 우선 처리합니다.
   for (const [symbol, position] of Object.entries(state.positions)) {
@@ -82,6 +87,9 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   if (macroSignal) {
     // 상태 파일에는 API 원본 전체가 아니라 실제 판단에 사용한 요약만 저장합니다.
     state.macro = compactMacroSignal(macroSignal);
+    // 목표 비중을 초과한 보유분은 손실 한도(매수 중단)와 무관하게 먼저 덜어내
+    // 익스포저를 낮춥니다. 매수만 하고 팔지 않던 비대칭 문제를 해결합니다.
+    runRebalanceSells({ state, priceMap, policy, now, decisions, macroSignal });
   }
 
   const risk = evaluateRiskLimits(state, priceMap, policy, dateKey, now);
@@ -129,6 +137,76 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   const summary = summarizePaperState(state, priceMap);
   state.risk.lastEquityUsd = summary.equityUsd;
   return { state, decisions, summary };
+}
+
+// 목표 비중을 밴드 이상 초과한 ETF를 목표선까지 덜어내 위험을 낮춥니다.
+// 매수와 달리 방어적 레짐 전환 시 즉시 익스포저를 줄여야 하므로 1회 주문
+// 상한(maxOrderUsd)과 일일 매수 한도를 적용하지 않고 초과분을 한 번에 정리합니다.
+function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSignal }) {
+  const allocation = macroSignal.targetAllocation ?? {};
+  const summary = summarizePaperState(state, priceMap);
+  // 자산 대비 밴드보다 큰 초과분만 정리해 소액 잔챙이 매매를 막습니다.
+  const band = Math.max(policy.minOrderUsd, policy.rebalanceBandRate * summary.equityUsd);
+
+  for (const symbol of state.watchlist) {
+    const position = state.positions[symbol];
+    // 이 에이전트가 연 포지션만 조정합니다. Toss 기존 보유분은 건드리지 않습니다.
+    if (!position || !position.openedByAgent) continue;
+    const market = priceMap.get(symbol);
+    if (!market) continue;
+
+    const price = market.lastPrice;
+    const currentValue = position.quantity * price;
+    const targetValue = summary.equityUsd * validWeight(allocation[symbol]);
+    if (roundUsd(currentValue - targetValue) < band) continue;
+
+    // 초과분만큼만 부분 매도하되, 남는 평가액이 최소 주문보다 작으면 전량 정리합니다.
+    // 목표 비중이 0인 종목은 전량 매도됩니다.
+    let sellQuantity = Math.min(currentValue - targetValue, currentValue) / price;
+    if ((position.quantity - sellQuantity) * price < policy.minOrderUsd) {
+      sellQuantity = position.quantity;
+    }
+
+    const proceedsUsd = roundUsd(sellQuantity * price);
+    // 평균 원가를 매도 수량 비율만큼 덜어내 실현손익을 정확히 계산합니다.
+    const soldCostUsd = roundUsd(position.costUsd * (sellQuantity / position.quantity));
+    const pnlUsd = roundUsd(proceedsUsd - soldCostUsd);
+
+    state.cashUsd = roundUsd(state.cashUsd + proceedsUsd);
+    state.realizedPnlUsd = roundUsd(state.realizedPnlUsd + pnlUsd);
+
+    const reason = `MACRO_${macroSignal.regime}_REBALANCE_SELL`;
+    state.trades.push({
+      side: "SELL",
+      symbol,
+      quantity: sellQuantity,
+      price,
+      amountUsd: proceedsUsd,
+      pnlUsd,
+      reason,
+      macroRegime: macroSignal.regime,
+      macroScore: macroSignal.score,
+      executedAt: now.toISOString(),
+    });
+
+    if (sellQuantity >= position.quantity) {
+      // 부분 리밸런싱은 재진입 쿨다운을 걸지 않습니다. 목표 비중이 다시 늘면 곧바로 매수합니다.
+      delete state.positions[symbol];
+    } else {
+      position.quantity -= sellQuantity;
+      position.costUsd = roundUsd(position.costUsd - soldCostUsd);
+      position.lastPrice = price;
+      position.lastPriceAt = market.timestamp ?? now.toISOString();
+    }
+
+    decisions.push({
+      symbol,
+      action: "SELL",
+      reason,
+      amountUsd: proceedsUsd,
+      targetWeight: validWeight(allocation[symbol]),
+    });
+  }
 }
 
 // FRED 목표 비중을 기준으로 가장 덜 채워진 ETF부터 일일 한도 안에서 매수합니다.
@@ -297,6 +375,46 @@ function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSig
   });
 }
 
+// 벤치마크는 원금 전액을 기준 종목(기본 VTI)에 한 번 넣고 그대로 두는 매수후보유입니다.
+function updateBenchmark(state, priceMap, now) {
+  const preferred = state.benchmark?.symbol
+    ?? (priceMap.has("VTI") ? "VTI" : (state.watchlist ?? []).find((symbol) => priceMap.has(symbol)));
+  if (!preferred) return;
+  const market = priceMap.get(preferred);
+  const price = Number(market?.lastPrice);
+  if (!Number.isFinite(price) || price <= 0) return;
+
+  if (!state.benchmark) {
+    const fundedUsd = state.funding.fundedUsd;
+    state.benchmark = {
+      symbol: preferred,
+      quantity: fundedUsd / price,
+      entryPriceUsd: price,
+      fundedUsd,
+      startedAt: now.toISOString(),
+      lastPrice: price,
+      lastPriceAt: market.timestamp ?? now.toISOString(),
+    };
+  } else if (state.benchmark.symbol === preferred) {
+    state.benchmark.lastPrice = price;
+    state.benchmark.lastPriceAt = market.timestamp ?? now.toISOString();
+  }
+}
+
+function summarizeBenchmark(state, priceMap) {
+  const benchmark = state.benchmark;
+  if (!benchmark) return null;
+  const price = priceMap.get(benchmark.symbol)?.lastPrice ?? benchmark.lastPrice ?? benchmark.entryPriceUsd;
+  const valueUsd = roundUsd(benchmark.quantity * price);
+  const pnlUsd = roundUsd(valueUsd - benchmark.fundedUsd);
+  return {
+    symbol: benchmark.symbol,
+    valueUsd,
+    pnlUsd,
+    returnPct: benchmark.fundedUsd > 0 ? round3((pnlUsd / benchmark.fundedUsd) * 100) : 0,
+  };
+}
+
 function compactMacroSignal(signal) {
   return {
     fetchedAt: signal.fetchedAt,
@@ -312,6 +430,8 @@ function compactMacroSignal(signal) {
     sentimentContribution: signal.sentimentContribution,
     sentiment: signal.sentiment,
     baseScore: signal.baseScore,
+    trendContribution: signal.trendContribution,
+    trend: signal.trend,
     macdContribution: signal.macdContribution,
     macd: signal.macd,
     stale: Boolean(signal.stale),
@@ -343,6 +463,8 @@ export function summarizePaperState(state, prices = new Map()) {
     positions.reduce((sum, item) => sum + item.unrealizedPnlUsd, 0),
   );
   const equityUsd = roundUsd(state.cashUsd + marketValueUsd);
+  const totalPnlUsd = roundUsd(equityUsd - state.funding.fundedUsd);
+  const benchmark = summarizeBenchmark(state, priceMap);
   return {
     fundingKrw: state.funding.fundingKrw,
     fundedUsd: state.funding.fundedUsd,
@@ -351,7 +473,13 @@ export function summarizePaperState(state, prices = new Map()) {
     equityUsd,
     realizedPnlUsd: state.realizedPnlUsd,
     unrealizedPnlUsd,
-    totalPnlUsd: roundUsd(equityUsd - state.funding.fundedUsd),
+    totalPnlUsd,
+    // 전략 수익률과 벤치마크 대비 초과성과(alpha)를 함께 보여줍니다.
+    returnPct: state.funding.fundedUsd > 0
+      ? round3((totalPnlUsd / state.funding.fundedUsd) * 100)
+      : 0,
+    benchmark,
+    alphaUsd: benchmark ? roundUsd(totalPnlUsd - benchmark.pnlUsd) : null,
     tradeCount: state.trades.length,
     positions,
   };
@@ -411,4 +539,8 @@ function isSymbolCoolingDown(state, symbol, now) {
 
 function roundUsd(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function round3(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 }
