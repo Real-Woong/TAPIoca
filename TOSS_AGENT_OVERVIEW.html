@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAPIoca — Toss ETF 자동매매 에이전트 개요</title>
+<style>
+  :root {
+    --bg: #F4F6F4;
+    --panel: #FFFFFF;
+    --panel-2: #FAFBFA;
+    --border: #E1E7E2;
+    --ink: #131A16;
+    --muted: #5C6963;
+    --faint: #8B968F;
+    --accent: #0E8C74;
+    --accent-ink: #0A6B58;
+    --accent-soft: rgba(14, 140, 116, 0.10);
+    --riskon: #2F9E44;
+    --neutral: #B9822A;
+    --riskoff: #BE4239;
+    --shadow: 0 1px 2px rgba(19, 26, 22, 0.04), 0 8px 24px rgba(19, 26, 22, 0.05);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", Roboto, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0C120F;
+      --panel: #141C18;
+      --panel-2: #101713;
+      --border: #26302B;
+      --ink: #E7ECE8;
+      --muted: #8B9891;
+      --faint: #66736C;
+      --accent: #27B896;
+      --accent-ink: #6EE7C7;
+      --accent-soft: rgba(39, 184, 150, 0.14);
+      --riskon: #4FB865;
+      --neutral: #D39A3E;
+      --riskoff: #D65A50;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F4F6F4; --panel: #FFFFFF; --panel-2: #FAFBFA; --border: #E1E7E2;
+    --ink: #131A16; --muted: #5C6963; --faint: #8B968F;
+    --accent: #0E8C74; --accent-ink: #0A6B58; --accent-soft: rgba(14, 140, 116, 0.10);
+    --riskon: #2F9E44; --neutral: #B9822A; --riskoff: #BE4239;
+    --shadow: 0 1px 2px rgba(19, 26, 22, 0.04), 0 8px 24px rgba(19, 26, 22, 0.05);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0C120F; --panel: #141C18; --panel-2: #101713; --border: #26302B;
+    --ink: #E7ECE8; --muted: #8B9891; --faint: #66736C;
+    --accent: #27B896; --accent-ink: #6EE7C7; --accent-soft: rgba(39, 184, 150, 0.14);
+    --riskon: #4FB865; --neutral: #D39A3E; --riskoff: #D65A50;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .prose { max-width: 68ch; }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; font-family: var(--font-mono); }
+  .brand b { font-size: 1.02rem; letter-spacing: -0.01em; font-weight: 700; }
+  .brand span { font-size: 0.72rem; color: var(--muted); }
+  .theme-btn {
+    font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.04em;
+    color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .theme-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- eyebrow / headings ---- */
+  .eyebrow {
+    font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase;
+    letter-spacing: 0.16em; color: var(--accent); margin: 0 0 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--accent); opacity: .55; }
+  h1 { font-size: clamp(2.1rem, 5vw, 3rem); line-height: 1.06; letter-spacing: -0.03em; font-weight: 750; margin: 0 0 18px; text-wrap: balance; }
+  h2 { font-size: clamp(1.35rem, 3vw, 1.75rem); letter-spacing: -0.02em; font-weight: 700; margin: 0 0 6px; text-wrap: balance; }
+  h3 { font-size: 1rem; letter-spacing: -0.01em; margin: 0 0 6px; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  p strong, li strong { color: var(--ink); font-weight: 650; }
+  section { padding: 64px 0; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: none; }
+  .sec-head { margin-bottom: 34px; }
+  .sec-head p { max-width: 60ch; }
+
+  /* ---- hero ---- */
+  .hero { padding: 68px 0 58px; }
+  .hero .lead { font-size: 1.15rem; color: var(--muted); max-width: 60ch; }
+  .hero .lead b { color: var(--ink); }
+  .paper-badge {
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 26px;
+    font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em;
+    color: var(--accent-ink); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    padding: 6px 12px; border-radius: 999px;
+  }
+  .paper-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+  /* ---- KPI row ---- */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 40px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 18px 16px; box-shadow: var(--shadow); }
+  .kpi .n { font-family: var(--font-mono); font-size: 1.9rem; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .kpi .n small { font-size: 0.9rem; color: var(--muted); font-weight: 500; }
+  .kpi .l { margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
+  .kpi .sub { font-family: var(--font-mono); font-size: 0.7rem; color: var(--faint); margin-top: 2px; }
+
+  /* ---- callout ---- */
+  .callout {
+    background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 16px 20px; margin: 8px 0 0;
+  }
+  .callout p { margin: 0; color: var(--muted); font-size: 0.94rem; }
+  .callout p strong { color: var(--ink); }
+
+  /* ---- stack grid ---- */
+  .grid { display: grid; gap: 14px; }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: var(--shadow); }
+  .card .tag { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+  .card h3 { margin: 10px 0 10px; }
+  .card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  .card li { font-size: 0.86rem; color: var(--muted); display: flex; gap: 9px; align-items: baseline; }
+  .card li::before { content: ""; flex: none; width: 5px; height: 5px; margin-top: 7px; border-radius: 50%; background: var(--accent); opacity: .6; }
+  .card li b { color: var(--ink); font-weight: 600; font-family: var(--font-mono); font-size: 0.82rem; }
+
+  /* ---- flow pipeline ---- */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; align-items: stretch; }
+  .phase { position: relative; padding: 0 8px; }
+  .phase:not(:last-child)::after {
+    content: "→"; position: absolute; right: -9px; top: 30px; z-index: 2;
+    font-family: var(--font-mono); color: var(--accent); font-size: 1.1rem; line-height: 1;
+  }
+  .phase .p-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; min-height: 46px; }
+  .phase .p-num { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; color: var(--bg); background: var(--accent); width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none; }
+  .phase .p-title { font-size: 0.82rem; font-weight: 700; letter-spacing: -0.01em; }
+  .phase .steps { display: flex; flex-direction: column; gap: 8px; }
+  .step { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; font-size: 0.78rem; color: var(--ink); box-shadow: var(--shadow); }
+  .step .st-k { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); display: block; margin-bottom: 3px; }
+  .step.sell { border-color: color-mix(in srgb, var(--riskoff) 40%, var(--border)); }
+  .step.buy { border-color: color-mix(in srgb, var(--riskon) 40%, var(--border)); }
+  .step.rec { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+
+  /* ---- signal stack ---- */
+  .signal { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; align-items: center; }
+  .layers { display: flex; flex-direction: column; gap: 10px; }
+  .layer { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; box-shadow: var(--shadow); }
+  .layer .lname { font-weight: 650; font-size: 0.9rem; }
+  .layer .ldesc { font-size: 0.78rem; color: var(--muted); }
+  .layer .lw { font-family: var(--font-mono); font-size: 0.74rem; color: var(--accent-ink); background: var(--accent-soft); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+  .layer .licon { font-family: var(--font-mono); font-weight: 700; color: var(--accent); width: 26px; text-align: center; }
+  .plus { text-align: center; font-family: var(--font-mono); color: var(--faint); font-size: 0.8rem; margin: -4px 0; }
+  .regime-out { background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .regime-out h3 { margin-bottom: 4px; }
+  .regime-out > p { font-size: 0.85rem; margin-bottom: 16px; }
+  .regchips { display: flex; flex-direction: column; gap: 10px; }
+  .regchip { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); }
+  .regchip .swatch { width: 12px; height: 12px; border-radius: 4px; }
+  .regchip .rk { font-family: var(--font-mono); font-weight: 700; font-size: 0.82rem; }
+  .regchip .rd { font-size: 0.75rem; color: var(--muted); }
+  .swatch.on { background: var(--riskon); } .rk.on { color: var(--riskon); }
+  .swatch.nt { background: var(--neutral); } .rk.nt { color: var(--neutral); }
+  .swatch.off { background: var(--riskoff); } .rk.off { color: var(--riskoff); }
+
+  /* ---- timeline ---- */
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .tl-item { display: grid; grid-template-columns: 128px 1fr; gap: 20px; padding: 20px 0; border-top: 1px solid var(--border); }
+  .tl-item:first-child { border-top: none; }
+  .tl-when { font-family: var(--font-mono); font-size: 0.76rem; }
+  .tl-when .date { color: var(--ink); font-weight: 600; display: block; }
+  .tl-when .hash { color: var(--accent); font-size: 0.7rem; }
+  .tl-when .phase-n { color: var(--faint); font-size: 0.68rem; display: block; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .tl-body h3 { margin-bottom: 5px; }
+  .tl-body p { margin: 0; font-size: 0.88rem; }
+  .tl-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .tl-tags span { font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: var(--panel-2); }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 560px; }
+  thead th { text-align: left; font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); padding: 13px 16px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-weight: 600; }
+  tbody td { padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--muted); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td:first-child { color: var(--ink); font-weight: 550; }
+  .fix { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.72rem; color: var(--riskon); white-space: nowrap; }
+  .fix.partial { color: var(--neutral); }
+  .fix::before { content: "●"; font-size: 0.6rem; }
+
+  /* ---- limitations ---- */
+  .lim { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .lim ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+  .lim li { font-size: 0.86rem; color: var(--muted); padding-left: 18px; position: relative; }
+  .lim li::before { content: "—"; position: absolute; left: 0; color: var(--faint); }
+
+  footer { padding: 40px 0 60px; border-top: 1px solid var(--border); }
+  footer p { font-size: 0.78rem; color: var(--faint); margin: 0; }
+  footer .mono { font-family: var(--font-mono); }
+
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+
+  @media (max-width: 860px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .cols-3 { grid-template-columns: 1fr; }
+    .signal { grid-template-columns: 1fr; }
+    .flow { grid-template-columns: 1fr; gap: 14px; }
+    .phase { padding: 0; }
+    .phase:not(:last-child)::after { content: "↓"; right: 50%; left: 50%; top: auto; bottom: -12px; transform: translateX(-50%); }
+    .lim { grid-template-columns: 1fr; }
+    .tl-item { grid-template-columns: 1fr; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand"><b>TAPIoca</b><span>🧋 Toss ETF PAPER Agent</span></div>
+    <button class="theme-btn" id="themeToggle" aria-label="테마 전환">◐ 테마</button>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap reveal">
+    <span class="paper-badge"><span class="dot"></span>PAPER 전용 · 실주문 API 미호출</span>
+    <p class="eyebrow">시스템 개요 · 2026-07-26 기준</p>
+    <h1>거시·뉴스·추세·변동성을 읽어<br>미국 ETF를 가상 매매하는 에이전트</h1>
+    <p class="lead">TAPIoca는 Toss Open API로 시세를 읽고, <b>FRED 거시지표·무료 뉴스 감성·200일 이동평균 추세·MACD</b>를 하나의 시장 판정으로 합친 뒤, <b>대칭 리밸런싱 매매 엔진</b>으로 파일 기반 가상 지갑을 운용합니다. Oracle 서버에서 약 15분 주기로 돌며 매일 텔레그램으로 보고합니다.</p>
+
+    <div class="kpis">
+      <div class="kpi"><div class="n">8<small>일</small></div><div class="l">개발 기간</div><div class="sub">07-18 → 07-26</div></div>
+      <div class="kpi"><div class="n">10</div><div class="l">누적 커밋</div><div class="sub">fe80067 → 7bc73ba</div></div>
+      <div class="kpi"><div class="n">7,711<small>줄</small></div><div class="l">전체 코드</div><div class="sub">파일 69개</div></div>
+      <div class="kpi"><div class="n">80<small>/80</small></div><div class="l">테스트 통과</div><div class="sub">18개 파일</div></div>
+    </div>
+  </div>
+</header>
+
+<section id="what">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">무엇을 하는가</p>
+      <h2>읽고 · 판단하고 · 가상으로 매매하고 · 보고한다</h2>
+    </div>
+    <div class="prose">
+      <p>초기에는 Toss 계좌·보유 종목을 읽고 FRED 하나로 <b>RISK_ON / NEUTRAL / RISK_OFF</b>를 나누는 소규모 실험이었습니다. 이후 뉴스 감성, MACD, 장기 추세, 변동성 관리가 차례로 결합됐고, 매매 엔진도 단순 매수 중심에서 <b>대칭 리밸런싱·거래비용·손실 브레이크·감사 로그·벤치마크</b>를 갖춘 검증 시스템으로 발전했습니다.</p>
+    </div>
+    <div class="callout">
+      <p><strong>안전 경계.</strong> 초기 원금은 코드 수준에서 <b>KRW 100,000</b>으로 고정되고, <b>LIVE_TRADING=true</b>면 엔진이 실행을 거부합니다. 실주문 endpoint는 구현되지 않았으며, 에이전트가 열지 않은 실제 계좌 포지션은 자동 청산하지 않습니다.</p>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">기술 스택</p>
+      <h2>외부 런타임 패키지 없이, Node 표준 기능 중심</h2>
+      <p>서드파티 런타임 의존성 0개. 상태는 로컬 JSON, 감사 기록은 append-only JSONL, 스케줄은 systemd 타이머로 처리합니다.</p>
+    </div>
+    <div class="grid cols-3">
+      <div class="card">
+        <span class="tag">런타임 · 배포</span>
+        <h3>실행 기반</h3>
+        <ul>
+          <li><b>Node.js 20.12+</b> · ES Modules</li>
+          <li><b>Oracle Cloud Linux</b> 인스턴스</li>
+          <li><b>systemd</b> 서비스·타이머 (≈15분 주기)</li>
+          <li><b>node --test</b> 내장 러너 (80개)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">데이터 소스 (무료)</span>
+        <h3>시세 · 거시 · 뉴스</h3>
+        <ul>
+          <li><b>Toss Open API</b> 가격·환율·보유</li>
+          <li><b>FRED</b> 거시지표</li>
+          <li><b>Fed RSS · GDELT</b> 경제뉴스</li>
+          <li><b>Stooq</b> 일봉 종가 (200일선·변동성)</li>
+          <li><b>Bluesky · RSS</b> 선택형 의견</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">신호 계층</span>
+        <h3>시장 판정</h3>
+        <ul>
+          <li><b>macro-regime</b> FRED 점수·레짐</li>
+          <li><b>sentiment</b> 규칙기반 · 선택형 Ollama</li>
+          <li><b>trend-signal</b> Faber 200일선</li>
+          <li><b>macd-signal</b> 12/26/9 보조</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">매매 엔진</span>
+        <h3>주문 · 위험 관리</h3>
+        <ul>
+          <li><b>paper-engine</b> 대칭 리밸런싱</li>
+          <li><b>exit-strategy</b> 손절·추적·최대보유</li>
+          <li><b>trading-policy</b> 손실 브레이크·쿨다운</li>
+          <li><b>거래비용</b> 편도 0.1% 모델</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">상태 · 감사</span>
+        <h3>기록</h3>
+        <ul>
+          <li><b>paper-state.json</b> 원자적 저장</li>
+          <li><b>paper-events.jsonl</b> append-only 로그</li>
+          <li><b>VTI 벤치마크</b> · alphaUsd</li>
+          <li><b>lock 파일</b> 중복 실행 방지</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">리포트</span>
+        <h3>사용자 인터페이스</h3>
+        <ul>
+          <li><b>Telegram</b> 일일 보고서 (16:10 ET)</li>
+          <li>신호·변동성·거래비용 표시</li>
+          <li>벤치마크 대비 초과성과</li>
+          <li><b>paper:events</b> CLI 조회</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="flow">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">실행 흐름 · 15분 사이클</p>
+      <h2>준비 → 신호 → 매도 → 매수 → 기록</h2>
+      <p>매 사이클은 <b>매도(위험 축소)를 매수보다 먼저</b> 처리합니다. 방어적 판정이 서면 그 즉시 노출을 줄이기 위해서입니다.</p>
+    </div>
+    <div class="flow">
+      <div class="phase">
+        <div class="p-head"><span class="p-num">1</span><span class="p-title">준비</span></div>
+        <div class="steps">
+          <div class="step"><span class="st-k">session</span>미국 정규장 확인</div>
+          <div class="step"><span class="st-k">toss api</span>가격 · USD/KRW 환율 조회</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="p-head"><span class="p-num">2</span><span class="p-title">신호</span></div>
+        <div class="steps">
+          <div class="step"><span class="st-k">collect</span>FRED · 뉴스 · 추세·변동성 · MACD</div>
+          <div class="step rec"><span class="st-k">combine</span>통합 레짐 + 변동성 조정 목표비중</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="p-head"><span class="p-num">3</span><span class="p-title">매도 우선</span></div>
+        <div class="steps">
+          <div class="step sell"><span class="st-k">exit</span>손절 · 추적청산 · 최대보유</div>
+          <div class="step sell"><span class="st-k">rebalance</span>목표 초과분 부분매도</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="p-head"><span class="p-num">4</span><span class="p-title">매수</span></div>
+        <div class="steps">
+          <div class="step"><span class="st-k">brake</span>손실 한도 검사</div>
+          <div class="step buy"><span class="st-k">buy</span>목표 부족분 제한 매수</div>
+          <div class="step"><span class="st-k">cost</span>거래비용 반영</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="p-head"><span class="p-num">5</span><span class="p-title">기록</span></div>
+        <div class="steps">
+          <div class="step"><span class="st-k">persist</span>PAPER 상태 원자적 저장</div>
+          <div class="step rec"><span class="st-k">audit</span>이벤트 로그 append</div>
+          <div class="step"><span class="st-k">report</span>텔레그램 · alpha 표시</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="signal">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">신호 스택</p>
+      <h2>네 층을 더하고, 변동성으로 노출을 조절한다</h2>
+      <p>각 신호는 신뢰도로 감쇠한 뒤 가중치를 곱해 하나의 점수가 됩니다. 점수가 레짐을 정하고, 최근 변동성이 최종 주식 목표 비중을 축소합니다.</p>
+    </div>
+    <div class="signal">
+      <div>
+        <div class="layers">
+          <div class="layer"><span class="licon">◆</span><div><div class="lname">FRED 거시</div><div class="ldesc">경제 국면의 기본 점수</div></div><span class="lw">base</span></div>
+          <div class="plus">+</div>
+          <div class="layer"><span class="licon">◈</span><div><div class="lname">뉴스 감성</div><div class="ldesc">Fed RSS · GDELT, 신뢰도 반영</div></div><span class="lw">× 2.0</span></div>
+          <div class="plus">+</div>
+          <div class="layer"><span class="licon">▲</span><div><div class="lname">200일 이동평균 추세</div><div class="ldesc">Faber — 1급 방어 신호</div></div><span class="lw">× 1.0</span></div>
+          <div class="plus">+</div>
+          <div class="layer"><span class="licon">≈</span><div><div class="lname">MACD</div><div class="ldesc">15분 스냅샷 기반 작은 확인</div></div><span class="lw">× 0.15</span></div>
+          <div class="plus">↓ 변동성 오버레이</div>
+          <div class="layer" style="border-color: color-mix(in srgb, var(--accent) 45%, var(--border));"><span class="licon">◇</span><div><div class="lname">변동성 관리</div><div class="ldesc">목표 15% / 실현 변동성 → 주식 익스포저 ×배수</div></div><span class="lw">min 0.3</span></div>
+        </div>
+      </div>
+      <div class="regime-out">
+        <h3>→ 목표 배분 (레짐)</h3>
+        <p>통합 점수 ≥ 1.5 → RISK_ON, ≤ −1.5 → RISK_OFF, 그 사이는 NEUTRAL.</p>
+        <div class="regchips">
+          <div class="regchip"><span class="swatch on"></span><div><span class="rk on">RISK_ON</span><div class="rd">VTI 70 · SCHD 15 · IWM 15 · 현금 0</div></div></div>
+          <div class="regchip"><span class="swatch nt"></span><div><span class="rk nt">NEUTRAL</span><div class="rd">VTI 70 · SCHD 20 · 현금 10</div></div></div>
+          <div class="regchip"><span class="swatch off"></span><div><span class="rk off">RISK_OFF</span><div class="rd">VTI 40 · SCHD 20 · 현금 40</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="timeline">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">진화 타임라인</p>
+      <h2>실험에서 검증 엔진으로, 7단계</h2>
+      <p>발견된 실제 동작 문제를 근거로 단계마다 결점을 닫아왔습니다.</p>
+    </div>
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-18~19</span><span class="hash">c629d06</span><span class="phase-n">1 · 기반</span></div>
+        <div class="tl-body">
+          <h3>읽기 전용 에이전트 골격</h3>
+          <p>Toss 인증·조회, 포트폴리오·HHI 분석, FRED 레짐, PAPER 지갑, 청산 규칙, 텔레그램, systemd. 테스트 34개.</p>
+          <div class="tl-tags"><span>toss-client</span><span>macro-regime</span><span>paper-engine</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-23 AM</span><span class="hash">0e7227d</span><span class="phase-n">2 · 신호 확장</span></div>
+        <div class="tl-body">
+          <h3>뉴스 감성 · MACD 도입</h3>
+          <p>Fed RSS·GDELT 수집, 규칙기반 감성(선택형 Ollama), 15분 MACD, FRED+감성+MACD 통합 점수.</p>
+          <div class="tl-tags"><span>free-news-fetcher</span><span>sentiment-analyzer</span><span>macd-signal</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-23 PM</span><span class="hash">903e1e8</span><span class="phase-n">3 · 안전장치</span></div>
+        <div class="tl-body">
+          <h3>매매 안전장치 강화</h3>
+          <p>$1 최소 주문, 24시간 재진입 쿨다운, 손실 브레이크 실제 연결, 실현·미실현 손익 분리. 테스트 57개.</p>
+          <div class="tl-tags"><span>trading-policy</span><span>min-order</span><span>loss-brake</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-25</span><span class="hash">5b3a689</span><span class="phase-n">4 · 문서화</span></div>
+        <div class="tl-body">
+          <h3>외부 검토용 문서 · 정리</h3>
+          <p>file_structure·trading_method 명세 작성, 잘못 복제된 테스트 스냅샷 제거.</p>
+          <div class="tl-tags"><span>docs</span><span>cleanup</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-26 00:07</span><span class="hash">5ead5a4</span><span class="phase-n">5 · 검증 엔진화</span></div>
+        <div class="tl-body">
+          <h3>리밸런싱 · 추세 · 로그 · 벤치마크</h3>
+          <p>대칭 리밸런싱 매도, Faber 200일선, append-only 이벤트 로그, VTI 매수후보유 벤치마크(alpha). 테스트 73개.</p>
+          <div class="tl-tags"><span>trend-signal</span><span>event-log</span><span>benchmark</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-26 00:44</span><span class="hash">95ab1f0</span><span class="phase-n">6 · 현실성</span></div>
+        <div class="tl-body">
+          <h3>거래비용 · 변동성 관리</h3>
+          <p>편도 0.1% 결합 거래비용, 연율 변동성 기반 익스포저 축소(Moreira–Muir). 테스트 80개.</p>
+          <div class="tl-tags"><span>trade-cost</span><span>vol-target</span><span>exposure</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">07-26 01:10</span><span class="hash">7bc73ba</span><span class="phase-n">7 · DX</span></div>
+        <div class="tl-body">
+          <h3>테마별 테스트 요약</h3>
+          <p>npm test를 테마별 통과/전체 요약으로 변경, 전체 상세는 test:verbose로 분리.</p>
+          <div class="tl-tags"><span>shorttest</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="fixed">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">해결한 핵심 문제</p>
+      <h2>관측된 결점 → 적용된 해결</h2>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>문제</th><th>적용된 해결</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td>센트 단위 미세 주문 반복</td><td>$1 최소 주문 + 리밸런싱 밴드</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>청산 후 영구 재진입 금지</td><td>24시간 재진입 쿨다운</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>손실 한도가 설정만 되고 미작동</td><td>실제 신규 매수 브레이크로 연결</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>RISK_OFF에서도 익스포저 증가</td><td>대칭 리밸런싱 부분매도</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>거래 당시 판단 재구성 불가</td><td>append-only 이벤트 로그</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>전략 성과 비교 기준 부재</td><td>VTI 벤치마크 · alphaUsd</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>급격한 변동성에도 고정 비중</td><td>변동성 기반 익스포저 축소</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>PAPER 손익이 비용을 무시</td><td>결합 거래비용률(편도 0.1%) 적용</td><td><span class="fix partial">부분</span></td></tr>
+          <tr><td>테스트 출력이 너무 장황함</td><td>테마별 짧은 요약 러너</td><td><span class="fix">해결</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">남은 한계</p>
+      <h2>아직 검증이 필요한 것들</h2>
+    </div>
+    <div class="lim">
+      <ul>
+        <li>실주문·부분 체결·주문 거절·시장 충격 미구현 (PAPER 전용)</li>
+        <li>거래비용은 수수료·환전·스프레드·슬리피지를 합친 단일 비율</li>
+        <li>MACD는 정식 OHLCV가 아닌 15분 예약 실행 가격 스냅샷</li>
+      </ul>
+      <ul>
+        <li>뉴스 감성의 예측력은 아직 통계적으로 미검증</li>
+        <li>30~60 거래일 연속 PAPER 데이터와 정식 백테스트 필요</li>
+        <li>벤치마크는 VTI 매수후보유 중심 (정적 혼합 비교 추가 여지)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><span class="mono">TAPIoca🧋</span> · Toss ETF PAPER Trading Agent · 기록 범위 2026-07-18 → 2026-07-26 (main <span class="mono">7bc73ba</span>). 본 문서는 소프트웨어와 PAPER 전략의 진화 기록이며, 투자 성과를 보증하지 않습니다.</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById("themeToggle");
+    btn.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme");
+      if (!current) {
+        current = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      root.setAttribute("data-theme", current === "dark" ? "light" : "dark");
+    });
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, { threshold: 0.08 });
+    document.querySelectorAll(".reveal").forEach(function (el) { io.observe(el); });
+  })();
+</script>
+
+</body>
+</html>
