@@ -151,16 +151,17 @@ export async function loadTrendSignal({
   }
 
   try {
-    const { closesBySymbol, failures } = await fetchAllCloses(
+    const { closesBySymbol, sources, failures } = await fetchAllCloses(
       symbols ?? [], config, fetchImpl, apiKey,
     );
     await mkdir(dataDir, { recursive: true });
     await writeSnapshot(snapshotPath, {
       version: 1,
       fetchedAt: now.toISOString(),
+      sources,
       symbols: closesBySymbol,
     });
-    const signal = buildTrendSignal(closesBySymbol, config, now);
+    const signal = { ...buildTrendSignal(closesBySymbol, config, now), sources };
     // 일부 종목만 실패한 경우는 신호를 유지하되 실패 사실을 함께 넘겨 보고서에 드러냅니다.
     return failures.length ? { ...signal, failures } : signal;
   } catch (error) {
@@ -194,16 +195,23 @@ async function fetchAllCloses(symbols, config, fetchImpl, apiKey) {
   const results = await Promise.allSettled(
     symbols.map(async (rawSymbol) => {
       const symbol = String(rawSymbol).trim().toUpperCase();
-      return [symbol, await fetchDailyCloses(symbol, config, fetchImpl, apiKey)];
+      const { closes, source } = await fetchDailyCloses(symbol, config, fetchImpl, apiKey);
+      return [symbol, closes, source];
     }),
   );
 
   const closesBySymbol = {};
+  const sources = {};
   const failures = [];
   for (const [index, result] of results.entries()) {
     const symbol = String(symbols[index]).trim().toUpperCase();
-    if (result.status === "fulfilled") closesBySymbol[result.value[0]] = result.value[1];
-    else failures.push(`${symbol}: ${result.reason?.message ?? result.reason}`);
+    if (result.status === "fulfilled") {
+      const [name, closes, source] = result.value;
+      closesBySymbol[name] = closes;
+      sources[name] = source;
+    } else {
+      failures.push(`${symbol}: ${result.reason?.message ?? result.reason}`);
+    }
   }
 
   // 한 종목도 못 받았으면 실패입니다. 예전에는 이 경우에도 빈 결과를 정상으로 보고
@@ -211,7 +219,7 @@ async function fetchAllCloses(symbols, config, fetchImpl, apiKey) {
   if (Object.keys(closesBySymbol).length === 0) {
     throw new Error(`일봉을 한 종목도 받지 못했습니다 — ${failures.join(" | ")}`);
   }
-  return { closesBySymbol, failures };
+  return { closesBySymbol, sources, failures };
 }
 
 /**
@@ -226,7 +234,9 @@ async function fetchDailyCloses(symbol, config, fetchImpl, apiKey) {
   for (const source of dailySources(apiKey)) {
     try {
       const closes = await source.fetch(symbol, config, fetchImpl);
-      if (closes.length > 0) return closes;
+      // 어느 소스가 실제로 응답했는지 남깁니다. 폴백으로 버티는 중인지
+      // 주 소스가 살아 있는지 구분해야 다음 장애를 미리 알 수 있습니다.
+      if (closes.length > 0) return { closes, source: source.name };
       errors.push(`${source.name}: 종가 없음`);
     } catch (error) {
       errors.push(`${source.name}: ${error.message}`);

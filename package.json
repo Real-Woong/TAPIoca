@@ -8,6 +8,7 @@
     "analyze": "node --env-file=.env src/portfolio/analyze-cli.js",
     "doctor": "node --env-file=.env src/toss/doctor.js",
     "market:check": "node --env-file=.env src/market/market-check.js",
+    "signals:check": "node --env-file=.env src/market/signals-check.js",
     "macro:status": "node --env-file=.env src/FRED_data/macro-status.js",
     "paper:run": "node --env-file=.env src/paper/paper-runner.js",
     "paper:status": "node --env-file=.env src/paper/paper-status.js",

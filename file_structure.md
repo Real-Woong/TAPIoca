@@ -184,6 +184,11 @@ Owns market-time and price-signal utilities.
   - Allows regular-session execution on weekdays from 09:30 to 16:00 ET
 - `market-check.js`
   - Diagnoses exchange-rate and ETF price responses
+- `signals-check.js`
+  - Read-only CLI: verifies daily-close collection, trend, and MACD
+  - Uses a temp directory so the live cache and PAPER ledger stay untouched
+  - `npm run signals:check`
+
 - `macd-signal.js`
   - Stores one price snapshot per 15-minute bucket
   - Calculates 12/26/9 MACD from the cached daily closes (34+ required)
