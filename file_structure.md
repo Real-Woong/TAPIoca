@@ -191,8 +191,10 @@ Owns market-time and price-signal utilities.
   - Produces a bounded score and confidence value
 - `trend-signal.js`
   - Faber (2007) moving-average trend filter
-  - Fetches daily closes from Yahoo Finance, falling back to Stooq (no API key)
-  - Stooq added a JavaScript bot wall on 2026-08-03; Yahoo is now primary
+  - Fetches daily closes: Twelve Data (key) -> Yahoo Finance -> Stooq
+  - As of 2026-08-03 both keyless sources are blocked from the Oracle host
+    (Stooq serves a JavaScript bot wall; Yahoo rate-limits the IP with 429),
+    so TWELVE_DATA_API_KEY is required in practice
   - Caches to `trend-snapshot.json`, refreshed at most once per ~20 hours
   - Scores price vs the 200-day average with `tanh`, aggregated across symbols
 

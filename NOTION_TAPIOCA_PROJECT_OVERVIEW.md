@@ -157,7 +157,7 @@ FRED 결과는 통합 시장 점수의 기본값이자 VTI, SCHD, IWM, 현금의
 
 ### Faber 200일 이동평균 추세
 
-- 무료 일봉 데이터 사용(Yahoo Finance 주 소스, Stooq 폴백)
+- 일봉 데이터: Twelve Data(키) → Yahoo Finance → Stooq 순 폴백
 - 종목별 200거래일 이동평균 계산
 - 현재 가격이 이동평균 위인지 아래인지 확인
 - 이동평균과의 거리를 `tanh`로 연속 점수화
@@ -647,7 +647,7 @@ Oracle 서버의 로컬 시간대와 관계없이 `America/New_York`을 기준�
 - GDELT DOC API
 - Bluesky Public API
 - RSS·Atom Feed
-- Yahoo Finance 일봉(폴백: Stooq CSV)
+- Twelve Data 일봉(폴백: Yahoo Finance, Stooq CSV)
 - 선택형 Ollama Local API
 
 ## Investment Engine

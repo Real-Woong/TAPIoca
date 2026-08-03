@@ -11,6 +11,7 @@ import {
   loadDailyCloses,
   loadTrendSignal,
   parseStooqCloses,
+  parseTwelveDataCloses,
   parseYahooCloses,
 } from "../src/market/trend-signal.js";
 
@@ -395,4 +396,76 @@ test("Yahoo가 오류를 돌려주면 그 설명을 그대로 올린다", () => 
 
 test("Yahoo 자리에 HTML이 오면 JSON이 아니라고 알린다", () => {
   assert.throws(() => parseYahooCloses("<!DOCTYPE html><html>"), /JSON이 아닙니다/);
+});
+
+function twelveDataBody(closes) {
+  // 실제 응답은 최신순입니다.
+  return JSON.stringify({
+    status: "ok",
+    values: [...closes].reverse().map((close, index) => ({
+      datetime: `2026-01-${index + 1}`,
+      close: String(close),
+    })),
+  });
+}
+
+test("API 키가 있으면 Twelve Data를 먼저 쓰고 공개 소스는 건드리지 않는다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const up = [...Array(199).fill(100), 130];
+    const log = { td: 0, other: 0 };
+    const fetchImpl = async (url) => {
+      if (url.includes("api.twelvedata.com")) {
+        log.td += 1;
+        return { ok: true, status: 200, text: async () => twelveDataBody(up) };
+      }
+      log.other += 1;
+      throw new Error("공개 소스는 호출되면 안 됩니다");
+    };
+
+    const signal = await loadTrendSignal({
+      dataDir, symbols: ["VTI"], now: new Date("2026-08-03T14:00:00Z"),
+      fetchImpl, apiKey: "test-key",
+    });
+
+    assert.equal(signal.available, true);
+    assert.ok(signal.score > 0);
+    assert.equal(log.td, 1);
+    assert.equal(log.other, 0);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("API 키가 없으면 Twelve Data를 건너뛴다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const down = [...Array(199).fill(100), 80];
+    const seen = [];
+    const fetchImpl = async (url) => {
+      seen.push(new URL(url).hostname);
+      return url.includes("yahoo")
+        ? { ok: true, status: 200, text: async () => yahooBody(down) }
+        : { ok: true, status: 200, text: async () => "" };
+    };
+
+    await loadTrendSignal({
+      dataDir, symbols: ["VTI"], now: new Date("2026-08-03T14:00:00Z"), fetchImpl,
+    });
+
+    assert.ok(!seen.some((host) => host.includes("twelvedata")));
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("Twelve Data 응답을 오래된 순으로 정렬해 종가를 뽑는다", () => {
+  assert.deepEqual(parseTwelveDataCloses(twelveDataBody([100, 101, 102])), [100, 101, 102]);
+});
+
+test("Twelve Data 한도 초과는 200이어도 오류로 처리한다", () => {
+  const body = JSON.stringify({
+    status: "error", code: 429, message: "You have run out of API credits",
+  });
+  assert.throws(() => parseTwelveDataCloses(body), /API credits/);
 });

@@ -212,8 +212,8 @@ confirmation signal, not a timing signal.
 ### 5.4 Moving-average trend (Faber)
 
 Based on Faber (2007), "A Quantitative Approach to Tactical Asset Allocation."
-Daily closes are fetched from Yahoo Finance, falling back to Stooq (no API key),
-and cached
+Daily closes are fetched from Twelve Data when `TWELVE_DATA_API_KEY` is set,
+falling back to Yahoo Finance and then Stooq, and cached
 in `data/trend-snapshot.json`, refreshed at most once per ~20 hours with a
 stale-cache fallback on failure.
 

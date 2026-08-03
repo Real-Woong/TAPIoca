@@ -125,9 +125,9 @@ export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Da
 }
 
 /**
- * 무료 일봉 종가(Yahoo Finance → Stooq 폴백)로 추세 신호를 만듭니다.
+ * 일봉 종가(Twelve Data → Yahoo Finance → Stooq 순)로 추세 신호를 만듭니다.
  * 일봉 데이터는 하루 한 번만 갱신하면 되므로 캐시가 신선하면 재요청하지 않고,
- * 요청이 실패하면 이전 캐시로 폴백합니다. API 키가 필요 없습니다.
+ * 요청이 실패하면 이전 캐시로 폴백합니다.
  */
 export async function loadTrendSignal({
   dataDir,
@@ -135,6 +135,7 @@ export async function loadTrendSignal({
   now = new Date(),
   fetchImpl = fetch,
   maxAgeHours = 20,
+  apiKey = undefined,
   options = {},
 }) {
   const config = { ...DEFAULT_TREND_OPTIONS, ...options };
@@ -150,7 +151,9 @@ export async function loadTrendSignal({
   }
 
   try {
-    const { closesBySymbol, failures } = await fetchAllCloses(symbols ?? [], config, fetchImpl);
+    const { closesBySymbol, failures } = await fetchAllCloses(
+      symbols ?? [], config, fetchImpl, apiKey,
+    );
     await mkdir(dataDir, { recursive: true });
     await writeSnapshot(snapshotPath, {
       version: 1,
@@ -187,11 +190,11 @@ export async function loadDailyCloses({ dataDir }) {
   );
 }
 
-async function fetchAllCloses(symbols, config, fetchImpl) {
+async function fetchAllCloses(symbols, config, fetchImpl, apiKey) {
   const results = await Promise.allSettled(
     symbols.map(async (rawSymbol) => {
       const symbol = String(rawSymbol).trim().toUpperCase();
-      return [symbol, await fetchDailyCloses(symbol, config, fetchImpl)];
+      return [symbol, await fetchDailyCloses(symbol, config, fetchImpl, apiKey)];
     }),
   );
 
@@ -218,9 +221,9 @@ async function fetchAllCloses(symbols, config, fetchImpl) {
  * 검증 페이지를 200으로 돌려주기 시작했습니다. 우회 대신 API 키가 필요 없는
  * Yahoo Finance를 주 소스로 두고, Stooq는 폴백으로 남겨둡니다.
  */
-async function fetchDailyCloses(symbol, config, fetchImpl) {
+async function fetchDailyCloses(symbol, config, fetchImpl, apiKey) {
   const errors = [];
-  for (const source of DAILY_SOURCES) {
+  for (const source of dailySources(apiKey)) {
     try {
       const closes = await source.fetch(symbol, config, fetchImpl);
       if (closes.length > 0) return closes;
@@ -230,6 +233,62 @@ async function fetchDailyCloses(symbol, config, fetchImpl) {
     }
   }
   throw new Error(errors.join(" / "));
+}
+
+/**
+ * 시도 순서를 정합니다.
+ *
+ * 무료 공개 소스는 2026-08-03 기준 둘 다 막혔습니다. Stooq는 JavaScript
+ * proof-of-work 봇 차단을, Yahoo는 서버 IP 단위 429를 겁니다. API 키가 있으면
+ * 키 기반 소스를 먼저 쓰고, 공개 소스는 키가 없거나 실패했을 때의 폴백으로 둡니다.
+ */
+function dailySources(apiKey) {
+  return [
+    ...(apiKey
+      ? [{
+          name: "TWELVEDATA",
+          fetch: (symbol, config, fetchImpl) =>
+            fetchTwelveDataCloses(symbol, config, fetchImpl, apiKey),
+        }]
+      : []),
+    { name: "YAHOO", fetch: fetchYahooCloses },
+    { name: "STOOQ", fetch: fetchStooqCloses },
+  ];
+}
+
+async function fetchTwelveDataCloses(symbol, config, fetchImpl, apiKey) {
+  const url =
+    "https://api.twelvedata.com/time_series?" +
+    new URLSearchParams({
+      symbol,
+      interval: "1day",
+      outputsize: String(config.maxSamples),
+      apikey: apiKey,
+    });
+  const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
+  return parseTwelveDataCloses(await response.text()).slice(-config.maxSamples);
+}
+
+/** Twelve Data time_series 응답에서 종가를 오래된 순으로 뽑습니다. */
+export function parseTwelveDataCloses(body) {
+  let payload;
+  try {
+    payload = typeof body === "string" ? JSON.parse(body) : body;
+  } catch {
+    throw new Error(`JSON이 아닙니다 (${describeBody(body)})`);
+  }
+  // 한도 초과나 잘못된 키도 HTTP 200으로 오고 status만 error입니다.
+  if (payload?.status === "error") {
+    throw new Error(payload.message ?? `코드 ${payload.code ?? "?"}`);
+  }
+  const values = payload?.values;
+  if (!Array.isArray(values)) throw new Error("응답에 values 배열이 없습니다.");
+  // 응답은 최신순이므로 뒤집어 오래된 순으로 만듭니다.
+  return values
+    .map((row) => Number(row?.close))
+    .filter((close) => Number.isFinite(close) && close > 0)
+    .reverse();
 }
 
 async function fetchYahooCloses(symbol, config, fetchImpl) {
@@ -298,12 +357,6 @@ export function parseStooqCloses(csv) {
   }
   return closes;
 }
-
-// 시도 순서: Yahoo Finance(주) → Stooq(폴백).
-const DAILY_SOURCES = [
-  { name: "YAHOO", fetch: fetchYahooCloses },
-  { name: "STOOQ", fetch: fetchStooqCloses },
-];
 
 function ageHours(isoString, now) {
   const then = new Date(isoString).getTime();

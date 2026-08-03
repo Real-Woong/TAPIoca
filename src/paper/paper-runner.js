@@ -108,7 +108,12 @@ async function run() {
     console.error(`MACD 가격 스냅샷 갱신 실패: ${error.message}`);
   });
   // Faber 이동평균 추세: Stooq 무료 일봉으로 200일선을 계산합니다. 실패하면 추세 없이 진행합니다.
-  const trend = await loadTrendSignal({ dataDir, symbols: watchlist, now }).catch((error) => {
+  const trend = await loadTrendSignal({
+    dataDir,
+    symbols: watchlist,
+    now,
+    apiKey: process.env.TWELVE_DATA_API_KEY,
+  }).catch((error) => {
     console.error(`이동평균 추세 신호를 사용할 수 없습니다: ${error.message}`);
     return null;
   });
