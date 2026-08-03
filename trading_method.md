@@ -170,8 +170,8 @@ Default sentiment weight:
 
 ### 5.3 MACD confirmation
 
-MACD is computed from the same Stooq daily closes the trend signal already
-downloads, so it needs no extra request.
+MACD is computed from the same daily closes the trend signal already downloads,
+so it needs no extra request.
 
 MACD configuration:
 
@@ -212,7 +212,8 @@ confirmation signal, not a timing signal.
 ### 5.4 Moving-average trend (Faber)
 
 Based on Faber (2007), "A Quantitative Approach to Tactical Asset Allocation."
-Daily closes are fetched from the free Stooq CSV endpoint (no API key) and cached
+Daily closes are fetched from Yahoo Finance, falling back to Stooq (no API key),
+and cached
 in `data/trend-snapshot.json`, refreshed at most once per ~20 hours with a
 stale-cache fallback on failure.
 

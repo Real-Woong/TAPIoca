@@ -11,6 +11,7 @@ import {
   loadDailyCloses,
   loadTrendSignal,
   parseStooqCloses,
+  parseYahooCloses,
 } from "../src/market/trend-signal.js";
 
 function csvWithCloses(closes) {
@@ -18,12 +19,33 @@ function csvWithCloses(closes) {
   return ["Date,Open,High,Low,Close,Volume", ...rows].join("\n");
 }
 
+// Stooq만 응답하는 모의 fetch입니다. Yahoo URL에는 빈 본문을 줘서 폴백 경로를 태웁니다.
 function mockFetch(csvBySymbol, counter) {
   return async (url) => {
     counter.calls += 1;
     const symbol = /s=([a-z]+)\.us/.exec(url)?.[1]?.toUpperCase();
     return { ok: true, status: 200, text: async () => csvBySymbol[symbol] ?? "" };
   };
+}
+
+function yahooBody(closes) {
+  return JSON.stringify({
+    chart: { result: [{ indicators: { quote: [{ close: closes }] } }], error: null },
+  });
+}
+
+// 소스별로 다른 응답을 주고 어디에 몇 번 요청했는지 기록합니다.
+function sourceAwareFetch({ yahoo, stooq }, log = { yahoo: 0, stooq: 0 }) {
+  const impl = async (url) => {
+    if (url.includes("query1.finance.yahoo.com")) {
+      log.yahoo += 1;
+      return yahoo();
+    }
+    log.stooq += 1;
+    return stooq();
+  };
+  impl.log = log;
+  return impl;
 }
 
 test("표본이 200개 미만이면 추세를 아직 계산하지 않는다", () => {
@@ -67,7 +89,7 @@ test("준비된 종목이 없으면 사용 불가 신호를 반환한다", () =>
   assert.equal(signal.score, 0);
 });
 
-test("Stooq에서 종가를 받아 신호를 만들고 신선한 캐시는 재요청하지 않는다", async () => {
+test("일봉 종가를 받아 신호를 만들고 신선한 캐시는 재요청하지 않는다", async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
   try {
     const down = [...Array(199).fill(100), 80];
@@ -78,7 +100,8 @@ test("Stooq에서 종가를 받아 신호를 만들고 신선한 캐시는 재�
     const first = await loadTrendSignal({ dataDir, symbols: ["VTI"], now, fetchImpl });
     assert.equal(first.available, true);
     assert.ok(first.score < 0);
-    assert.equal(counter.calls, 1);
+    assert.ok(counter.calls > 0);
+    const afterFirst = counter.calls;
 
     // 20시간 안에 다시 부르면 캐시를 써서 네트워크를 호출하지 않습니다.
     const second = await loadTrendSignal({
@@ -88,7 +111,7 @@ test("Stooq에서 종가를 받아 신호를 만들고 신선한 캐시는 재�
       fetchImpl,
     });
     assert.equal(second.available, true);
-    assert.equal(counter.calls, 1);
+    assert.equal(counter.calls, afterFirst);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
@@ -223,7 +246,7 @@ test("종가가 비어 있는 캐시는 신선해도 다시 수집한다", async
       fetchImpl: mockFetch({ VTI: csvWithCloses(down) }, counter),
     });
 
-    assert.equal(counter.calls, 1);
+    assert.ok(counter.calls > 0);
     assert.equal(signal.available, true);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
@@ -289,4 +312,87 @@ test("캐시가 없으면 빈 종가 묶음을 돌려준다", async () => {
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test("Yahoo가 응답하면 Stooq에는 요청하지 않는다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const down = [...Array(199).fill(100), 80];
+    const fetchImpl = sourceAwareFetch({
+      yahoo: () => ({ ok: true, status: 200, text: async () => yahooBody(down) }),
+      stooq: () => {
+        throw new Error("호출되면 안 됩니다");
+      },
+    });
+
+    const signal = await loadTrendSignal({
+      dataDir, symbols: ["VTI"], now: new Date("2026-08-03T14:00:00Z"), fetchImpl,
+    });
+
+    assert.equal(signal.available, true);
+    assert.ok(signal.score < 0);
+    assert.equal(fetchImpl.log.yahoo, 1);
+    assert.equal(fetchImpl.log.stooq, 0);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("Yahoo가 막히면 Stooq로 폴백한다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const up = [...Array(199).fill(100), 130];
+    const fetchImpl = sourceAwareFetch({
+      yahoo: () => ({ ok: false, status: 429, text: async () => "" }),
+      stooq: () => ({ ok: true, status: 200, text: async () => csvWithCloses(up) }),
+    });
+
+    const signal = await loadTrendSignal({
+      dataDir, symbols: ["VTI"], now: new Date("2026-08-03T14:00:00Z"), fetchImpl,
+    });
+
+    assert.equal(signal.available, true);
+    assert.ok(signal.score > 0);
+    assert.equal(fetchImpl.log.stooq, 1);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("두 소스가 모두 막히면 각각의 사유를 모두 남긴다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    // 2026-08-03 Stooq가 도입한 JavaScript 봇 차단 응답을 재현합니다.
+    const botWall = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
+    const fetchImpl = sourceAwareFetch({
+      yahoo: () => ({ ok: false, status: 503, text: async () => "" }),
+      stooq: () => ({ ok: true, status: 200, text: async () => botWall }),
+    });
+
+    await assert.rejects(
+      loadTrendSignal({
+        dataDir, symbols: ["VTI"], now: new Date("2026-08-03T14:00:00Z"), fetchImpl,
+      }),
+      (error) => {
+        assert.match(error.message, /YAHOO: 응답 오류 503/);
+        assert.match(error.message, /STOOQ: CSV에 종가가 없습니다/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("Yahoo 응답에서 휴장일 null을 건너뛰고 종가만 뽑는다", () => {
+  assert.deepEqual(parseYahooCloses(yahooBody([100.5, null, 101.2, 0])), [100.5, 101.2]);
+});
+
+test("Yahoo가 오류를 돌려주면 그 설명을 그대로 올린다", () => {
+  const body = JSON.stringify({ chart: { result: null, error: { description: "No data found" } } });
+  assert.throws(() => parseYahooCloses(body), /No data found/);
+});
+
+test("Yahoo 자리에 HTML이 오면 JSON이 아니라고 알린다", () => {
+  assert.throws(() => parseYahooCloses("<!DOCTYPE html><html>"), /JSON이 아닙니다/);
 });

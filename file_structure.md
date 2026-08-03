@@ -186,18 +186,19 @@ Owns market-time and price-signal utilities.
   - Diagnoses exchange-rate and ETF price responses
 - `macd-signal.js`
   - Stores one price snapshot per 15-minute bucket
-  - Calculates 12/26/9 MACD from Stooq daily closes (34+ required)
+  - Calculates 12/26/9 MACD from the cached daily closes (34+ required)
   - Also keeps the 15-minute price snapshot, for diagnostics only
   - Produces a bounded score and confidence value
 - `trend-signal.js`
   - Faber (2007) moving-average trend filter
-  - Fetches daily closes from the free Stooq CSV endpoint (no API key)
+  - Fetches daily closes from Yahoo Finance, falling back to Stooq (no API key)
+  - Stooq added a JavaScript bot wall on 2026-08-03; Yahoo is now primary
   - Caches to `trend-snapshot.json`, refreshed at most once per ~20 hours
   - Scores price vs the 200-day average with `tanh`, aggregated across symbols
 
 Note: MACD moved from 15-minute snapshots to daily closes on 2026-08-03.
 Historical note — the old limitation was that MACD used scheduled snapshots, not official OHLCV
-candles. The trend layer uses official daily closes from Stooq.
+candles. The trend layer and MACD both use official daily closes.
 
 ### `src/paper/`
 

@@ -12,9 +12,9 @@ export const DEFAULT_TREND_OPTIONS = Object.freeze({
   maxSamples: 300,
 });
 
-// Stooq는 기본 Node User-Agent를 자주 차단합니다. 차단되면 HTTP 오류가 아니라
-// 200과 함께 빈 본문이나 안내 문구를 돌려주므로, 브라우저 UA를 명시해 요청합니다.
-const STOOQ_USER_AGENT =
+// 두 소스 모두 기본 Node User-Agent를 자주 차단합니다. 차단되면 HTTP 오류가 아니라
+// 200과 함께 빈 본문이나 안내 페이지를 돌려주므로, 브라우저 UA를 명시해 요청합니다.
+const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -125,7 +125,7 @@ export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Da
 }
 
 /**
- * Stooq 무료 일봉 CSV에서 종가를 받아 추세 신호를 만듭니다.
+ * 무료 일봉 종가(Yahoo Finance → Stooq 폴백)로 추세 신호를 만듭니다.
  * 일봉 데이터는 하루 한 번만 갱신하면 되므로 캐시가 신선하면 재요청하지 않고,
  * 요청이 실패하면 이전 캐시로 폴백합니다. API 키가 필요 없습니다.
  */
@@ -176,7 +176,7 @@ export async function loadTrendSignal({
 
 /**
  * 캐시에 저장된 종목별 일봉 종가를 읽습니다.
- * MACD도 같은 종가를 사용하므로 Stooq에 다시 요청하지 않습니다.
+ * MACD도 같은 종가를 사용하므로 네트워크에 다시 요청하지 않습니다.
  * loadTrendSignal을 먼저 호출해 캐시를 갱신한 뒤 읽어야 합니다.
  */
 export async function loadDailyCloses({ dataDir }) {
@@ -191,7 +191,7 @@ async function fetchAllCloses(symbols, config, fetchImpl) {
   const results = await Promise.allSettled(
     symbols.map(async (rawSymbol) => {
       const symbol = String(rawSymbol).trim().toUpperCase();
-      return [symbol, await fetchStooqCloses(symbol, config, fetchImpl)];
+      return [symbol, await fetchDailyCloses(symbol, config, fetchImpl)];
     }),
   );
 
@@ -206,22 +206,71 @@ async function fetchAllCloses(symbols, config, fetchImpl) {
   // 한 종목도 못 받았으면 실패입니다. 예전에는 이 경우에도 빈 결과를 정상으로 보고
   // 캐시에 기록해서, 호출자가 붙여둔 catch가 한 번도 걸리지 않았습니다.
   if (Object.keys(closesBySymbol).length === 0) {
-    throw new Error(`Stooq 일봉을 한 종목도 받지 못했습니다 — ${failures.join(" / ")}`);
+    throw new Error(`일봉을 한 종목도 받지 못했습니다 — ${failures.join(" | ")}`);
   }
   return { closesBySymbol, failures };
+}
+
+/**
+ * 일봉 종가를 소스 순서대로 시도합니다.
+ *
+ * Stooq는 2026-08-03에 JavaScript proof-of-work 봇 차단을 도입해, CSV 대신
+ * 검증 페이지를 200으로 돌려주기 시작했습니다. 우회 대신 API 키가 필요 없는
+ * Yahoo Finance를 주 소스로 두고, Stooq는 폴백으로 남겨둡니다.
+ */
+async function fetchDailyCloses(symbol, config, fetchImpl) {
+  const errors = [];
+  for (const source of DAILY_SOURCES) {
+    try {
+      const closes = await source.fetch(symbol, config, fetchImpl);
+      if (closes.length > 0) return closes;
+      errors.push(`${source.name}: 종가 없음`);
+    } catch (error) {
+      errors.push(`${source.name}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.join(" / "));
+}
+
+async function fetchYahooCloses(symbol, config, fetchImpl) {
+  // range=2y면 약 500거래일이라 200일선(200개)과 MACD(34개) 모두 충분합니다.
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+    "?range=2y&interval=1d";
+  const response = await fetchImpl(url, {
+    headers: { "user-agent": BROWSER_USER_AGENT, accept: "application/json,*/*" },
+  });
+  if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
+  const body = await response.text();
+  return parseYahooCloses(body).slice(-config.maxSamples);
 }
 
 async function fetchStooqCloses(symbol, config, fetchImpl) {
   // 미국 ETF는 Stooq에서 "vti.us" 형태의 일봉 CSV로 제공됩니다.
   const url = `https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d`;
   const response = await fetchImpl(url, {
-    headers: { "user-agent": STOOQ_USER_AGENT, accept: "text/csv,text/plain,*/*" },
+    headers: { "user-agent": BROWSER_USER_AGENT, accept: "text/csv,text/plain,*/*" },
   });
-  if (!response.ok) throw new Error(`Stooq 응답 오류 ${response.status}`);
+  if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
   const csv = await response.text();
   const closes = parseStooqCloses(csv).slice(-config.maxSamples);
   if (closes.length === 0) throw new Error(`CSV에 종가가 없습니다 (${describeBody(csv)})`);
   return closes;
+}
+
+/** Yahoo Finance chart 응답에서 일봉 종가만 뽑습니다. 휴장일의 null은 건너뜁니다. */
+export function parseYahooCloses(body) {
+  let payload;
+  try {
+    payload = typeof body === "string" ? JSON.parse(body) : body;
+  } catch {
+    throw new Error(`JSON이 아닙니다 (${describeBody(body)})`);
+  }
+  const message = payload?.chart?.error?.description;
+  if (message) throw new Error(message);
+  const closes = payload?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+  if (!Array.isArray(closes)) throw new Error("응답에 종가 배열이 없습니다.");
+  return closes.map(Number).filter((close) => Number.isFinite(close) && close > 0);
 }
 
 /** 차단·한도 초과 응답을 로그에서 알아볼 수 있도록 본문 앞부분을 짧게 요약합니다. */
@@ -249,6 +298,12 @@ export function parseStooqCloses(csv) {
   }
   return closes;
 }
+
+// 시도 순서: Yahoo Finance(주) → Stooq(폴백).
+const DAILY_SOURCES = [
+  { name: "YAHOO", fetch: fetchYahooCloses },
+  { name: "STOOQ", fetch: fetchStooqCloses },
+];
 
 function ageHours(isoString, now) {
   const then = new Date(isoString).getTime();

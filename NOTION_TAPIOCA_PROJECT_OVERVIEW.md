@@ -16,7 +16,7 @@ TAPIoca는 토스증권 Open API를 활용해 사용자의 포트폴리오와 �
 - 공개 Bluesky 계정, Substack·개인 블로그 RSS
 - 200일 이동평균 기반 장기 추세
 - 최근 실현 변동성
-- 15분 가격 표본 기반 MACD 보조 신호
+- 일봉 종가 기반 MACD 보조 신호
 - PAPER Trading 누적 거래와 이벤트 로그
 - VTI 매수후보유 벤치마크
 
@@ -157,7 +157,7 @@ FRED 결과는 통합 시장 점수의 기본값이자 VTI, SCHD, IWM, 현금의
 
 ### Faber 200일 이동평균 추세
 
-- Stooq 무료 일봉 데이터 사용
+- 무료 일봉 데이터 사용(Yahoo Finance 주 소스, Stooq 폴백)
 - 종목별 200거래일 이동평균 계산
 - 현재 가격이 이동평균 위인지 아래인지 확인
 - 이동평균과의 거리를 `tanh`로 연속 점수화
@@ -647,7 +647,7 @@ Oracle 서버의 로컬 시간대와 관계없이 `America/New_York`을 기준�
 - GDELT DOC API
 - Bluesky Public API
 - RSS·Atom Feed
-- Stooq 일봉 CSV
+- Yahoo Finance 일봉(폴백: Stooq CSV)
 - 선택형 Ollama Local API
 
 ## Investment Engine
