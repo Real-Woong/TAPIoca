@@ -12,8 +12,8 @@ import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
 import { createUsdBudget } from "./trading-budget.js";
 import { loadTradingPolicy } from "./trading-policy.js";
 import { getUsRegularSessionStatus } from "../market/us-market-session.js";
-import { updateMacdSignal } from "../market/macd-signal.js";
-import { loadTrendSignal } from "../market/trend-signal.js";
+import { buildDailyMacdSignal, updateMacdSignal } from "../market/macd-signal.js";
+import { loadDailyCloses, loadTrendSignal } from "../market/trend-signal.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
 const statePath = path.join(dataDir, "paper-state.json");
@@ -103,16 +103,22 @@ async function run() {
     sentimentRequest,
   ]);
   const prices = normalizePrices(rawPrices);
-  // 현재가 스냅샷을 15분 단위로 누적합니다. 실패하거나 표본이 부족하면 MACD 없이 진행합니다.
-  const macd = await updateMacdSignal({ dataDir, prices, now }).catch((error) => {
-    console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
-    return null;
+  // 15분 가격 스냅샷은 진단용으로 계속 쌓습니다. 판단에는 쓰지 않습니다.
+  await updateMacdSignal({ dataDir, prices, now }).catch((error) => {
+    console.error(`MACD 가격 스냅샷 갱신 실패: ${error.message}`);
   });
   // Faber 이동평균 추세: Stooq 무료 일봉으로 200일선을 계산합니다. 실패하면 추세 없이 진행합니다.
   const trend = await loadTrendSignal({ dataDir, symbols: watchlist, now }).catch((error) => {
     console.error(`이동평균 추세 신호를 사용할 수 없습니다: ${error.message}`);
     return null;
   });
+  // MACD는 추세 신호가 방금 받아둔 같은 일봉 종가로 계산합니다(추가 요청 없음).
+  const macd = await loadDailyCloses({ dataDir })
+    .then((closes) => buildDailyMacdSignal(closes, macdOptions(), now))
+    .catch((error) => {
+      console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
+      return null;
+    });
   const marketSignal = combineMarketSignals(macroSignal, sentiment, {
     sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
     trend,
@@ -193,6 +199,12 @@ function readTrendWeight(value) {
   return weight;
 }
 
+/** 일봉 MACD의 히스토그램 스케일만 환경변수로 조정할 수 있게 열어둡니다. */
+function macdOptions() {
+  const scale = Number(process.env.MACD_HISTOGRAM_SCALE_PERCENT);
+  return Number.isFinite(scale) && scale > 0 ? { histogramScalePercent: scale } : {};
+}
+
 function readMacdWeight(value) {
   if (value === undefined || value === "") return 0.15;
   const weight = Number(value);
@@ -268,10 +280,10 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal) {
       console.log(
         `MACD: ${marketSignal.macd.score} ` +
           `(신뢰도 ${marketSignal.macd.confidence}, ` +
-          `${marketSignal.macd.readySymbols}/${marketSignal.macd.totalSymbols}종목)`,
+          `${marketSignal.macd.readySymbols}/${marketSignal.macd.totalSymbols}종목, 일봉)`,
       );
     } else {
-      console.log("MACD: 준비 중 (12·26·9 계산에 최소 34개 가격 표본 필요)");
+      console.log("MACD: 준비 중 (12·26·9 계산에 최소 34개 일봉 종가 필요)");
     }
   } else {
     console.log("거시경제 판정: 사용 불가 — 신규 매수를 중단했습니다.");

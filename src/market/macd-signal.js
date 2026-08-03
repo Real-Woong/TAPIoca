@@ -10,6 +10,14 @@ export const DEFAULT_MACD_OPTIONS = Object.freeze({
   histogramScalePercent: 0.15,
 });
 
+// 일봉용 기본값입니다. 히스토그램은 가격 대비 비율로 정규화되는데, 일봉의 진폭은
+// 15분 표본보다 훨씬 크므로 스케일도 그만큼 넓혀야 tanh가 즉시 포화하지 않습니다.
+// 실제 값이 쌓이면 MACD_HISTOGRAM_SCALE_PERCENT로 재보정하세요.
+export const DEFAULT_DAILY_MACD_OPTIONS = Object.freeze({
+  ...DEFAULT_MACD_OPTIONS,
+  histogramScalePercent: 0.5,
+});
+
 /**
  * PAPER 실행 때 받은 ETF 현재가를 15분 버킷별로 누적하고 MACD 시장 신호를 만듭니다.
  * 실제 봉 종가가 아니라 정기 실행 시점의 스냅샷이므로 PAPER 검증용 보조지표입니다.
@@ -85,17 +93,40 @@ export function calculateMacd(values, options = {}) {
   };
 }
 
+/**
+ * 일봉 종가로 MACD를 계산합니다. 판단에 쓰는 기본 경로입니다.
+ *
+ * 15분 스냅샷 방식은 12·26·9에 34표본이 필요해 8.5시간을 보는데 정규장은 6.5시간뿐이라,
+ * 밤 갭을 한 칸 점프로 이어붙인 인트라데이 지표로 하루 단위 자산배분을 정하고 있었습니다.
+ * 그 결과 부호가 관측 기간 6회 중 4회 뒤집혔습니다. 추세 신호가 이미 받아둔
+ * Stooq 일봉 종가를 그대로 쓰면 새 요청 없이 시계열 정합성을 맞출 수 있습니다.
+ */
+export function buildDailyMacdSignal(closesBySymbol = {}, options = {}, now = new Date()) {
+  const config = { ...DEFAULT_DAILY_MACD_OPTIONS, ...options };
+  const indicators = {};
+  for (const [symbol, closes] of Object.entries(closesBySymbol)) {
+    indicators[symbol] = calculateMacd(closes, config);
+  }
+  return aggregate(indicators, config, now, "DAILY_CLOSE");
+}
+
 function buildMarketMacdSignal(snapshot, config, now) {
   const indicators = {};
   for (const [symbol, samples] of Object.entries(snapshot.symbols ?? {})) {
     indicators[symbol] = calculateMacd(samples.map((sample) => sample.close), config);
   }
+  return aggregate(indicators, config, now, "INTRADAY_SNAPSHOT");
+}
 
+function aggregate(indicators, config, now, source) {
   const all = Object.values(indicators);
   const ready = all.filter((indicator) => indicator.ready);
   if (ready.length === 0) {
     return {
       available: false,
+      // 가격 스냅샷 자체가 없는 것과, 쌓이는 중이라 34개에 못 미치는 것은 다릅니다.
+      reason: all.length === 0 ? "NO_PRICE_SNAPSHOTS" : "INSUFFICIENT_SAMPLES",
+      source,
       evaluatedAt: now.toISOString(),
       score: 0,
       confidence: 0,
@@ -112,6 +143,7 @@ function buildMarketMacdSignal(snapshot, config, now) {
   const coverage = all.length > 0 ? ready.length / all.length : 0;
   return {
     available: true,
+    source,
     evaluatedAt: now.toISOString(),
     score: round(score),
     confidence: round(coverage * directionalAgreement),
