@@ -25,38 +25,7 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
         `• ${trade.side} ${trade.symbol}: $${trade.amountUsd.toFixed(2)} (${trade.reason})`,
       )
     : ["• 없음"];
-  const macroLines = state.macro
-    ? [
-        `통합 시장 상태: ${state.macro.regime} (점수 ${state.macro.score})`,
-        ...(state.macro.sentiment
-          ? [
-              `무료 뉴스 감성: ${state.macro.sentiment.sentiment_score} ` +
-                `(신뢰도 ${state.macro.sentiment.confidence}, ${state.macro.sentiment.articleCount}건)`,
-            ]
-          : []),
-        ...(state.macro.trend
-          ? [
-              `추세(200일선): ${state.macro.trend.score} ` +
-                `(신뢰도 ${state.macro.trend.confidence}, ` +
-                `${state.macro.trend.readySymbols}/${state.macro.trend.totalSymbols}종목)`,
-            ]
-          : []),
-        ...(state.macro.macd
-          ? [
-              `MACD: ${state.macro.macd.score} ` +
-                `(신뢰도 ${state.macro.macd.confidence}, ` +
-                `${state.macro.macd.readySymbols}/${state.macro.macd.totalSymbols}종목)`,
-            ]
-          : []),
-        ...(Number(state.macro.exposureMultiplier) < 1
-          ? [
-              `변동성 관리: 연율 ${(Number(state.macro.volatilityAnnualized) * 100).toFixed(1)}% → ` +
-                `주식 익스포저 ×${state.macro.exposureMultiplier}`,
-            ]
-          : []),
-        `목표 비중: ${formatAllocation(state.macro.targetAllocation)}`,
-      ]
-    : ["통합 시장 상태: 사용 가능한 신호 없음"];
+  const macroLines = formatMacroLines(state.macro);
 
   return [
     "📊 Toss ETF PAPER 일일 보고서",
@@ -91,6 +60,103 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     "",
     "PAPER 모드 — 실제 주문 없음",
   ].join("\n");
+}
+
+// 신호가 왜 비어 있는지 사람이 읽을 수 있는 문장으로 옮깁니다.
+const UNAVAILABLE_REASONS = {
+  NOT_LOADED: "수집 실패",
+  NO_DAILY_CLOSES: "일봉 종가 수집 실패",
+  INSUFFICIENT_HISTORY: "일봉 200개 대기 중",
+  NO_PRICE_SNAPSHOTS: "가격 표본 없음",
+  INSUFFICIENT_SAMPLES: "표본 34개 대기 중",
+  UNAVAILABLE: "사용 불가",
+};
+
+/**
+ * 시장 신호 요약을 만듭니다.
+ * 신호가 꺼져 있어도 줄을 생략하지 않습니다. 예전에는 사용 불가한 레이어의 줄이
+ * 통째로 빠져서, 가중치 1.0짜리 추세 신호가 12일간 죽은 것을 아무도 몰랐습니다.
+ */
+function formatMacroLines(macro) {
+  if (!macro) return ["통합 시장 상태: 사용 가능한 신호 없음"];
+
+  const layers = Array.isArray(macro.layers) ? macro.layers : [];
+  const dead = layers.filter((layer) => !layer.available && Number(layer.weight) > 0);
+  return [
+    `통합 시장 상태: ${macro.regime} (점수 ${macro.score})`,
+    ...(layers.length ? [`신호 기여: ${layers.map(formatContribution).join(" · ")}`] : []),
+    ...(dead.length
+      ? [`⚠️ 비활성 신호: ${dead.map((layer) => `${layer.label}(${reasonText(layer.reason)})`).join(", ")}`]
+      : []),
+    formatSentimentLine(macro),
+    formatTrendLine(macro),
+    formatMacdLine(macro),
+    ...(Number(macro.exposureMultiplier) < 1
+      ? [
+          `변동성 관리: 연율 ${(Number(macro.volatilityAnnualized) * 100).toFixed(1)}% → ` +
+            `주식 익스포저 ×${macro.exposureMultiplier}`,
+        ]
+      : []),
+    `목표 비중: ${formatAllocation(macro.targetAllocation)}`,
+  ];
+}
+
+function formatContribution(layer) {
+  if (!layer.available) return `${layer.label} —`;
+  const value = Number(layer.contribution);
+  return `${layer.label} ${value >= 0 ? "+" : ""}${value}`;
+}
+
+function reasonText(reason) {
+  return UNAVAILABLE_REASONS[reason] ?? reason ?? "사용 불가";
+}
+
+function layerOf(macro, key) {
+  return (Array.isArray(macro.layers) ? macro.layers : []).find((layer) => layer.key === key);
+}
+
+function formatSentimentLine(macro) {
+  if (!macro.sentiment) {
+    return `무료 뉴스 감성: 사용 불가 — ${reasonText(layerOf(macro, "NEWS")?.reason)}`;
+  }
+
+  const { sentiment } = macro;
+  // 기사 수가 갑자기 반토막 나면 소스 하나가 빠진 것입니다. 그 사실이 감성 부호를
+  // 바꾸고 목표 비중까지 흔들기 때문에 수집 상태를 항상 함께 보여줍니다.
+  const sources = formatSourceCounts(sentiment.sourceCounts);
+  return (
+    `무료 뉴스 감성: ${sentiment.sentiment_score} ` +
+    `(신뢰도 ${sentiment.confidence}, ${sentiment.articleCount}건${sources})` +
+    `${sentiment.stale ? " ※ 캐시 사용" : ""}` +
+    `${sentiment.warning ? ` ※ 일부 수집 실패: ${sentiment.warning}` : ""}`
+  );
+}
+
+function formatSourceCounts(sourceCounts) {
+  const entries = Object.entries(sourceCounts ?? {}).filter(([, count]) => Number(count) > 0);
+  return entries.length ? ` — ${entries.map(([name, count]) => `${name} ${count}`).join(", ")}` : "";
+}
+
+function formatTrendLine(macro) {
+  if (macro.trend) {
+    const stale = macro.trend.stale ? " ※ 캐시 사용" : "";
+    return (
+      `추세(200일선): ${macro.trend.score} ` +
+      `(신뢰도 ${macro.trend.confidence}, ` +
+      `${macro.trend.readySymbols}/${macro.trend.totalSymbols}종목)${stale}`
+    );
+  }
+  return `추세(200일선): 사용 불가 — ${reasonText(layerOf(macro, "TREND")?.reason)}`;
+}
+
+function formatMacdLine(macro) {
+  if (macro.macd) {
+    return (
+      `MACD: ${macro.macd.score} ` +
+      `(신뢰도 ${macro.macd.confidence}, ${macro.macd.readySymbols}/${macro.macd.totalSymbols}종목)`
+    );
+  }
+  return `MACD: 사용 불가 — ${reasonText(layerOf(macro, "MACD")?.reason)}`;
 }
 
 function formatAllocation(allocation = {}) {

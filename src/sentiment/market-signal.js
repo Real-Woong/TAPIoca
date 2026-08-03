@@ -80,6 +80,16 @@ export function combineMarketSignals(
     score,
     targetAllocation,
     reasons,
+    // 레이어별 상태를 항상 함께 넘깁니다. 예전에는 신호가 없으면 필드가 null이 되고
+    // 보고서가 그 줄을 통째로 생략해서, 꺼진 신호를 알아챌 방법이 없었습니다.
+    layers: [
+      layerStatus("FRED", "거시(FRED)", null, true, Number(macroSignal.score), null),
+      layerStatus("NEWS", "뉴스 감성", sentimentWeight, Boolean(sentiment), sentimentContribution,
+        sentiment ? null : "NOT_LOADED"),
+      layerStatus("TREND", "추세(200일선)", trendWeight, usableTrend, trendContribution,
+        unavailableReason(trend)),
+      layerStatus("MACD", "MACD", macdWeight, usableMacd, macdContribution, unavailableReason(macd)),
+    ],
     signalSource: signalSource(Boolean(sentiment), usableTrend, usableMacd),
     macroScore: macroSignal.score,
     baseScore,
@@ -109,6 +119,24 @@ function scaleForExposure(allocation, multiplier) {
 
 function clamp(value, low, high) {
   return Math.min(high, Math.max(low, value));
+}
+
+function layerStatus(key, label, weight, available, contribution, reason) {
+  return {
+    key,
+    label,
+    weight,
+    available,
+    contribution: round(Number(contribution) || 0),
+    ...(available ? {} : { reason }),
+  };
+}
+
+/** 신호 객체가 왜 못 쓰이는지 한 단어로 만듭니다. 객체 자체가 없으면 수집 단계에서 실패한 것입니다. */
+function unavailableReason(signal) {
+  if (signal?.available) return null;
+  if (!signal) return "NOT_LOADED";
+  return signal.reason ?? "UNAVAILABLE";
 }
 
 function signalSource(hasSentiment, hasTrend, hasMacd) {

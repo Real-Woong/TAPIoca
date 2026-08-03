@@ -132,3 +132,20 @@ test("minExposure 아래로는 익스포저를 줄이지 않는다", () => {
   // 0.15/0.9 = 0.167 < 0.3 → 하한 0.3으로 고정
   assert.equal(combined.exposureMultiplier, 0.3);
 });
+
+test("레이어별 상태를 항상 담고 꺼진 신호의 사유를 남긴다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: false, reason: "NO_DAILY_CLOSES" },
+    macd: { available: true, score: 0.4, confidence: 1 },
+    macdWeight: 0.15,
+  });
+
+  const byKey = Object.fromEntries(combined.layers.map((layer) => [layer.key, layer]));
+  assert.equal(byKey.NEWS.available, false);
+  assert.equal(byKey.NEWS.reason, "NOT_LOADED");
+  assert.equal(byKey.TREND.available, false);
+  assert.equal(byKey.TREND.reason, "NO_DAILY_CLOSES");
+  assert.equal(byKey.TREND.weight, 1);
+  assert.equal(byKey.MACD.available, true);
+  assert.equal(byKey.MACD.contribution, 0.06);
+});
