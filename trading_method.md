@@ -170,7 +170,8 @@ Default sentiment weight:
 
 ### 5.3 MACD confirmation
 
-The runner stores one observed ETF price for each 15-minute bucket.
+MACD is computed from the same Stooq daily closes the trend signal already
+downloads, so it needs no extra request.
 
 MACD configuration:
 
@@ -178,7 +179,8 @@ MACD configuration:
 Fast EMA:       12
 Slow EMA:       26
 Signal EMA:      9
-Minimum samples: 34
+Minimum samples: 34 daily closes
+Histogram scale: 0.5% of price
 Default weight:  0.15
 ```
 
@@ -197,8 +199,15 @@ MACD contribution
     × MACD weight
 ```
 
-Important limitation: these samples are periodic observations, not exchange
-OHLCV candles. MACD is therefore treated as a small confirmation signal only.
+MACD ran on 15-minute price snapshots until 2026-08-03. That window needed 34
+samples (8.5 hours) but a regular session is only 6.5 hours, so it stitched the
+overnight gap into a single step and behaved as an intraday indicator driving a
+daily allocation — its sign flipped on 4 of 6 consecutive sessions. It now uses
+daily closes. The 15-minute snapshot file is still written, for diagnostics only.
+
+Important limitation: the contribution ceiling is weight x 1.0 = 0.15 while the
+regime band spans 3.0, so MACD alone cannot move the regime. It is a small
+confirmation signal, not a timing signal.
 
 ### 5.4 Moving-average trend (Faber)
 
@@ -265,11 +274,32 @@ IWM    0%
 CASH  40%
 ```
 
-The regime changes target weights for both purchases and sales. When a holding
-exceeds its target weight by more than the rebalance band (default 5% of
-equity), the engine trims the surplus back toward target in the same cycle. This
-runs even while a loss brake has paused new purchases, so a defensive regime
-change reduces exposure immediately instead of only stopping further buys.
+The regime changes target weights for both purchases and sales. A single no-trade
+band (default 5% of equity) now gates **both** sides: the engine only buys when a
+holding is below target by more than the band, and only trims when it is above
+target by more than the band. Rebalancing sells still run while a loss brake has
+paused new purchases, so a defensive regime change reduces exposure immediately.
+
+### 6.1 Churn controls
+
+Added 2026-08-03 after the first 8 PAPER sessions showed cumulative trading costs
+(-$0.16) exceeding cumulative P&L (-$0.15) — the strategy was flat before costs.
+
+```text
+Symmetric band       buys use the same 5% band as sells   (was: $1 deficit)
+regimeConfirmCycles  4    consecutive cycles = 1 hour     (was: instant)
+maxRebalancesPerDay  1    per regime, per day             (was: unlimited)
+```
+
+The band was previously applied to sells only, while buys triggered at a $1
+deficit. With a $10 daily buy cap, the engine bought $10 and rebalanced roughly
+$10 back out on the same day — around 50% daily turnover at 0.1% per fill.
+
+Regime confirmation holds the previous regime's target weights until a new regime
+persists for `regimeConfirmCycles`. The score and all diagnostics still show the
+latest values; only the allocation is held, and the report prints the pending
+regime. A confirmed regime change re-enables rebalancing immediately, so the
+daily cap never blocks genuine defensive de-risking.
 
 ## 7. PAPER Cycle
 
