@@ -12,6 +12,12 @@ export const DEFAULT_TREND_OPTIONS = Object.freeze({
   maxSamples: 300,
 });
 
+// Stooq는 기본 Node User-Agent를 자주 차단합니다. 차단되면 HTTP 오류가 아니라
+// 200과 함께 빈 본문이나 안내 문구를 돌려주므로, 브라우저 UA를 명시해 요청합니다.
+const STOOQ_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
 /** 일봉 종가 배열 하나의 200일 이동평균 대비 위치를 연속 점수로 계산합니다. */
 export function calculateTrend(values, options = {}) {
   const config = { ...DEFAULT_TREND_OPTIONS, ...options };
@@ -87,6 +93,9 @@ export function buildTrendSignal(closesBySymbol = {}, options = {}, now = new Da
   if (ready.length === 0) {
     return {
       available: false,
+      // 사용 불가에는 두 가지 원인이 있고 대응이 다릅니다.
+      // 종가를 아예 못 받은 것(수집 실패)과 아직 200개가 안 쌓인 것(준비 중)입니다.
+      reason: all.length === 0 ? "NO_DAILY_CLOSES" : "INSUFFICIENT_HISTORY",
       evaluatedAt: now.toISOString(),
       score: 0,
       confidence: 0,
@@ -131,46 +140,99 @@ export async function loadTrendSignal({
   const config = { ...DEFAULT_TREND_OPTIONS, ...options };
   const snapshotPath = path.join(dataDir, "trend-snapshot.json");
   const cached = await readSnapshot(snapshotPath);
-  const isFresh = cached?.fetchedAt && ageHours(cached.fetchedAt, now) < maxAgeHours;
+  // 비어 있는 캐시는 "신선"해도 쓸 수 없습니다. 예전에는 수집이 실패해 만들어진
+  // 빈 스냅샷이 신선한 것으로 취급돼, 20시간 동안 추세 신호가 조용히 꺼졌습니다.
+  const cacheUsable = hasUsableCloses(cached?.symbols);
+  const isFresh = cacheUsable && ageHours(cached.fetchedAt, now) < maxAgeHours;
 
   if (isFresh) {
-    return buildTrendSignal(cached.symbols ?? {}, config, now);
+    return buildTrendSignal(cached.symbols, config, now);
   }
 
   try {
-    const closesBySymbol = await fetchAllCloses(symbols ?? [], config, fetchImpl);
+    const { closesBySymbol, failures } = await fetchAllCloses(symbols ?? [], config, fetchImpl);
     await mkdir(dataDir, { recursive: true });
     await writeSnapshot(snapshotPath, {
       version: 1,
       fetchedAt: now.toISOString(),
       symbols: closesBySymbol,
     });
-    return buildTrendSignal(closesBySymbol, config, now);
+    const signal = buildTrendSignal(closesBySymbol, config, now);
+    // 일부 종목만 실패한 경우는 신호를 유지하되 실패 사실을 함께 넘겨 보고서에 드러냅니다.
+    return failures.length ? { ...signal, failures } : signal;
   } catch (error) {
     // 신선한 캐시가 없고 요청도 실패하면, 오래된 캐시라도 있으면 그걸로 진행합니다.
-    if (cached?.symbols) return buildTrendSignal(cached.symbols, config, now);
+    if (cacheUsable) {
+      return {
+        ...buildTrendSignal(cached.symbols, config, now),
+        stale: true,
+        staleSince: cached.fetchedAt ?? null,
+        fetchError: error.message,
+      };
+    }
     throw error;
   }
 }
 
+/**
+ * 캐시에 저장된 종목별 일봉 종가를 읽습니다.
+ * MACD도 같은 종가를 사용하므로 Stooq에 다시 요청하지 않습니다.
+ * loadTrendSignal을 먼저 호출해 캐시를 갱신한 뒤 읽어야 합니다.
+ */
+export async function loadDailyCloses({ dataDir }) {
+  const snapshot = await readSnapshot(path.join(dataDir, "trend-snapshot.json"));
+  const symbols = snapshot?.symbols ?? {};
+  return Object.fromEntries(
+    Object.entries(symbols).filter(([, closes]) => Array.isArray(closes) && closes.length > 0),
+  );
+}
+
 async function fetchAllCloses(symbols, config, fetchImpl) {
-  const entries = await Promise.all(
+  const results = await Promise.allSettled(
     symbols.map(async (rawSymbol) => {
       const symbol = String(rawSymbol).trim().toUpperCase();
-      const closes = await fetchStooqCloses(symbol, config, fetchImpl);
-      return [symbol, closes];
+      return [symbol, await fetchStooqCloses(symbol, config, fetchImpl)];
     }),
   );
-  return Object.fromEntries(entries.filter(([, closes]) => closes.length > 0));
+
+  const closesBySymbol = {};
+  const failures = [];
+  for (const [index, result] of results.entries()) {
+    const symbol = String(symbols[index]).trim().toUpperCase();
+    if (result.status === "fulfilled") closesBySymbol[result.value[0]] = result.value[1];
+    else failures.push(`${symbol}: ${result.reason?.message ?? result.reason}`);
+  }
+
+  // 한 종목도 못 받았으면 실패입니다. 예전에는 이 경우에도 빈 결과를 정상으로 보고
+  // 캐시에 기록해서, 호출자가 붙여둔 catch가 한 번도 걸리지 않았습니다.
+  if (Object.keys(closesBySymbol).length === 0) {
+    throw new Error(`Stooq 일봉을 한 종목도 받지 못했습니다 — ${failures.join(" / ")}`);
+  }
+  return { closesBySymbol, failures };
 }
 
 async function fetchStooqCloses(symbol, config, fetchImpl) {
   // 미국 ETF는 Stooq에서 "vti.us" 형태의 일봉 CSV로 제공됩니다.
   const url = `https://stooq.com/q/d/l/?s=${symbol.toLowerCase()}.us&i=d`;
-  const response = await fetchImpl(url);
-  if (!response.ok) throw new Error(`Stooq 응답 오류 ${response.status} (${symbol})`);
+  const response = await fetchImpl(url, {
+    headers: { "user-agent": STOOQ_USER_AGENT, accept: "text/csv,text/plain,*/*" },
+  });
+  if (!response.ok) throw new Error(`Stooq 응답 오류 ${response.status}`);
   const csv = await response.text();
-  return parseStooqCloses(csv).slice(-config.maxSamples);
+  const closes = parseStooqCloses(csv).slice(-config.maxSamples);
+  if (closes.length === 0) throw new Error(`CSV에 종가가 없습니다 (${describeBody(csv)})`);
+  return closes;
+}
+
+/** 차단·한도 초과 응답을 로그에서 알아볼 수 있도록 본문 앞부분을 짧게 요약합니다. */
+function describeBody(body) {
+  const text = String(body ?? "").trim();
+  if (text.length === 0) return "빈 응답";
+  return `${text.slice(0, 60).replace(/\s+/g, " ")}…`;
+}
+
+function hasUsableCloses(symbols) {
+  return Object.values(symbols ?? {}).some((closes) => Array.isArray(closes) && closes.length > 0);
 }
 
 /** Stooq CSV(Date,Open,High,Low,Close,Volume)에서 종가 열만 추출합니다. */

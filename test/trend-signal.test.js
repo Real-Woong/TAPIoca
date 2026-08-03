@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import {
   buildTrendSignal,
   calculateTrend,
   calculateVolatility,
+  loadDailyCloses,
   loadTrendSignal,
   parseStooqCloses,
 } from "../src/market/trend-signal.js";
@@ -154,4 +155,138 @@ test("Stooq CSV에서 종가 열만 추출한다", () => {
     "2026-01-04,,,,,", // 결측 행은 건너뜁니다.
   ].join("\n");
   assert.deepEqual(parseStooqCloses(csv), [100.5, 101.2]);
+});
+
+test("모든 종목의 일봉 수집이 실패하면 예외를 던지고 빈 캐시를 남기지 않는다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const now = new Date("2026-07-25T14:00:00Z");
+    // Stooq가 차단할 때 실제로 오는 응답: HTTP 200 + CSV가 아닌 본문.
+    const blocked = async () => ({ ok: true, status: 200, text: async () => "" });
+
+    await assert.rejects(
+      loadTrendSignal({ dataDir, symbols: ["VTI", "SCHD"], now, fetchImpl: blocked }),
+      /한 종목도 받지 못했습니다/,
+    );
+
+    // 빈 결과가 캐시로 남으면 20시간 동안 신호가 조용히 꺼집니다.
+    await assert.rejects(
+      readFile(path.join(dataDir, "trend-snapshot.json"), "utf8"),
+      { code: "ENOENT" },
+    );
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("일부 종목만 실패하면 나머지로 신호를 만들고 실패 내역을 남긴다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const down = [...Array(199).fill(100), 80];
+    const fetchImpl = async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => (/s=vti\.us/.test(url) ? csvWithCloses(down) : ""),
+    });
+
+    const signal = await loadTrendSignal({
+      dataDir,
+      symbols: ["VTI", "SCHD"],
+      now: new Date("2026-07-25T14:00:00Z"),
+      fetchImpl,
+    });
+
+    assert.equal(signal.available, true);
+    assert.equal(signal.readySymbols, 1);
+    assert.equal(signal.failures.length, 1);
+    assert.match(signal.failures[0], /SCHD/);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("종가가 비어 있는 캐시는 신선해도 다시 수집한다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    // 이전 버전이 남겼을 수 있는 빈 스냅샷입니다.
+    await writeFile(
+      path.join(dataDir, "trend-snapshot.json"),
+      JSON.stringify({ version: 1, fetchedAt: "2026-07-25T13:00:00Z", symbols: {} }),
+    );
+
+    const down = [...Array(199).fill(100), 80];
+    const counter = { calls: 0 };
+    const signal = await loadTrendSignal({
+      dataDir,
+      symbols: ["VTI"],
+      now: new Date("2026-07-25T14:00:00Z"),
+      fetchImpl: mockFetch({ VTI: csvWithCloses(down) }, counter),
+    });
+
+    assert.equal(counter.calls, 1);
+    assert.equal(signal.available, true);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("수집 실패로 오래된 캐시를 쓰면 stale 표시를 남긴다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const up = [...Array(199).fill(100), 130];
+    await loadTrendSignal({
+      dataDir,
+      symbols: ["VTI"],
+      now: new Date("2026-07-25T14:00:00Z"),
+      fetchImpl: mockFetch({ VTI: csvWithCloses(up) }, { calls: 0 }),
+    });
+
+    const later = await loadTrendSignal({
+      dataDir,
+      symbols: ["VTI"],
+      now: new Date("2026-07-27T14:00:00Z"),
+      fetchImpl: async () => {
+        throw new Error("network down");
+      },
+    });
+
+    assert.equal(later.available, true);
+    assert.equal(later.stale, true);
+    assert.match(later.fetchError, /network down/);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("준비된 종목이 없는 사유를 구분해서 남긴다", () => {
+  assert.equal(buildTrendSignal({}, { maPeriod: 200 }).reason, "NO_DAILY_CLOSES");
+  assert.equal(buildTrendSignal({ VTI: [100, 101] }, { maPeriod: 200 }).reason, "INSUFFICIENT_HISTORY");
+});
+
+test("캐시된 일봉 종가를 MACD가 재사용할 수 있게 노출한다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    const down = [...Array(199).fill(100), 80];
+    await loadTrendSignal({
+      dataDir,
+      symbols: ["VTI"],
+      now: new Date("2026-07-25T14:00:00Z"),
+      fetchImpl: mockFetch({ VTI: csvWithCloses(down) }, { calls: 0 }),
+    });
+
+    const closes = await loadDailyCloses({ dataDir });
+    assert.deepEqual(Object.keys(closes), ["VTI"]);
+    assert.equal(closes.VTI.length, 200);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("캐시가 없으면 빈 종가 묶음을 돌려준다", async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "trend-"));
+  try {
+    assert.deepEqual(await loadDailyCloses({ dataDir }), {});
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
