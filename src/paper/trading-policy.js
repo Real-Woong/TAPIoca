@@ -6,8 +6,16 @@ const DEFAULTS = Object.freeze({
   maxDailyBuyUsd: 10,
   maxTotalLossUsd: 10,
   maxDailyLossUsd: 3,
-  // 목표 비중을 자산 대비 이 비율 이상 초과한 ETF만 리밸런싱 매도합니다(잔챙이 매매 방지).
+  // 목표 비중에서 자산 대비 이 비율 이상 벗어난 ETF만 매매합니다(잔챙이 매매 방지).
+  // 매도에만 걸려 있던 밴드를 매수에도 대칭으로 적용합니다. 예전에는 매수가 결손
+  // $1에서 트리거돼, 15분마다 매수와 리밸런싱 매도가 서로를 되돌렸습니다.
   rebalanceBandRate: 0.05,
+  // 레짐이 이 횟수만큼 연속으로 유지돼야 목표 비중을 바꿉니다(15분 주기 × 4 = 1시간).
+  // 뉴스 감성이 장중에 뒤집힐 때마다 주식 비중이 40%↔70%로 튀던 문제를 막습니다.
+  regimeConfirmCycles: 4,
+  // 같은 레짐에서 하루에 허용하는 리밸런싱 매도 횟수입니다.
+  // 레짐이 실제로 바뀌면 이 한도와 무관하게 방어 매도를 즉시 허용합니다.
+  maxRebalancesPerDay: 1,
   // 체결 1건마다 부과하는 거래비용(수수료+FX 스프레드+슬리피지 가정, 편도 비율).
   // 실제 손익을 정직하게 만들기 위한 보수적 가정값이며 실측으로 보정해야 합니다.
   tradeCostRate: 0.001,
@@ -38,6 +46,14 @@ export function loadTradingPolicy(env = process.env) {
     maxTotalLossUsd: readPositive(env.MAX_TOTAL_LOSS_USD, DEFAULTS.maxTotalLossUsd),
     maxDailyLossUsd: readPositive(env.MAX_DAILY_LOSS_USD, DEFAULTS.maxDailyLossUsd),
     rebalanceBandRate: readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate),
+    regimeConfirmCycles: readPositiveInteger(
+      env.REGIME_CONFIRM_CYCLES,
+      DEFAULTS.regimeConfirmCycles,
+    ),
+    maxRebalancesPerDay: readPositiveInteger(
+      env.MAX_REBALANCES_PER_DAY,
+      DEFAULTS.maxRebalancesPerDay,
+    ),
     tradeCostRate: readNonNegativeRate(env.TRADE_COST_RATE, DEFAULTS.tradeCostRate),
     reentryCooldownHours: readPositiveInteger(
       env.REENTRY_COOLDOWN_HOURS,

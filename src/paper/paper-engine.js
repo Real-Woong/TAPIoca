@@ -92,12 +92,23 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
     }
   }
 
-  if (macroSignal) {
+  // 레짐이 확정되기 전까지는 직전 확정 레짐의 목표 비중을 유지합니다.
+  // 이 아래의 매수·매도는 모두 확정된 신호(effectiveSignal)만 사용합니다.
+  const effectiveSignal = macroSignal
+    ? applyRegimeHysteresis(state, macroSignal, policy, now)
+    : macroSignal;
+
+  if (effectiveSignal) {
     // 상태 파일에는 API 원본 전체가 아니라 실제 판단에 사용한 요약만 저장합니다.
-    state.macro = compactMacroSignal(macroSignal);
+    state.macro = compactMacroSignal(effectiveSignal);
     // 목표 비중을 초과한 보유분은 손실 한도(매수 중단)와 무관하게 먼저 덜어내
     // 익스포저를 낮춥니다. 매수만 하고 팔지 않던 비대칭 문제를 해결합니다.
-    runRebalanceSells({ state, priceMap, policy, now, decisions, macroSignal });
+    if (canRebalanceToday(state, policy, effectiveSignal.regime, dateKey)) {
+      const sold = runRebalanceSells({
+        state, priceMap, policy, now, decisions, macroSignal: effectiveSignal,
+      });
+      if (sold > 0) recordRebalance(state, effectiveSignal.regime, dateKey);
+    }
   }
 
   const risk = evaluateRiskLimits(state, priceMap, policy, dateKey, now);
@@ -109,7 +120,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
       totalPnlUsd: risk.totalPnlUsd,
       dailyPnlUsd: risk.dailyPnlUsd,
     });
-  } else if (macroSignal) {
+  } else if (effectiveSignal) {
     dailyBought = runMacroTargetBuys({
       state,
       priceMap,
@@ -117,7 +128,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
       now,
       dailyBought,
       decisions,
-      macroSignal,
+      macroSignal: effectiveSignal,
     });
   } else if (macroSignal === undefined) {
     // 기존 테스트나 직접 함수 호출은 이전 동작을 유지합니다.
@@ -147,6 +158,72 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   return { state, decisions, summary };
 }
 
+/**
+ * 레짐이 정해진 횟수만큼 연속으로 유지될 때만 목표 비중을 바꿉니다.
+ * 통합 점수가 임계선 근처에서 진동하면 15분마다 주식 비중이 40%↔70%로 튀고,
+ * 매수와 리밸런싱 매도가 같은 날 서로를 되돌려 거래비용만 쌓입니다.
+ */
+function applyRegimeHysteresis(state, macroSignal, policy, now) {
+  const required = Math.max(1, Number(policy.regimeConfirmCycles) || 1);
+  const tracker = (state.regimeTracker ??= {});
+  const observed = macroSignal.regime;
+
+  // 첫 실행이거나 확정 레짐이 없으면 바로 채택합니다.
+  if (!tracker.active || observed === tracker.active) {
+    confirmRegime(tracker, macroSignal, now);
+    return macroSignal;
+  }
+
+  tracker.pendingCycles = tracker.pending === observed ? tracker.pendingCycles + 1 : 1;
+  tracker.pending = observed;
+
+  if (tracker.pendingCycles >= required) {
+    confirmRegime(tracker, macroSignal, now);
+    return macroSignal;
+  }
+
+  // 아직 확정 전입니다. 점수·진단은 최신값을 그대로 보여주되
+  // 목표 비중만 직전 확정 레짐의 것으로 되돌립니다.
+  return {
+    ...macroSignal,
+    regime: tracker.active,
+    targetAllocation: tracker.allocation ?? macroSignal.targetAllocation,
+    pendingRegime: observed,
+    pendingRegimeCycles: `${tracker.pendingCycles}/${required}`,
+    reasons: [
+      ...(macroSignal.reasons ?? []),
+      `레짐 확정 대기: ${observed} ${tracker.pendingCycles}/${required}회 — ` +
+        `${tracker.active} 비중 유지`,
+    ],
+  };
+}
+
+/** 확정 레짐과 그때의 목표 비중을 저장합니다. 대기 중에는 이 비중을 그대로 씁니다. */
+function confirmRegime(tracker, macroSignal, now) {
+  const changed = tracker.active !== macroSignal.regime;
+  tracker.active = macroSignal.regime;
+  if (changed || !tracker.activeSince) tracker.activeSince = now.toISOString();
+  tracker.allocation = macroSignal.targetAllocation;
+  tracker.pending = null;
+  tracker.pendingCycles = 0;
+}
+
+/** 같은 레짐에서는 하루 정해진 횟수까지만 리밸런싱합니다. 레짐이 바뀌면 즉시 다시 허용합니다. */
+function canRebalanceToday(state, policy, regime, dateKey) {
+  const limit = Math.max(1, Number(policy.maxRebalancesPerDay) || 1);
+  const log = state.rebalanceLog;
+  if (!log || log.date !== dateKey || log.regime !== regime) return true;
+  return Number(log.count ?? 0) < limit;
+}
+
+function recordRebalance(state, regime, dateKey) {
+  const log = state.rebalanceLog;
+  state.rebalanceLog =
+    log && log.date === dateKey && log.regime === regime
+      ? { ...log, count: Number(log.count ?? 0) + 1 }
+      : { date: dateKey, regime, count: 1 };
+}
+
 // 목표 비중을 밴드 이상 초과한 ETF를 목표선까지 덜어내 위험을 낮춥니다.
 // 매수와 달리 방어적 레짐 전환 시 즉시 익스포저를 줄여야 하므로 1회 주문
 // 상한(maxOrderUsd)과 일일 매수 한도를 적용하지 않고 초과분을 한 번에 정리합니다.
@@ -154,7 +231,8 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
   const allocation = macroSignal.targetAllocation ?? {};
   const summary = summarizePaperState(state, priceMap);
   // 자산 대비 밴드보다 큰 초과분만 정리해 소액 잔챙이 매매를 막습니다.
-  const band = Math.max(policy.minOrderUsd, policy.rebalanceBandRate * summary.equityUsd);
+  const band = tradeBand(policy, summary.equityUsd);
+  let sold = 0;
 
   for (const symbol of state.watchlist) {
     const position = state.positions[symbol];
@@ -218,7 +296,19 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
       amountUsd: proceedsUsd,
       targetWeight: validWeight(allocation[symbol]),
     });
+    sold += 1;
   }
+
+  return sold;
+}
+
+/**
+ * 매수·매도에 공통으로 쓰는 무거래 밴드입니다.
+ * 목표에서 이만큼 벗어나야 주문을 냅니다. 예전에는 매도에만 밴드가 있고 매수는
+ * 결손 $1에서 트리거돼, 같은 날 매수 $10과 리밸런싱 매도 $10이 맞물렸습니다.
+ */
+function tradeBand(policy, equityUsd) {
+  return Math.max(policy.minOrderUsd, (Number(policy.rebalanceBandRate) || 0) * equityUsd);
 }
 
 // FRED 목표 비중을 기준으로 가장 덜 채워진 ETF부터 일일 한도 안에서 매수합니다.
@@ -268,7 +358,8 @@ function runMacroTargetBuys({
           fulfillment: targetValue > 0 ? currentValue / targetValue : Infinity,
         };
       })
-      .filter((candidate) => candidate && candidate.deficitUsd >= policy.minOrderUsd)
+      // 매도와 같은 밴드를 적용합니다. 목표에서 조금 벗어난 정도로는 매수하지 않습니다.
+      .filter((candidate) => candidate && candidate.deficitUsd >= tradeBand(policy, summary.equityUsd))
       .sort((a, b) =>
         a.fulfillment - b.fulfillment ||
         b.targetValue - a.targetValue ||
@@ -456,7 +547,11 @@ function compactMacroSignal(signal) {
     macd: signal.macd,
     volatilityAnnualized: signal.volatilityAnnualized,
     exposureMultiplier: signal.exposureMultiplier,
+    layers: signal.layers,
     stale: Boolean(signal.stale),
+    ...(signal.pendingRegime
+      ? { pendingRegime: signal.pendingRegime, pendingRegimeCycles: signal.pendingRegimeCycles }
+      : {}),
   };
 }
 

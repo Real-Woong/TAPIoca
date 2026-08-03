@@ -370,3 +370,148 @@ test("일일 손실 한도에 도달하면 신규 매수를 중단한다", () =>
   assert.equal(result.state.risk.lastCheck.buyPaused, true);
   assert.equal(result.decisions.at(-1).reason, "DAILY_LOSS_LIMIT");
 });
+
+// ── 회전율 억제 ────────────────────────────────────────────────
+// 07-28 실제 보고서에서 관측된 패턴을 재현합니다:
+// BUY $5 → BUY $5 → SELL $10.01이 같은 날 같은 종목에서 일어났습니다.
+
+function churnState() {
+  return createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA", "BBB", "CCC"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+}
+
+test("레짐이 확정 횟수만큼 유지되기 전에는 목표 비중을 바꾸지 않는다", () => {
+  const confirming = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REGIME_CONFIRM_CYCLES: "4",
+  });
+  const state = churnState();
+
+  runPaperCycle(state, prices, confirming, new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"));
+  assert.equal(state.macro.regime, "NEUTRAL");
+
+  // 장중에 RISK_OFF가 한 번 스쳐도 비중은 NEUTRAL을 유지합니다.
+  for (const [index, minute] of [15, 30, 45].entries()) {
+    runPaperCycle(
+      state, prices, confirming,
+      new Date(`2026-07-14T14:${minute}:00Z`),
+      macroSignal("RISK_OFF"),
+    );
+    assert.equal(state.macro.regime, "NEUTRAL", `${index + 1}번째 사이클`);
+    assert.equal(state.macro.pendingRegime, "RISK_OFF");
+    assert.equal(state.macro.targetAllocation.CASH, 0.1);
+  }
+
+  // 4회 연속으로 유지되면 그때 전환합니다.
+  runPaperCycle(state, prices, confirming, new Date("2026-07-14T15:00:00Z"), macroSignal("RISK_OFF"));
+  assert.equal(state.macro.regime, "RISK_OFF");
+  assert.equal(state.macro.targetAllocation.CASH, 0.4);
+});
+
+test("레짐이 확정되면 대기 횟수와 무관하게 즉시 방어 비중을 적용한다", () => {
+  const immediate = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REGIME_CONFIRM_CYCLES: "1",
+  });
+  const state = churnState();
+
+  runPaperCycle(state, prices, immediate, new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"));
+  runPaperCycle(state, prices, immediate, new Date("2026-07-14T14:15:00Z"), macroSignal("RISK_OFF"));
+
+  assert.equal(state.macro.regime, "RISK_OFF");
+  assert.equal(state.macro.targetAllocation.CASH, 0.4);
+});
+
+test("레짐이 그대로면 하루 한 번만 리밸런싱 매도한다", () => {
+  const capped = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REGIME_CONFIRM_CYCLES: "1", MAX_REBALANCES_PER_DAY: "1",
+  });
+  const overweight = (state) => {
+    state.positions.AAA = {
+      symbol: "AAA", openedByAgent: true, quantity: 0.6, entryPrice: 100, peakPrice: 100,
+      lastPrice: 100, lastPriceAt: "2026-07-14T00:00:00Z", costUsd: 60,
+      openedAt: "2026-07-14T00:00:00Z",
+    };
+    state.cashUsd = 7.05;
+  };
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  overweight(state);
+  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], capped,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("RISK_OFF"));
+  const afterFirst = countRebalanceSells(state);
+  assert.equal(afterFirst, 1);
+  assert.equal(state.rebalanceLog.count, 1);
+
+  // 같은 날 같은 레짐에서 다시 초과 상태가 돼도 추가로 팔지 않습니다.
+  overweight(state);
+  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], capped,
+    new Date("2026-07-14T14:15:00Z"), macroSignal("RISK_OFF"));
+  assert.equal(countRebalanceSells(state), afterFirst);
+
+  // 날짜가 바뀌면 다시 허용합니다.
+  overweight(state);
+  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], capped,
+    new Date("2026-07-15T14:00:00Z"), macroSignal("RISK_OFF"));
+  assert.equal(countRebalanceSells(state), afterFirst + 1);
+});
+
+function countRebalanceSells(state) {
+  return state.trades.filter((trade) => trade.reason?.includes("REBALANCE_SELL")).length;
+}
+
+// 목표에 거의 도달한 종목을 15분마다 조금씩 더 사면, 그 매수가 다음 리밸런싱 매도를
+// 불러 같은 날 왕복매매가 됩니다. 밴드는 그 시작점을 막습니다.
+function nearTargetState() {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const equity = state.cashUsd;
+  state.positions.AAA = {
+    symbol: "AAA", openedByAgent: true, quantity: (equity * 0.67) / 100, entryPrice: 100,
+    peakPrice: 100, lastPrice: 100, lastPriceAt: "2026-07-14T00:00:00Z",
+    costUsd: equity * 0.67, openedAt: "2026-07-14T00:00:00Z",
+  };
+  state.cashUsd = equity * 0.33;
+  return state;
+}
+
+test("목표에서 밴드 이내로만 벗어난 종목은 매수하지 않는다", () => {
+  const banded = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REBALANCE_BAND_RATE: "0.05",
+  });
+
+  const result = runPaperCycle(
+    nearTargetState(), [{ symbol: "AAA", lastPrice: 100 }], banded,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"),
+  );
+
+  // 목표 70% 대비 67%로 3%p 부족하지만 밴드(5%) 안이므로 주문을 내지 않습니다.
+  assert.equal(result.state.trades.length, 0);
+  assert.equal(result.state.dailyBuyUsd["2026-07-14"], 0);
+});
+
+test("밴드를 넘어서면 예전처럼 목표까지 매수한다", () => {
+  const looseBand = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REBALANCE_BAND_RATE: "0.001",
+  });
+
+  const result = runPaperCycle(
+    nearTargetState(), [{ symbol: "AAA", lastPrice: 100 }], looseBand,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"),
+  );
+
+  assert.ok(result.state.trades.length > 0);
+});
