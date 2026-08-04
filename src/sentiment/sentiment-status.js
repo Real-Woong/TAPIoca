@@ -11,6 +11,7 @@ try {
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
     query: process.env.NEWS_QUERY,
     maxResults: process.env.NEWS_MAX_RECORDS,
+    cacheMinutes: process.env.NEWS_CACHE_MINUTES,
     blueskyAuthors: csv(process.env.BLUESKY_AUTHORS),
     opinionFeeds: csv(process.env.OPINION_RSS_FEEDS),
     opinionWeight: process.env.OPINION_SCORE_WEIGHT || 0.1,

@@ -3,7 +3,10 @@ import path from "node:path";
 
 const GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc";
 const BLUESKY_PUBLIC_API = "https://public.api.bsky.app";
-export const DEFAULT_NEWS_CACHE_MS = 15 * 60 * 1000;
+// PAPER 사이클과 캐시 수명이 15분으로 같아서 매 사이클 재수집했고, GDELT를 하루 96번
+// 호출해 429가 반복됐습니다. 60분으로 늘려 호출을 1/4로 줄입니다. 감성은 일 단위
+// 판단에 쓰이므로 15분 신선도가 필요 없습니다. NEWS_CACHE_MINUTES로 조정합니다.
+export const DEFAULT_NEWS_CACHE_MS = 60 * 60 * 1000;
 export const DEFAULT_NEWS_QUERY =
   '("Federal Reserve" OR FOMC OR inflation OR recession OR "jobs report" OR "interest rates")';
 export const DEFAULT_FED_FEEDS = [

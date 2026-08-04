@@ -281,6 +281,27 @@ holding is below target by more than the band, and only trims when it is above
 target by more than the band. Rebalancing sells still run while a loss brake has
 paused new purchases, so a defensive regime change reduces exposure immediately.
 
+### 5.2b Sentiment cache and layer weights
+
+News is cached for 60 minutes (`NEWS_CACHE_MINUTES`). It was 15 minutes, the same
+as the PAPER cycle, so every cycle refetched and GDELT was called ~96 times a day
+and answered 429. Sentiment feeds a daily allocation decision, so 15-minute
+freshness bought nothing.
+
+Articles split into two layers before scoring:
+
+```text
+official  FED_RSS + GDELT              weight 1.0
+opinion   BLUESKY + OPINION_RSS        weight OPINION_SCORE_WEIGHT (0.3)
+final     (official + w * opinion) / (1 + w)
+```
+
+Note the analyzer is keyword matching, not comprehension. Fed statements use
+"recession", "inflation", and "rate hike" as neutral technical vocabulary, which
+the matcher reads as bearish. That is why the official layer sat near -0.65 for
+twelve days whenever GDELT was absent, and why the sentiment weight was cut from
+2.0 to 1.0 on 2026-08-04.
+
 ### 6.1 Churn controls
 
 Added 2026-08-03 after the first 8 PAPER sessions showed cumulative trading costs

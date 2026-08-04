@@ -81,7 +81,7 @@ test("선택한 개인 RSS를 전문가 의견으로 구분한다", async () => 
   assert.equal(article.domain, "writer.example");
 });
 
-test("Fed와 GDELT를 합쳐 15분 캐시하며 일부 소스 장애를 격리한다", async () => {
+test("Fed와 GDELT를 합쳐 캐시하며 일부 소스 장애를 격리한다", async () => {
   const dataDir = await mkdtemp(path.join(process.cwd(), ".free-news-test-"));
   let calls = 0;
   const fetchImpl = async (url) => {

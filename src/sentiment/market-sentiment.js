@@ -12,11 +12,13 @@ export async function loadMarketSentiment({
   opinionFeeds,
   opinionWeight = 0.1,
   maxResults,
+  cacheMinutes,
   now = new Date(),
   fetchImpl = fetch,
 }) {
   const snapshot = await fetchFreeMarketNews({
     dataDir,
+    ...(cacheMinutes ? { maxAgeMs: readCacheMs(cacheMinutes) } : {}),
     query,
     fedFeeds,
     blueskyAuthors,
@@ -65,6 +67,12 @@ export async function loadMarketSentiment({
     stale: snapshot.stale,
     warning: snapshot.warning,
   };
+}
+
+/** NEWS_CACHE_MINUTES를 밀리초로 바꿉니다. 잘못된 값이면 기본값을 쓰도록 undefined를 냅니다. */
+function readCacheMs(minutes) {
+  const value = Number(minutes);
+  return Number.isFinite(value) && value > 0 ? value * 60 * 1000 : undefined;
 }
 
 function analyzeLayer(articles, options) {
