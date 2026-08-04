@@ -56,7 +56,29 @@ function runFile(file) {
   });
 }
 
-const results = (await Promise.all(files.map(runFile))).sort((a, b) => a.file.localeCompare(b.file));
+/**
+ * 테스트 파일마다 Node 프로세스를 하나씩 띄우므로 동시 실행 수를 제한합니다.
+ * 예전에는 Promise.all로 18개를 한꺼번에 띄웠고, 프로세스당 50~80MB라
+ * 메모리가 작은 배포 서버(오라클 프리티어)에서 이 명령이 OOM을 일으켜
+ * sshd까지 응답하지 못하게 만들었습니다. TEST_CONCURRENCY로 조정합니다.
+ */
+async function runWithLimit(items, limit) {
+  const output = [];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await runFile(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return output;
+}
+
+const concurrency = Math.max(1, Number(process.env.TEST_CONCURRENCY) || 4);
+const results = (await runWithLimit(files, concurrency))
+  .sort((a, b) => a.file.localeCompare(b.file));
 
 let totalPass = 0;
 let totalFail = 0;
