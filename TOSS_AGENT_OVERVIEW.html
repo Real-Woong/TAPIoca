@@ -301,7 +301,7 @@
           <li><b>Toss Open API</b> 가격·환율·보유</li>
           <li><b>FRED</b> 거시지표</li>
           <li><b>Fed RSS · GDELT</b> 경제뉴스</li>
-          <li><b>Stooq</b> 일봉 종가 (200일선·변동성)</li>
+          <li><b>Twelve Data</b> 일봉 종가 (200일선·변동성·MACD)<br><span style="opacity:.7">폴백: Yahoo Finance → Stooq</span></li>
           <li><b>Bluesky · RSS</b> 선택형 의견</li>
         </ul>
       </div>
@@ -410,11 +410,11 @@
         <div class="layers">
           <div class="layer"><span class="licon">◆</span><div><div class="lname">FRED 거시</div><div class="ldesc">경제 국면의 기본 점수</div></div><span class="lw">base</span></div>
           <div class="plus">+</div>
-          <div class="layer"><span class="licon">◈</span><div><div class="lname">뉴스 감성</div><div class="ldesc">Fed RSS · GDELT, 신뢰도 반영</div></div><span class="lw">× 2.0</span></div>
+          <div class="layer"><span class="licon">◈</span><div><div class="lname">뉴스 감성</div><div class="ldesc">Fed RSS · GDELT · Bluesky · RSS, 신뢰도 반영</div></div><span class="lw">× 1.0</span></div>
           <div class="plus">+</div>
           <div class="layer"><span class="licon">▲</span><div><div class="lname">200일 이동평균 추세</div><div class="ldesc">Faber — 1급 방어 신호</div></div><span class="lw">× 1.0</span></div>
           <div class="plus">+</div>
-          <div class="layer"><span class="licon">≈</span><div><div class="lname">MACD</div><div class="ldesc">15분 스냅샷 기반 작은 확인</div></div><span class="lw">× 0.15</span></div>
+          <div class="layer"><span class="licon">≈</span><div><div class="lname">MACD</div><div class="ldesc">일봉 종가 12/26/9, 작은 확인</div></div><span class="lw">× 0.15</span></div>
           <div class="plus">↓ 변동성 오버레이</div>
           <div class="layer" style="border-color: color-mix(in srgb, var(--accent) 45%, var(--border));"><span class="licon">◇</span><div><div class="lname">변동성 관리</div><div class="ldesc">목표 15% / 실현 변동성 → 주식 익스포저 ×배수</div></div><span class="lw">min 0.3</span></div>
         </div>
@@ -496,6 +496,38 @@
           <div class="tl-tags"><span>shorttest</span></div>
         </div>
       </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-03</span><span class="hash">c212b97</span><span class="phase-n">8 · 신호 가시화</span></div>
+        <div class="tl-body">
+          <h3>죽은 신호를 드러내다</h3>
+          <p>8세션 진단 결과 200일선 추세가 12일간 꺼져 있었음. 원인은 수집 실패를 예외로 올리지 않고 빈 결과를 캐시한 것. 보고서도 사용 불가한 신호의 줄을 통째로 생략해 아무도 몰랐음. 레이어별 기여도 분해와 비활성 경고를 상시 출력으로 전환.</p>
+          <div class="tl-tags"><span>trend-signal</span><span>market-signal</span><span>daily-report</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-03</span><span class="hash">f9f3bb8</span><span class="phase-n">9 · 회전율 억제</span></div>
+        <div class="tl-body">
+          <h3>비용이 손익 전액을 상쇄하고 있었다</h3>
+          <p>누적손익 -$0.15에 거래비용 -$0.16. 매도에만 5% 밴드가 있고 매수는 결손 $1에서 트리거돼 같은 날 왕복매매가 반복됐음. 매수에도 같은 밴드 적용, 레짐 히스테리시스 4사이클, 리밸런싱 하루 1회.</p>
+          <div class="tl-tags"><span>trade-band</span><span>hysteresis</span><span>rebalance-cap</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-03~04</span><span class="hash">45194c6</span><span class="phase-n">10 · 데이터 소스</span></div>
+        <div class="tl-body">
+          <h3>MACD 일봉 전환 · 소스 3단 폴백</h3>
+          <p>15분 스냅샷 MACD는 밤 갭을 이어붙인 인트라데이 지표였음(부호 반전 6회 중 4회). 일봉 종가 기반으로 재설계. 마침 Stooq가 JavaScript 봇 차단을 도입하고 Yahoo가 서버 IP에 429를 걸어, Twelve Data를 1순위로 둔 3단 폴백 구성.</p>
+          <div class="tl-tags"><span>macd-signal</span><span>twelve-data</span><span>signals-check</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-04</span><span class="hash">bd185f4</span><span class="phase-n">11 · 감성 보정</span></div>
+        <div class="tl-body">
+          <h3>GDELT 응답 여부가 자산배분을 정하고 있었다</h3>
+          <p>기사 수가 70건과 145건으로만 교차하던 원인 — GDELT가 가중치 1.0인 official 층에 있어 응답 여부가 감성 부호를 뒤집었음. 뉴스 캐시 15→60분(호출 96→24회/일), 감성 가중치 2.0→1.0, 의견 0.1→0.3, 일일 매수 $10→$20.</p>
+          <div class="tl-tags"><span>news-cache</span><span>layer-weights</span><span>gitignore</span></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -535,10 +567,10 @@
       <ul>
         <li>실주문·부분 체결·주문 거절·시장 충격 미구현 (PAPER 전용)</li>
         <li>거래비용은 수수료·환전·스프레드·슬리피지를 합친 단일 비율</li>
-        <li>MACD는 정식 OHLCV가 아닌 15분 예약 실행 가격 스냅샷</li>
+        <li>MACD 기여 상한은 0.15인데 레짐 밴드는 3.0 — 단독으로 판정을 못 바꿈</li>
       </ul>
       <ul>
-        <li>뉴스 감성의 예측력은 아직 통계적으로 미검증</li>
+        <li>감성 분석기는 키워드 매칭이라 연준 문서의 전문 용어를 약세로 읽음</li>
         <li>30~60 거래일 연속 PAPER 데이터와 정식 백테스트 필요</li>
         <li>벤치마크는 VTI 매수후보유 중심 (정적 혼합 비교 추가 여지)</li>
       </ul>

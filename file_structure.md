@@ -372,14 +372,14 @@ final:
 
 1. `oracle-python/` appears to be an older Python implementation. Confirm
    whether it is still supported, then document it as legacy or remove it.
-2. `src/MACD/` is currently empty; the active MACD implementation is
-   `src/market/macd-signal.js`.
-3. `src/paper/src/paper/` appears to be an unintended nested path and should be
-   inspected.
-4. A local `test/paper-` directory may have been created by an interrupted
+2. RESOLVED 2026-08-04 — `src/MACD/` (empty) and the duplicated
+   `src/paper/src/paper/` copies were removed. The stale copies still contained
+   the pre-rebalancing engine, which made them actively misleading to read. The
+   active MACD implementation is `src/market/macd-signal.js`.
+3. A local `test/paper-` directory may have been created by an interrupted
    `rsync` command. It is not part of the intended architecture.
-5. `src/paper/README.md` duplicates older root documentation and may be stale.
-6. `src/sentiment/sentiment-status.js` exists, but `package.json` currently does
+4. `src/paper/README.md` duplicates older root documentation and may be stale.
+5. `src/sentiment/sentiment-status.js` exists, but `package.json` currently does
    not define the documented `sentiment:status` npm script.
 
 These items are not part of the running strategy, but cleaning them would make
