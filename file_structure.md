@@ -35,12 +35,6 @@ toss-ai-agent/
 │   ├── toss-ai-paper.timer
 │   ├── toss-ai-report.service
 │   └── toss-ai-report.timer
-├── oracle-python/
-│   ├── main.py
-│   ├── portfolio.py
-│   ├── report.py
-│   ├── toss_client.py
-│   └── requirements.txt
 ├── src/
 │   ├── toss/
 │   │   ├── doctor.js
@@ -367,23 +361,26 @@ portfolio analysis.
 
 ## 10. Repository Cleanup Candidates
 
-The following items should be reviewed before calling the repository structure
-final:
+All items below were resolved on 2026-08-04. They are kept as a record of what
+was removed and why, so the same files are not re-created by mistake.
 
-1. `oracle-python/` appears to be an older Python implementation. Confirm
-   whether it is still supported, then document it as legacy or remove it.
+1. RESOLVED 2026-08-04 — `oracle-python/` was removed. Four of its five files
+   were zero bytes; only `requirements.txt` had content, and no JavaScript
+   referenced it.
 2. RESOLVED 2026-08-04 — `src/MACD/` (empty) and the duplicated
    `src/paper/src/paper/` copies were removed. The stale copies still contained
    the pre-rebalancing engine, which made them actively misleading to read. The
    active MACD implementation is `src/market/macd-signal.js`.
-3. A local `test/paper-` directory may have been created by an interrupted
-   `rsync` command. It is not part of the intended architecture.
-4. `src/paper/README.md` duplicates older root documentation and may be stale.
-5. `src/sentiment/sentiment-status.js` exists, but `package.json` currently does
-   not define the documented `sentiment:status` npm script.
+3. RESOLVED — the stray `test/paper-` directory left by an interrupted `rsync`
+   no longer exists in the working tree.
+4. RESOLVED 2026-08-04 — `src/paper/README.md` was removed. It was a
+   byte-identical copy of the root `README.md`, not a paper-specific document.
+5. RESOLVED 2026-08-04 — `package.json` now defines `sentiment:status`, so the
+   documented command matches the script that exists.
 
-These items are not part of the running strategy, but cleaning them would make
-external review easier.
+None of these were part of the running strategy. The duplicated engine copy was
+the costly one: it held a pre-rebalancing version of `paper-engine.js`, so anyone
+reading it saw logic that no longer ran.
 
 ## 11. Suggested Architecture Review Questions
 
