@@ -1,6 +1,13 @@
+# 비밀값: .env 본체와 백업본(.env.bak.20260804-015229 등)을 모두 막습니다.
+# 저장소가 공개라 백업 파일 하나만 새어나가도 API 키가 노출됩니다.
 .env
+.env.*
+
+# PAPER 장부와 캐시 전체. data/*.json은 paper-events.jsonl을 놓쳐서
+# 디렉터리째 무시합니다.
+data/
+
 node_modules/
 coverage/
-data/*.json
 .DS_Store
 trading_report_inTelegram/
