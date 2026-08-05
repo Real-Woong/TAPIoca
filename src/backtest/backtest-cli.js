@@ -80,6 +80,15 @@ const COMPARISONS = {
       { name: "30bp", env: { TRADE_COST_RATE: "0.003" } },
     ],
   },
+  brake: {
+    label: "누적 손실 브레이크 (걸린 뒤 회복할 수 있는가)",
+    variants: [
+      { name: "브레이크 없음", env: { MAX_TOTAL_LOSS_USD: "100000" } },
+      { name: "원금 10% ($6.7) — 운영값", env: { MAX_TOTAL_LOSS_USD: "6.7" } },
+      { name: "원금 15% ($10)", env: { MAX_TOTAL_LOSS_USD: "10" } },
+      { name: "원금 30% ($20)", env: { MAX_TOTAL_LOSS_USD: "20" } },
+    ],
+  },
   trend: {
     label: "추세 가중치 (Faber 레이어의 기여)",
     variants: [

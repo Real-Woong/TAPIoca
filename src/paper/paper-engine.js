@@ -57,11 +57,32 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
   updateBenchmark(state, priceMap, now, costRate);
 
+  // 손실 브레이크를 매매보다 먼저 판정합니다.
+  //
+  // 브레이크가 걸리면 매수뿐 아니라 **모든 매도**를 멈추고 보유만 유지합니다.
+  // 예전에는 매수만 멈췄는데, 급락 구간에서 손절과 리밸런싱 매도가 자산을
+  // 현금으로 바꿔 놓았고, 현금은 회복될 수 없어 브레이크가 영원히 풀리지
+  // 않았습니다. 2008년급 하락을 심은 백테스트에서 최종 보유 종목이 0개가 되고
+  // 자산이 17년간 동결됐습니다. 급락 중에 파는 것이야말로 손실을 확정시킵니다.
+  const risk = evaluateRiskLimits(state, priceMap, policy, dateKey, now);
+  if (risk.buyPaused) {
+    decisions.push({
+      symbol: "PORTFOLIO",
+      action: "HOLD",
+      reason: `RISK_BRAKE_HOLD_${risk.reason}`,
+      totalPnlUsd: risk.totalPnlUsd,
+    });
+  }
+
   // 매수보다 청산 판단을 먼저 수행해 손절/수익실현 조건을 우선 처리합니다.
   for (const [symbol, position] of Object.entries(state.positions)) {
     const market = priceMap.get(symbol);
     if (!market) continue;
-    const exit = evaluateExit(position, market.lastPrice, policy, now);
+    // 브레이크 중에도 고점·최종가는 계속 갱신해 장부를 정확히 유지하되,
+    // 매도 판단만 보류합니다.
+    const exit = risk.buyPaused
+      ? { ...evaluateExit(position, market.lastPrice, policy, now), action: "HOLD" }
+      : evaluateExit(position, market.lastPrice, policy, now);
     position.peakPrice = exit.peakPrice ?? position.peakPrice;
     position.lastPrice = market.lastPrice;
     position.lastPriceAt = market.timestamp ?? now.toISOString();
@@ -107,9 +128,8 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   if (effectiveSignal) {
     // 상태 파일에는 API 원본 전체가 아니라 실제 판단에 사용한 요약만 저장합니다.
     state.macro = compactMacroSignal(effectiveSignal);
-    // 목표 비중을 초과한 보유분은 손실 한도(매수 중단)와 무관하게 먼저 덜어내
-    // 익스포저를 낮춥니다. 매수만 하고 팔지 않던 비대칭 문제를 해결합니다.
-    if (canRebalanceToday(state, policy, effectiveSignal.regime, dateKey)) {
+    // 브레이크 중에는 리밸런싱 매도도 하지 않습니다(위 HOLD 판정 참조).
+    if (!risk.buyPaused && canRebalanceToday(state, policy, effectiveSignal.regime, dateKey)) {
       const sold = runRebalanceSells({
         state, priceMap, policy, now, decisions, macroSignal: effectiveSignal,
       });
@@ -117,7 +137,6 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
     }
   }
 
-  const risk = evaluateRiskLimits(state, priceMap, policy, dateKey, now);
   if (risk.buyPaused) {
     decisions.push({
       symbol: "PORTFOLIO",
