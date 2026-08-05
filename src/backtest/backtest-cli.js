@@ -171,9 +171,15 @@ async function buildDatasets() {
         "캐시된 일봉이 없습니다. 먼저 `npm run backtest -- --fetch`를 실행하십시오.",
       );
     }
+    const lengths = Object.entries(cached.closesBySymbol)
+      .map(([symbol, closes]) => `${symbol} ${closes.length}`)
+      .join(", ");
     const days = Math.min(...Object.values(cached.closesBySymbol).map((closes) => closes.length));
+    // 상장일이 달라 길이가 다르면 짧은 쪽에 맞춰 최신 구간만 씁니다.
+    // 얼마나 잘렸는지 보이지 않으면 평가 구간을 오해하게 됩니다.
     return {
-      description: `실데이터 캐시 ${days}일 (수집 ${cached.fetchedAt})`,
+      description:
+        `실데이터 캐시 ${days}일 (${lengths} → 최신 ${days}일로 정렬, 수집 ${cached.fetchedAt})`,
       sets: [{ closesBySymbol: cached.closesBySymbol }],
     };
   }

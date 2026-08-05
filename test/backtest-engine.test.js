@@ -117,3 +117,23 @@ test("이전 청산 규칙은 회전율을 몇 배로 키운다", () => {
   );
   assert.ok(previous.tradeCount > current.tradeCount * 2);
 });
+
+// 종목마다 상장일이 달라 이력 길이가 다르다(실제로 VTI 5000개 vs SCHD 3717개).
+// 배열은 오래된 순이고 같은 날짜에서 끝나므로 뒤에서 잘라야 한다. 앞에서 자르면
+// VTI의 2006년과 SCHD의 2011년을 같은 날로 취급하게 되고, 그 백테스트는 무의미하다.
+test("이력이 더 긴 종목은 최신일 기준으로 정렬한다", () => {
+  const base = market(9, 500);
+  // VTI 앞에만 전혀 다른 가격대의 과거 이력을 덧붙인다.
+  // 최신 500일은 그대로이므로 결과가 바뀌면 안 된다.
+  const padded = {
+    ...base,
+    VTI: [...generatePath(99, { days: 300, startPrice: 12 }), ...base.VTI],
+  };
+
+  const expected = runBacktest({ closesBySymbol: base, policy }).metrics;
+  const actual = runBacktest({ closesBySymbol: padded, policy }).metrics;
+
+  assert.equal(padded.VTI.length, 800);
+  assert.equal(base.SCHD.length, 500);
+  assert.deepEqual(actual, expected);
+});

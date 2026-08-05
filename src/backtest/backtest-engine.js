@@ -41,6 +41,14 @@ export function runBacktest({
     throw new Error(`일봉이 부족합니다: ${length}개, 워밍업 ${warmupDays}일 필요`);
   }
 
+  // 종목마다 상장일이 달라 이력 길이가 다릅니다(VTI 5000개 vs SCHD 3717개).
+  // 모든 배열은 오래된 순이고 같은 날짜에서 끝나므로, 짧은 쪽에 맞춰 **뒤에서**
+  // 잘라야 같은 날짜가 같은 인덱스에 옵니다. 앞에서 자르면 VTI의 2006년과
+  // SCHD의 2011년을 같은 날로 취급하게 됩니다.
+  const aligned = Object.fromEntries(
+    symbols.map((symbol) => [symbol, closesBySymbol[symbol].slice(-length)]),
+  );
+
   const timeline = dates ?? defaultDates(length);
   const state = createPaperState({
     budget: {
@@ -62,7 +70,7 @@ export function runBacktest({
 
   for (let index = warmupDays; index < length; index += 1) {
     const now = timeline[index];
-    const history = sliceHistory(closesBySymbol, index, maxSamples);
+    const history = sliceHistory(aligned, index, maxSamples);
     const trend = buildTrendSignal(history, {}, now);
     const macd = buildDailyMacdSignal(history, {}, now);
     const marketSignal = combineMarketSignals(
@@ -72,7 +80,7 @@ export function runBacktest({
     );
     const prices = symbols.map((symbol) => ({
       symbol,
-      lastPrice: closesBySymbol[symbol][index],
+      lastPrice: aligned[symbol][index],
       timestamp: now.toISOString(),
     }));
 
@@ -85,7 +93,7 @@ export function runBacktest({
 
   const finalSummary = summarizePaperState(
     state,
-    symbols.map((symbol) => ({ symbol, lastPrice: closesBySymbol[symbol][length - 1] })),
+    symbols.map((symbol) => ({ symbol, lastPrice: aligned[symbol][length - 1] })),
   );
   return {
     state,
