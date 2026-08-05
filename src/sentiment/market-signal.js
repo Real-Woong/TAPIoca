@@ -4,6 +4,50 @@ const ALLOCATIONS = {
   RISK_OFF: { VTI: 0.4, SCHD: 0.2, IWM: 0, CASH: 0.4 },
 };
 
+// 레짐 경계 점수입니다. 이 값에서 위 표와 정확히 일치합니다.
+export const REGIME_THRESHOLD = 1.5;
+
+/**
+ * 점수를 목표 비중으로 바꿉니다. 세 표를 앵커로 두고 그 사이를 선형 보간합니다.
+ *
+ * 예전에는 점수 -1.5 한 점에서 주식 90%↔60%가 갈렸습니다. 노이즈가 그 선을
+ * 걸치고 있었으므로 최대 노이즈 지점에 최대 베팅을 건 구조였고, 실제로 07-22~08-04
+ * 동안 점수가 -1.2와 -2.3 사이를 오가며 목표 비중이 매일 뒤집혔습니다.
+ * 보간하면 점수 0.1 변동이 30%p 점프가 아니라 2%p 드리프트가 되고,
+ * 무거래 밴드(기본 5%) 안에 들어와 실제 주문으로 이어지지 않습니다.
+ */
+export function allocationForScore(score, tables = ALLOCATIONS) {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return { ...tables.NEUTRAL };
+  if (value <= -REGIME_THRESHOLD) return { ...tables.RISK_OFF };
+  if (value >= REGIME_THRESHOLD) return { ...tables.RISK_ON };
+  return value < 0
+    ? blend(tables.NEUTRAL, tables.RISK_OFF, -value / REGIME_THRESHOLD)
+    : blend(tables.NEUTRAL, tables.RISK_ON, value / REGIME_THRESHOLD);
+}
+
+/** from에서 to로 ratio(0~1)만큼 이동한 비중표를 만듭니다. */
+function blend(from, to, ratio) {
+  const clamped = clamp(Number(ratio) || 0, 0, 1);
+  const symbols = new Set([...Object.keys(from), ...Object.keys(to)]);
+  const blended = {};
+  for (const symbol of symbols) {
+    const start = Number(from[symbol]) || 0;
+    const end = Number(to[symbol]) || 0;
+    blended[symbol] = round(start + (end - start) * clamped);
+  }
+  return blended;
+}
+
+export function regimeForScore(score) {
+  const value = Number(score);
+  return value >= REGIME_THRESHOLD
+    ? "RISK_ON"
+    : value <= -REGIME_THRESHOLD
+      ? "RISK_OFF"
+      : "NEUTRAL";
+}
+
 /** FRED 점수에 신뢰도로 감쇠한 감성·추세·MACD 점수를 더합니다. */
 export function combineMarketSignals(
   macroSignal,
@@ -17,13 +61,22 @@ export function combineMarketSignals(
     // Moreira & Muir(2017) 변동성 관리: 목표 연율 변동성보다 시장이 요동치면 익스포저를 줄입니다.
     volTarget = 0.15,
     minExposure = 0.3,
+    // 감성 스냅샷이 오래될수록 신뢰도를 깎고, 이 시간을 넘기면 기여도를 0으로 만듭니다.
+    sentimentHalfLifeHours = 6,
+    sentimentMaxAgeHours = 24,
+    now = new Date(),
   } = {},
 ) {
   if (!macroSignal) return null;
   validateWeight(trendWeight, "TREND_SCORE_WEIGHT", 3);
   validateWeight(macdWeight, "MACD_SCORE_WEIGHT", 1);
+  const freshness = sentimentFreshness(
+    sentiment, now, sentimentHalfLifeHours, sentimentMaxAgeHours,
+  );
   const sentimentContribution = sentiment
-    ? round(sentiment.sentiment_score * sentiment.confidence * sentimentWeight)
+    ? round(
+        sentiment.sentiment_score * sentiment.confidence * sentimentWeight * freshness.multiplier,
+      )
     : 0;
   const baseScore = round(Number(macroSignal.score) + sentimentContribution);
   // Faber 이동평균 추세는 하락장 방어를 위한 1급 타이밍 신호로, MACD보다 큰 가중치를 씁니다.
@@ -36,13 +89,20 @@ export function combineMarketSignals(
     ? round(Number(macd.score) * Number(macd.confidence) * macdWeight)
     : 0;
   const score = round(baseScore + trendContribution + macdContribution);
-  const regime = score >= 1.5 ? "RISK_ON" : score <= -1.5 ? "RISK_OFF" : "NEUTRAL";
+  const regime = regimeForScore(score);
   const reasons = [...(macroSignal.reasons ?? [])];
   if (sentiment) {
     reasons.push(
-      `무료 뉴스 감성 ${sentiment.sentiment_score} × 신뢰도 ${sentiment.confidence} = ` +
-        `${sentimentContribution >= 0 ? "+" : ""}${sentimentContribution}`,
+      `무료 뉴스 감성 ${sentiment.sentiment_score} × 신뢰도 ${sentiment.confidence}` +
+        (freshness.multiplier < 1 ? ` × 신선도 ${freshness.multiplier}` : "") +
+        ` = ${sentimentContribution >= 0 ? "+" : ""}${sentimentContribution}` +
+        (freshness.ageHours === null ? "" : ` (수집 ${freshness.ageHours}시간 전)`),
     );
+    if (freshness.multiplier === 0) {
+      reasons.push(
+        `뉴스 감성 제외: 스냅샷이 ${sentimentMaxAgeHours}시간을 넘겨 판단에서 뺐습니다.`,
+      );
+    }
   }
   if (usableTrend) {
     reasons.push(
@@ -63,7 +123,7 @@ export function combineMarketSignals(
   if (volTarget > 0 && Number.isFinite(annualizedVol) && annualizedVol > 0) {
     exposureMultiplier = clamp(round(volTarget / annualizedVol), minExposure, 1);
   }
-  const regimeAllocation = allocationFor(regime, macroSignal.targetAllocation);
+  const regimeAllocation = allocationFor(score, macroSignal.targetAllocation);
   const targetAllocation = exposureMultiplier < 1
     ? scaleForExposure(regimeAllocation, exposureMultiplier)
     : regimeAllocation;
@@ -84,8 +144,12 @@ export function combineMarketSignals(
     // 보고서가 그 줄을 통째로 생략해서, 꺼진 신호를 알아챌 방법이 없었습니다.
     layers: [
       layerStatus("FRED", "거시(FRED)", null, true, Number(macroSignal.score), null),
-      layerStatus("NEWS", "뉴스 감성", sentimentWeight, Boolean(sentiment), sentimentContribution,
-        sentiment ? null : "NOT_LOADED"),
+      // 신선도로 기여도가 0이 된 경우도 "꺼진 신호"로 드러냅니다.
+      layerStatus(
+        "NEWS", "뉴스 감성", sentimentWeight,
+        Boolean(sentiment) && freshness.multiplier > 0, sentimentContribution,
+        sentiment ? (freshness.multiplier > 0 ? null : "STALE_SNAPSHOT") : "NOT_LOADED",
+      ),
       layerStatus("TREND", "추세(200일선)", trendWeight, usableTrend, trendContribution,
         unavailableReason(trend)),
       layerStatus("MACD", "MACD", macdWeight, usableMacd, macdContribution, unavailableReason(macd)),
@@ -95,6 +159,8 @@ export function combineMarketSignals(
     baseScore,
     sentimentContribution,
     sentiment: sentiment ?? null,
+    // 보고서가 "왜 며칠째 같은 감성 값인가"를 스스로 드러낼 수 있게 나이를 함께 넘깁니다.
+    sentimentFreshness: freshness,
     trendContribution,
     trend: usableTrend ? trend : null,
     macdContribution,
@@ -153,10 +219,35 @@ function validateWeight(value, name, maximum) {
   }
 }
 
-function allocationFor(regime, original) {
+// 기본 ETF 세트일 때만 점수 기반 연속 배분을 씁니다. 다른 종목 세트가 오면
+// 거시 신호가 준 표를 그대로 존중합니다(테스트·커스텀 워치리스트 경로).
+function allocationFor(score, original) {
   const symbols = Object.keys(original ?? {}).filter((symbol) => symbol !== "CASH");
-  const isDefaultEtfSet = symbols.every((symbol) => symbol in ALLOCATIONS[regime]);
-  return isDefaultEtfSet ? { ...ALLOCATIONS[regime] } : original;
+  const isDefaultEtfSet =
+    symbols.length > 0 && symbols.every((symbol) => symbol in ALLOCATIONS.NEUTRAL);
+  return isDefaultEtfSet ? allocationForScore(score) : original;
+}
+
+/**
+ * 감성 스냅샷의 나이로 기여도 배수를 만듭니다.
+ *
+ * 07-23~07-31 보고서에서 감성 값이 소수점 3자리까지 동일하게 4일간 반복됐습니다.
+ * 뉴스가 안 변한 게 아니라 캐시 스냅샷이 재사용된 것이고, 그 값이 레짐 경계를
+ * 넘나들며 주식 비중을 뒤집었습니다. 오래된 스냅샷은 신뢰도를 반감기로 깎고
+ * 상한을 넘기면 아예 판단에서 뺍니다.
+ */
+function sentimentFreshness(sentiment, now, halfLifeHours, maxAgeHours) {
+  if (!sentiment) return { multiplier: 1, ageHours: null, stale: false };
+  const fetchedAt = new Date(sentiment.fetchedAt ?? "").getTime();
+  // 수집 시각을 모르면 감쇠시키지 않습니다. 없는 정보로 신호를 끄면 더 위험합니다.
+  if (!Number.isFinite(fetchedAt)) return { multiplier: 1, ageHours: null, stale: false };
+
+  const ageHours = Math.max(0, (now.getTime() - fetchedAt) / (60 * 60 * 1000));
+  if (maxAgeHours > 0 && ageHours >= maxAgeHours) {
+    return { multiplier: 0, ageHours: round(ageHours), stale: true };
+  }
+  const multiplier = halfLifeHours > 0 ? 0.5 ** (ageHours / halfLifeHours) : 1;
+  return { multiplier: round(multiplier), ageHours: round(ageHours), stale: ageHours > halfLifeHours };
 }
 
 function round(value) {

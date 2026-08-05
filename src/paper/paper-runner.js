@@ -211,8 +211,19 @@ function macdOptions() {
   return Number.isFinite(scale) && scale > 0 ? { histogramScalePercent: scale } : {};
 }
 
+/**
+ * MACD 기본 가중치는 0입니다. 즉 판단에는 쓰지 않고 진단 지표로만 표시합니다.
+ *
+ * 근거 두 가지입니다.
+ * 1. 산술: 0.15 가중치의 실제 기여도는 08-04 기준 +0.029였습니다. 결정이 갈리는
+ *    지점이 ±1.5이므로, 어떤 값이 나와도 배분을 바꿀 수 없는 크기였습니다.
+ * 2. 백테스트: 0 / 0.15 / 0.5 / 1.0을 4국면 × 시드 4개로 돌린 결과, 0.5가 bear
+ *    한 칸에서만 튀고 1.0에서 사라졌습니다. 단조성이 없는 개선은 노이즈입니다.
+ *
+ * 실데이터 백테스트에서 증분이 확인되면 MACD_SCORE_WEIGHT로 켜십시오.
+ */
 function readMacdWeight(value) {
-  if (value === undefined || value === "") return 0.15;
+  if (value === undefined || value === "") return 0;
   const weight = Number(value);
   if (!Number.isFinite(weight) || weight < 0 || weight > 1) {
     throw new Error("MACD_SCORE_WEIGHT는 0~1 숫자여야 합니다.");

@@ -127,9 +127,25 @@ function formatSentimentLine(macro) {
   return (
     `무료 뉴스 감성: ${sentiment.sentiment_score} ` +
     `(신뢰도 ${sentiment.confidence}, ${sentiment.articleCount}건${sources})` +
+    formatFreshness(macro.sentimentFreshness) +
     `${sentiment.stale ? " ※ 캐시 사용" : ""}` +
     `${sentiment.warning ? ` ※ 일부 수집 실패: ${sentiment.warning}` : ""}`
   );
+}
+
+/**
+ * 스냅샷 나이와 감쇠 배수를 함께 보여줍니다.
+ *
+ * 07-23~07-31 보고서에서 감성 값이 소수점 3자리까지 4일간 동일했는데,
+ * 리포트만 봐서는 그게 "뉴스가 안 변한 것"인지 "캐시가 재사용된 것"인지
+ * 구분할 방법이 없었습니다. 나이를 찍으면 보고서 자체가 그 답을 갖게 됩니다.
+ */
+function formatFreshness(freshness) {
+  if (!freshness || freshness.ageHours === null) return "";
+  const age = `수집 ${freshness.ageHours}시간 전`;
+  if (freshness.multiplier === 0) return ` ※ ${age} — 오래돼 판단에서 제외`;
+  if (freshness.multiplier < 1) return ` ※ ${age}, 신선도 ×${freshness.multiplier}`;
+  return ` (${age})`;
 }
 
 function formatSourceCounts(sourceCounts) {

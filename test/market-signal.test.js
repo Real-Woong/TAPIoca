@@ -149,3 +149,91 @@ test("레이어별 상태를 항상 담고 꺼진 신호의 사유를 남긴다"
   assert.equal(byKey.MACD.available, true);
   assert.equal(byKey.MACD.contribution, 0.06);
 });
+
+// ── 연속 목표 비중 ──────────────────────────────────────────────
+// 예전에는 점수 -1.5 한 점에서 주식 90%↔60%가 갈렸습니다. 07-22~08-04 동안
+// 점수가 -1.2와 -2.3을 오가며 목표 비중이 매일 뒤집혔고, 그 진동의 원인은
+// 캐시된 감성 스냅샷이었습니다.
+
+function equityWeight(allocation) {
+  return round3(1 - Number(allocation.CASH ?? 0));
+}
+
+function round3(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+}
+
+test("점수 경계에서 목표 비중이 계단이 아니라 연속으로 움직인다", () => {
+  const at = (score) => equityWeight(
+    combineMarketSignals({ ...macro, score }, null, { trendWeight: 0 }).targetAllocation,
+  );
+
+  // 경계선 양쪽 0.1 차이가 만드는 비중 변화가 무거래 밴드(5%)보다 작아야 합니다.
+  assert.ok(Math.abs(at(-1.45) - at(-1.55)) < 0.05, `${at(-1.45)} vs ${at(-1.55)}`);
+  // 단조 감소해야 합니다.
+  const curve = [1.5, 0.5, 0, -0.5, -1.2, -1.5, -2.5].map(at);
+  for (let i = 1; i < curve.length; i += 1) {
+    assert.ok(curve[i] <= curve[i - 1], `단조성 위반: ${curve}`);
+  }
+});
+
+test("앵커 점수에서는 기존 레짐 표와 정확히 일치한다", () => {
+  const alloc = (score) =>
+    combineMarketSignals({ ...macro, score }, null, { trendWeight: 0 }).targetAllocation;
+
+  assert.deepEqual(alloc(0), { VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 });
+  assert.deepEqual(alloc(-1.5), { VTI: 0.4, SCHD: 0.2, IWM: 0, CASH: 0.4 });
+  assert.deepEqual(alloc(1.5), { VTI: 0.7, SCHD: 0.15, IWM: 0.15, CASH: 0 });
+});
+
+test("중간 점수에서는 두 표 사이를 보간하고 합이 1을 유지한다", () => {
+  const alloc = combineMarketSignals({ ...macro, score: -0.75 }, null, { trendWeight: 0 })
+    .targetAllocation;
+
+  // NEUTRAL과 RISK_OFF의 정확히 중간입니다.
+  assert.equal(alloc.VTI, 0.55);
+  assert.equal(alloc.CASH, 0.25);
+  const sum = Object.values(alloc).reduce((total, weight) => total + weight, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `비중 합 ${sum}`);
+});
+
+// ── 감성 스냅샷 신선도 ──────────────────────────────────────────
+// 07-23~07-31 보고서에서 감성 값이 소수점 3자리까지 4일간 동일했습니다.
+// 캐시 재사용이었고, 그 값이 레짐 경계를 넘나들며 주식 비중을 뒤집었습니다.
+
+const now = new Date("2026-08-04T12:00:00Z");
+const bullish = (fetchedAt) => ({
+  sentiment_score: 1, confidence: 0.8, fetchedAt,
+  summary_reason: "bullish", bullish_signals: [], bearish_signals: [],
+});
+
+test("갓 수집한 감성은 감쇠 없이 그대로 반영한다", () => {
+  const combined = combineMarketSignals(macro, bullish("2026-08-04T12:00:00Z"), { now });
+  assert.equal(combined.sentimentContribution, 1.6);
+  assert.equal(combined.sentimentFreshness.multiplier, 1);
+});
+
+test("반감기만큼 오래된 스냅샷은 기여도를 절반으로 깎는다", () => {
+  const combined = combineMarketSignals(macro, bullish("2026-08-04T06:00:00Z"), {
+    now, sentimentHalfLifeHours: 6,
+  });
+  assert.equal(combined.sentimentFreshness.ageHours, 6);
+  assert.equal(combined.sentimentContribution, 0.8);
+});
+
+test("상한을 넘긴 스냅샷은 판단에서 완전히 뺀다", () => {
+  const combined = combineMarketSignals(macro, bullish("2026-08-03T00:00:00Z"), {
+    now, sentimentMaxAgeHours: 24,
+  });
+  assert.equal(combined.sentimentContribution, 0);
+  assert.equal(combined.score, 0);
+  const news = combined.layers.find((layer) => layer.key === "NEWS");
+  assert.equal(news.available, false);
+  assert.equal(news.reason, "STALE_SNAPSHOT");
+});
+
+test("수집 시각을 모르면 감쇠시키지 않는다", () => {
+  const combined = combineMarketSignals(macro, bullish(undefined), { now });
+  assert.equal(combined.sentimentContribution, 1.6);
+  assert.equal(combined.sentimentFreshness.ageHours, null);
+});
