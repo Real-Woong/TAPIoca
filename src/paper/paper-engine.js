@@ -57,20 +57,25 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
   updateBenchmark(state, priceMap, now, costRate);
 
-  // 손실 브레이크를 매매보다 먼저 판정합니다.
+  // 손실 한도는 **경고**입니다. 매매 동작을 바꾸지 않습니다.
   //
-  // 브레이크가 걸리면 매수뿐 아니라 **모든 매도**를 멈추고 보유만 유지합니다.
-  // 예전에는 매수만 멈췄는데, 급락 구간에서 손절과 리밸런싱 매도가 자산을
-  // 현금으로 바꿔 놓았고, 현금은 회복될 수 없어 브레이크가 영원히 풀리지
-  // 않았습니다. 2008년급 하락을 심은 백테스트에서 최종 보유 종목이 0개가 되고
-  // 자산이 17년간 동결됐습니다. 급락 중에 파는 것이야말로 손실을 확정시킵니다.
+  // 예전에는 한도에 닿으면 매매를 멈췄고, 두 방식 모두 아무것도 안 하는 것보다
+  // 나빴습니다. 매수만 멈추면 매도가 자산을 현금으로 바꿔 흡수 상태가 되고
+  // (20년 합성 경로에서 CAGR -0.68%, 최종 보유 0종목), 전부 멈추면 폭락 중에
+  // 위험관리를 꺼버려 낙폭이 커집니다(실데이터 20년에서 MDD 29.8% → 51.6%).
+  //
+  // 한도는 정의상 폭락 중에만 걸리는데, 그때는 목표 비중 레이어가 익스포저를
+  // 줄이며 제 일을 하고 있는 시점입니다. 그 위에 조잡한 두 번째 위험 시스템을
+  // 올리면 첫 번째를 최악의 타이밍에 덮어씁니다. 그래서 판단은 사람에게 넘기고
+  // 봇은 알리기만 합니다.
   const risk = evaluateRiskLimits(state, priceMap, policy, dateKey, now);
-  if (risk.buyPaused) {
+  if (risk.alert) {
     decisions.push({
       symbol: "PORTFOLIO",
-      action: "HOLD",
-      reason: `RISK_BRAKE_HOLD_${risk.reason}`,
+      action: "RISK_ALERT",
+      reason: risk.reason,
       totalPnlUsd: risk.totalPnlUsd,
+      dailyPnlUsd: risk.dailyPnlUsd,
     });
   }
 
@@ -78,11 +83,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   for (const [symbol, position] of Object.entries(state.positions)) {
     const market = priceMap.get(symbol);
     if (!market) continue;
-    // 브레이크 중에도 고점·최종가는 계속 갱신해 장부를 정확히 유지하되,
-    // 매도 판단만 보류합니다.
-    const exit = risk.buyPaused
-      ? { ...evaluateExit(position, market.lastPrice, policy, now), action: "HOLD" }
-      : evaluateExit(position, market.lastPrice, policy, now);
+    const exit = evaluateExit(position, market.lastPrice, policy, now);
     position.peakPrice = exit.peakPrice ?? position.peakPrice;
     position.lastPrice = market.lastPrice;
     position.lastPriceAt = market.timestamp ?? now.toISOString();
@@ -128,8 +129,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   if (effectiveSignal) {
     // 상태 파일에는 API 원본 전체가 아니라 실제 판단에 사용한 요약만 저장합니다.
     state.macro = compactMacroSignal(effectiveSignal);
-    // 브레이크 중에는 리밸런싱 매도도 하지 않습니다(위 HOLD 판정 참조).
-    if (!risk.buyPaused && canRebalanceToday(state, policy, effectiveSignal.regime, dateKey)) {
+    if (canRebalanceToday(state, policy, effectiveSignal.regime, dateKey)) {
       const sold = runRebalanceSells({
         state, priceMap, policy, now, decisions, macroSignal: effectiveSignal,
       });
@@ -137,15 +137,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
     }
   }
 
-  if (risk.buyPaused) {
-    decisions.push({
-      symbol: "PORTFOLIO",
-      action: "PAUSE_BUY",
-      reason: risk.reason,
-      totalPnlUsd: risk.totalPnlUsd,
-      dailyPnlUsd: risk.dailyPnlUsd,
-    });
-  } else if (effectiveSignal) {
+  if (effectiveSignal) {
     dailyBought = runMacroTargetBuys({
       state,
       priceMap,
@@ -717,7 +709,8 @@ function evaluateRiskLimits(state, priceMap, policy, dateKey, now) {
     equityUsd: summary.equityUsd,
     totalPnlUsd: summary.totalPnlUsd,
     dailyPnlUsd,
-    buyPaused: Boolean(reason),
+    // 매매를 멈추지 않습니다. 사람이 보고 판단하라는 신호입니다.
+    alert: Boolean(reason),
     reason,
   };
   state.risk.lastCheck = result;

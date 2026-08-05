@@ -47,8 +47,14 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
         ]
       : []),
     `누적 거래: ${summary.tradeCount}건`,
-    ...(state.risk?.lastCheck?.buyPaused
-      ? [`안전 중단: ${formatRiskReason(state.risk.lastCheck.reason)} — 신규 매수 중단`]
+    // 손실 한도는 매매를 멈추지 않고 알리기만 합니다. 자동 중단은 폭락 중에
+    // 위험관리를 꺼버려 오히려 낙폭을 키웠습니다. 대응은 사람이 판단합니다.
+    ...(state.risk?.lastCheck?.alert
+      ? [
+          `⚠️ 손실 경고: ${formatRiskReason(state.risk.lastCheck.reason)} ` +
+            `(누적 ${signedUsd(state.risk.lastCheck.totalPnlUsd)}, ` +
+            `당일 ${signedUsd(state.risk.lastCheck.dailyPnlUsd)}) — 매매는 계속합니다`,
+        ]
       : []),
     ...macroLines,
     "",

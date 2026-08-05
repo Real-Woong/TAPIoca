@@ -27,7 +27,7 @@ test("일일 보고서에 원금, 손익, 보유종목과 당일 거래를 포�
   assert.match(report, /PAPER 모드/);
 });
 
-test("손실 안전장치가 작동하면 보고서에 신규 매수 중단을 표시한다", () => {
+test("손실 한도에 닿으면 경고를 표시하되 매매는 계속한다고 알린다", () => {
   const state = {
     funding: { fundingKrw: 100000, fundedUsd: 67.03 },
     cashUsd: 67.03,
@@ -35,14 +35,18 @@ test("손실 안전장치가 작동하면 보고서에 신규 매수 중단을 �
     positions: {},
     trades: [],
     risk: {
-      lastCheck: { buyPaused: true, reason: "DAILY_LOSS_LIMIT" },
+      lastCheck: {
+        alert: true, reason: "DAILY_LOSS_LIMIT", totalPnlUsd: -2.1, dailyPnlUsd: -3.4,
+      },
     },
   };
 
   const report = formatDailyReport(state, "2026-07-14");
 
   assert.match(report, /일일 손실 한도 도달/);
-  assert.match(report, /신규 매수 중단/);
+  // 자동 중단은 폭락 중에 위험관리를 꺼버려 오히려 낙폭을 키웠다. 이제는 알리기만 한다.
+  assert.match(report, /매매는 계속합니다/);
+  assert.doesNotMatch(report, /신규 매수 중단/);
 });
 
 test("신호가 꺼져 있어도 줄을 생략하지 않고 사유와 경고를 함께 알린다", () => {

@@ -305,7 +305,7 @@ test("청산한 종목은 쿨다운 중 재매수하지 않고 만료 후 다시
   assert.equal(reentered.state.trades.at(-1).side, "BUY");
 });
 
-test("누적 손실 한도에 도달하면 신규 매수를 중단한다", () => {
+test("누적 손실 한도에 도달하면 경고만 남기고 매매는 계속한다", () => {
   const lossPolicy = loadTradingPolicy({
     MAX_ORDER_USD: "5",
     MAX_DAILY_BUY_USD: "10",
@@ -337,12 +337,15 @@ test("누적 손실 한도에 도달하면 신규 매수를 중단한다", () =>
     signal,
   );
 
-  assert.equal(result.state.trades.length, tradeCount);
-  assert.equal(result.state.risk.lastCheck.buyPaused, true);
-  assert.equal(result.decisions.at(-1).reason, "TOTAL_LOSS_LIMIT");
+  // 손실 한도는 경고일 뿐 매매를 멈추지 않는다. 자동 중단은 폭락 중에 위험관리를
+  // 꺼버려 실데이터 20년에서 MDD를 29.8% → 51.6%로 키웠다.
+  assert.equal(result.state.risk.lastCheck.alert, true);
+  assert.equal(result.state.risk.lastCheck.reason, "TOTAL_LOSS_LIMIT");
+  assert.ok(result.decisions.some((item) => item.action === "RISK_ALERT"));
+  assert.ok(result.state.trades.length >= tradeCount);
 });
 
-test("일일 손실 한도에 도달하면 신규 매수를 중단한다", () => {
+test("일일 손실 한도에 도달하면 경고만 남기고 매매는 계속한다", () => {
   const lossPolicy = loadTradingPolicy({
     MAX_ORDER_USD: "5",
     MAX_DAILY_BUY_USD: "10",
@@ -373,8 +376,9 @@ test("일일 손실 한도에 도달하면 신규 매수를 중단한다", () =>
     signal,
   );
 
-  assert.equal(result.state.risk.lastCheck.buyPaused, true);
-  assert.equal(result.decisions.at(-1).reason, "DAILY_LOSS_LIMIT");
+  assert.equal(result.state.risk.lastCheck.alert, true);
+  assert.equal(result.state.risk.lastCheck.reason, "DAILY_LOSS_LIMIT");
+  assert.ok(result.decisions.some((item) => item.action === "RISK_ALERT"));
 });
 
 // ── 회전율 억제 ────────────────────────────────────────────────
@@ -642,54 +646,45 @@ function brakedState(policyEnv = {}) {
   return { state, braking };
 }
 
-test("손실 브레이크가 걸리면 리밸런싱 매도도 하지 않고 보유를 유지한다", () => {
+test("손실 한도에 닿아도 목표 비중 리밸런싱을 계속한다", () => {
   const { state, braking } = brakedState();
-  const quantityBefore = state.positions.AAA.quantity;
 
-  // -5% 하락으로 누적 손실 한도($2)를 넘긴다. 손절선(12%)에는 못 미친다.
-  // RISK_OFF 목표는 40%라 평소라면 초과분을 크게 덜어냈을 상황이다.
+  // -5% 하락으로 누적 손실 한도($2)를 넘긴다. RISK_OFF 목표는 40%이므로
+  // 초과분을 덜어내야 한다. 예전에는 여기서 모든 매매가 멈췄다.
   const result = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 95 }], braking,
     new Date("2026-07-15T14:00:00Z"), macroSignal("RISK_OFF"));
 
-  assert.equal(result.state.risk.lastCheck.buyPaused, true);
-  assert.equal(result.state.risk.lastCheck.reason, "TOTAL_LOSS_LIMIT");
-  // 매도가 한 건도 없어야 한다.
-  assert.equal(result.state.trades.filter((trade) => trade.side === "SELL").length, 0);
-  assert.equal(result.state.positions.AAA.quantity, quantityBefore);
-  assert.ok(result.decisions.some((item) => item.reason?.startsWith("RISK_BRAKE_HOLD")));
+  assert.equal(result.state.risk.lastCheck.alert, true);
+  assert.ok(result.decisions.some((item) => item.action === "RISK_ALERT"));
+  // 위험관리(익스포저 축소)는 계속 돌아야 한다. 한도에 닿았다고 멈추면
+  // 폭락 구간에서 방어를 포기하는 셈이 된다.
+  assert.equal(result.state.trades.at(-1).side, "SELL");
+  assert.ok(result.state.trades.at(-1).reason.includes("REBALANCE_SELL"));
 });
 
-test("자산이 회복되면 브레이크가 풀리고 다시 목표 비중을 맞춘다", () => {
-  const { state, braking } = brakedState();
-
-  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 95 }], braking,
-    new Date("2026-07-15T14:00:00Z"), macroSignal("RISK_OFF"));
-  assert.equal(state.risk.lastCheck.buyPaused, true);
-
-  // 보유를 유지했으므로 시장이 오르면 자산도 함께 회복된다.
-  // 현금으로 빠져 있었다면 영원히 회복될 수 없다.
-  const recovered = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 110 }], braking,
-    new Date("2026-07-16T14:00:00Z"), macroSignal("RISK_OFF"));
-
-  assert.equal(recovered.state.risk.lastCheck.buyPaused, false);
-  // 브레이크가 풀렸으니 RISK_OFF 목표(40%)에 맞춰 초과분을 정리한다.
-  assert.equal(recovered.state.trades.at(-1).side, "SELL");
-});
-
-// 손절도 멈춰야 한다. 급락 구간에서 손절이 발동하면 자산이 현금이 되고,
-// 브레이크가 재진입을 막아 그대로 굳는다. 2008년급 하락을 심은 백테스트에서
-// 최종 보유 종목이 0개가 됐고, 그 매도 사유가 전부 STOP_LOSS였다.
-test("브레이크 중에는 손절도 발동하지 않고 보유를 유지한다", () => {
+test("손실 한도에 닿아도 손절은 평소대로 발동한다", () => {
   const { state, braking } = brakedState({ STOP_LOSS_RATE: "0.05" });
-  const quantityBefore = state.positions.AAA.quantity;
 
   const result = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 90 }], braking,
     new Date("2026-07-15T14:00:00Z"), macroSignal("RISK_OFF"));
 
-  assert.equal(result.state.trades.length, 0);
-  assert.equal(result.state.positions.AAA.quantity, quantityBefore);
-  // 고점·최종가는 계속 갱신해 장부는 정확히 유지한다.
-  assert.equal(result.state.positions.AAA.lastPrice, 90);
+  assert.equal(result.state.risk.lastCheck.alert, true);
+  assert.equal(result.state.trades.at(-1).reason, "STOP_LOSS");
+  assert.equal(result.state.positions.AAA, undefined);
+});
+
+test("손실이 회복되면 경고가 스스로 사라진다", () => {
+  const { state, braking } = brakedState();
+
+  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 95 }], braking,
+    new Date("2026-07-15T14:00:00Z"), macroSignal("NEUTRAL"));
+  assert.equal(state.risk.lastCheck.alert, true);
+
+  const recovered = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 110 }], braking,
+    new Date("2026-07-16T14:00:00Z"), macroSignal("NEUTRAL"));
+
+  assert.equal(recovered.state.risk.lastCheck.alert, false);
+  assert.ok(!recovered.decisions.some((item) => item.action === "RISK_ALERT"));
 });
 
 test("브레이크가 없으면 손절은 평소대로 발동한다", () => {
