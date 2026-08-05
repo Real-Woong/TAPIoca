@@ -28,6 +28,17 @@ const BASE_ENV = {
   REGIME_CONFIRM_CYCLES: "1",
 };
 
+/** 기본 표의 주식 비율(VTI:SCHD:IWM = 7:2:0)을 유지한 채 주식 총량만 바꿉니다. */
+function EQUITY_MIX(equityWeight) {
+  const share = { VTI: 0.7, SCHD: 0.2, IWM: 0 };
+  const total = Object.values(share).reduce((sum, value) => sum + value, 0);
+  const allocation = { CASH: Math.round((1 - equityWeight) * 1000) / 1000 };
+  for (const [symbol, weight] of Object.entries(share)) {
+    allocation[symbol] = Math.round((weight / total) * equityWeight * 1000) / 1000;
+  }
+  return allocation;
+}
+
 const COMPARISONS = {
   exit: {
     label: "청산 규칙 (P0에서 바꾼 기본값 검증)",
@@ -69,6 +80,15 @@ const COMPARISONS = {
       { name: "비용 0", env: { TRADE_COST_RATE: "0" } },
       { name: "현재 10bp", env: { TRADE_COST_RATE: "0.001" } },
       { name: "30bp", env: { TRADE_COST_RATE: "0.003" } },
+    ],
+  },
+  strategy: {
+    label: "신호 스택 대 정적 배분 (레이어가 값을 하는가)",
+    variants: [
+      { name: "현재 신호 스택 (FRED+추세+MACD)", options: {} },
+      { name: "정적 90/10 (주식90·현금10)", options: { staticAllocation: EQUITY_MIX(0.9) } },
+      { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
+      { name: "정적 50/50", options: { staticAllocation: EQUITY_MIX(0.5) } },
     ],
   },
   trend: {
@@ -150,6 +170,7 @@ async function runComparison() {
         policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
         macroScore: options.macroScore,
         signalOptions: variant.signal ?? {},
+        ...(variant.options ?? {}),
       }).metrics,
     );
     rows.push({ 변형: variant.name, ...averageMetrics(results) });

@@ -270,11 +270,16 @@ from noise.
   - Holds the FRED score constant and omits news sentiment; neither is
     reconstructable for past dates, so only price layers and execution rules
     are measured here
-  - Reports CAGR, volatility, Sharpe, max drawdown, average exposure, turnover, alpha
+  - Accepts a fixed `staticAllocation` to run a signal-free control group
+  - Reports CAGR, volatility, Sharpe, max drawdown (strategy and benchmark),
+    average exposure, turnover, alpha
 - `synthetic-prices.js`: deterministic seeded GBM paths with drift/vol/autocorrelation
 - `scenarios.js`: bull / bear / choppy / momentum regime scripts
 - `price-cache.js`: fetches and caches real daily closes through the same source chain
-- `backtest-cli.js`: variant comparison presets (`exit`, `macd`, `band`, `cost`, `trend`)
+- `backtest-cli.js`: variant comparison presets (`exit`, `macd`, `band`, `cost`, `trend`, `strategy`)
+  - `strategy` compares the signal stack against static allocations run through the
+    same engine, costs, and no-trade band — the only way to tell whether the signal
+    layers earn their keep
 
 ### `src/telegram/`
 
@@ -369,7 +374,7 @@ npm run paper:run -- --force
                             Run one PAPER cycle outside market hours
 npm run paper:status       Print current PAPER state
 npm run backtest           Compare exit-rule variants on synthetic scenarios
-npm run backtest -- --compare macd|band|cost|trend
+npm run backtest -- --compare macd|band|cost|trend|strategy
 npm run backtest:fetch     Cache real daily closes (uses .env for the API key)
 npm run backtest -- --source cache   Backtest on the cached real data
 npm run telegram:discover  Discover Telegram chat information
@@ -397,8 +402,8 @@ npm test                   Run the complete test suite
 As of 2026-08-05:
 
 ```text
-Tests:   138
-Passed:  138
+Tests:   147
+Passed:  147
 Failed:  0
 ```
 

@@ -165,3 +165,34 @@ test("세 종목을 모두 넘기면 재분배가 비중을 바꾸지 않는다"
     runBacktest({ closesBySymbol: full, policy }).metrics,
   );
 });
+
+// 신호 스택이 정적 배분을 실제로 이기는지 재려면, 신호만 빼고 나머지를 똑같이
+// 둔 대조군이 필요하다. 엔진·비용·밴드가 같아야 차이가 신호에서만 나온다.
+test("고정 비중을 주면 신호를 계산하지 않고 그 비중을 유지한다", () => {
+  const closes = market(17, 700);
+  const result = runBacktest({
+    closesBySymbol: closes,
+    policy,
+    staticAllocation: { VTI: 0.5, SCHD: 0.1, CASH: 0.4 },
+  });
+
+  // 목표 현금 40%이므로 노출은 60% 근처에 머문다.
+  assert.ok(
+    Math.abs(result.metrics.averageExposurePct - 60) < 12,
+    `평균 노출 ${result.metrics.averageExposurePct}%`,
+  );
+  assert.equal(result.state.macro.regime, "STATIC");
+  assert.ok(result.state.trades.every((trade) => !trade.reason?.includes("MACRO_RISK")));
+});
+
+test("고정 비중 대조군은 신호 가중치에 반응하지 않는다", () => {
+  const closes = market(17, 700);
+  const run = (signalOptions) =>
+    runBacktest({
+      closesBySymbol: closes, policy, signalOptions,
+      staticAllocation: { VTI: 0.7, SCHD: 0.2, CASH: 0.1 },
+    }).metrics;
+
+  // 추세·MACD 가중치를 바꿔도 결과가 같아야 대조군으로 쓸 수 있다.
+  assert.deepEqual(run({ trendWeight: 0, macdWeight: 0 }), run({ trendWeight: 2, macdWeight: 1 }));
+});

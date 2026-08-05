@@ -33,6 +33,10 @@ export function runBacktest({
   // 신호 계산에 넘기는 최대 이력입니다. 운영도 300개만 캐시하므로 같게 둡니다.
   maxSamples = DEFAULT_TREND_OPTIONS.maxSamples,
   benchmarkSymbol,
+  // 고정 비중을 주면 신호를 계산하지 않고 그 비중만 유지합니다.
+  // 엔진·비용·밴드는 그대로라, 차이가 오직 "신호가 있느냐"에서만 나옵니다.
+  // 신호 스택이 정적 배분을 실제로 이기는지 재는 유일한 방법입니다.
+  staticAllocation = null,
 }) {
   const symbols = Object.keys(closesBySymbol);
   if (symbols.length === 0) throw new Error("closesBySymbol에 최소 한 종목이 필요합니다.");
@@ -74,13 +78,14 @@ export function runBacktest({
   for (let index = warmupDays; index < length; index += 1) {
     const now = timeline[index];
     const history = sliceHistory(aligned, index, maxSamples);
-    const trend = buildTrendSignal(history, {}, now);
-    const macd = buildDailyMacdSignal(history, {}, now);
-    const combined = combineMarketSignals(
-      constantMacro(macroScore),
-      null,
-      { ...signalOptions, trend, macd, now },
-    );
+    const combined = staticAllocation
+      ? staticSignal(staticAllocation)
+      : combineMarketSignals(constantMacro(macroScore), null, {
+          ...signalOptions,
+          trend: buildTrendSignal(history, {}, now),
+          macd: buildDailyMacdSignal(history, {}, now),
+          now,
+        });
     const marketSignal = {
       ...combined,
       targetAllocation: restrictAllocation(combined.targetAllocation, symbols),
@@ -151,6 +156,20 @@ function restrictAllocation(allocation, symbols) {
 
 function round(value) {
   return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+}
+
+/** 신호 없이 고정 비중만 유지하는 대조군입니다. */
+function staticSignal(allocation) {
+  return {
+    fetchedAt: null,
+    evaluatedAt: null,
+    regime: "STATIC",
+    score: 0,
+    targetAllocation: { ...allocation },
+    indicators: {},
+    reasons: ["정적 비중 대조군"],
+    source: "BACKTEST_STATIC",
+  };
 }
 
 /** 과거 FRED 값을 되살리는 대신 상수 거시 점수를 씁니다. */

@@ -110,6 +110,10 @@ TRAILING_DRAWDOWN_RATE=0.015
 MAX_HOLDING_DAYS=15
 ```
 
+손실 한도(`MAX_TOTAL_LOSS_USD`·`MAX_DAILY_LOSS_USD`)는 **매매를 멈추지 않고 경고만**
+보냅니다. 자동 중단은 폭락 중에 위험관리를 꺼버려 오히려 낙폭을 키웠습니다
+(실데이터 20년에서 MDD 29.8% → 51.6%). 대응은 사람이 판단합니다.
+
 바꾸기 전에 `npm run backtest`로 먼저 재십시오. 배경과 실측은
 [`STRATEGY_REVIEW_2026-08-05.md`](STRATEGY_REVIEW_2026-08-05.md)에 있습니다.
 
