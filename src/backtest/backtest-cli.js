@@ -28,6 +28,15 @@ const BASE_ENV = {
   REGIME_CONFIRM_CYCLES: "1",
 };
 
+/**
+ * 누적 손실 브레이크는 한 번 걸리면 스스로 풀리지 않습니다.
+ * 매수는 멈추는데 리밸런싱 매도는 계속 돌아 자산이 현금으로 빠지고,
+ * 현금 상태에서는 자산이 회복될 수 없어 잠금이 영구화됩니다.
+ * 신호 비교 실험에서는 이 잠금이 모든 변형을 똑같이 0%로 만들어 버리므로
+ * 기본적으로 풀어 두고, 브레이크 자체를 재려면 --max-total-loss로 지정합니다.
+ */
+const NO_BRAKE_USD = "100000";
+
 const COMPARISONS = {
   exit: {
     label: "청산 규칙 (P0에서 바꾼 기본값 검증)",
@@ -139,7 +148,8 @@ async function runComparison() {
   console.log(`\n■ ${comparison.label}`);
   console.log(
     `  데이터: ${datasets.description} | 종목 ${options.symbols.join(",")} | ` +
-      `거시 상수 점수 ${options.macroScore}`,
+      `거시 상수 점수 ${options.macroScore} | ` +
+      `누적손실 브레이크 ${options.maxTotalLoss ? `$${options.maxTotalLoss}` : "해제"}`,
   );
 
   const rows = [];
@@ -147,7 +157,11 @@ async function runComparison() {
     const results = datasets.sets.map((dataset) =>
       runBacktest({
         closesBySymbol: dataset.closesBySymbol,
-        policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
+        policy: loadTradingPolicy({
+          ...BASE_ENV,
+          MAX_TOTAL_LOSS_USD: options.maxTotalLoss ?? NO_BRAKE_USD,
+          ...(variant.env ?? {}),
+        }),
         macroScore: options.macroScore,
         signalOptions: variant.signal ?? {},
       }).metrics,
@@ -238,6 +252,7 @@ function parseArgs(argv) {
     seeds: 3,
     days: 1500,
     macroScore: 0,
+    maxTotalLoss: undefined,
     fetch: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -253,6 +268,7 @@ function parseArgs(argv) {
       case "--seeds": parsed.seeds = Number(value); index += 1; break;
       case "--days": parsed.days = Number(value); index += 1; break;
       case "--macro-score": parsed.macroScore = Number(value); index += 1; break;
+      case "--max-total-loss": parsed.maxTotalLoss = value; index += 1; break;
       default:
         if (flag.startsWith("--")) throw new Error(`알 수 없는 옵션: ${flag}`);
     }
