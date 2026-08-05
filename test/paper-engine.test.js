@@ -133,7 +133,11 @@ test("다음 거래일에도 목표 비중이 덜 찬 기존 포지션을 추가
   // AAA 목표가 70%, BBB 목표가 20%이므로 둘째 날에는 AAA의 부족 비중을 먼저 채웁니다.
   assert.equal(second.state.positions.AAA.costUsd, 15);
   assert.equal(second.state.positions.BBB.costUsd, 5);
-  assert.equal(second.state.trades.filter((trade) => trade.side === "BUY").length, 4);
+  // 첫날 AAA $5 + BBB $5, 둘째 날 AAA $10 한 건입니다. 같은 사이클의 $5×2는
+  // 한 건으로 합쳐집니다. 쪼갠 주문은 실익이 없고 건당 최소수수료만 늘립니다.
+  const buys = second.state.trades.filter((trade) => trade.side === "BUY");
+  assert.equal(buys.length, 3);
+  assert.equal(buys.at(-1).amountUsd, 10);
 });
 
 test("목표 비중을 밴드 이상 초과하면 방어적 레짐 전환 시 초과분을 매도한다", () => {
@@ -263,6 +267,8 @@ test("청산한 종목은 쿨다운 중 재매수하지 않고 만료 후 다시
     MAX_DAILY_BUY_USD: "10",
     REENTRY_COOLDOWN_HOURS: "24",
     TRADE_COST_RATE: "0",
+    // 기본 손절선은 재난 방어용 12%이므로, 쿨다운 검증에는 좁은 손절선을 명시합니다.
+    STOP_LOSS_RATE: "0.03",
   });
   const state = createPaperState({
     budget: createUsdBudget("1491.8"),
@@ -485,6 +491,100 @@ function nearTargetState() {
   state.cashUsd = equity * 0.33;
   return state;
 }
+
+// ── 매수·매도 속도 대칭 ────────────────────────────────────────
+// 07-29~08-04 실제 손실 시나리오를 재현합니다. 방어 매도는 1사이클에 전량,
+// 재진입은 하루 $10씩이라 4거래일이 걸렸고 그 사이 벤치마크가 +4% 올랐습니다.
+// alpha가 +$1.34에서 -$1.60으로 무너진 원인이 이 비대칭입니다.
+
+function fullyInvested(weight) {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const equity = state.cashUsd;
+  state.positions.AAA = {
+    symbol: "AAA", openedByAgent: true, quantity: (equity * weight) / 100, entryPrice: 100,
+    peakPrice: 100, lastPrice: 100, lastPriceAt: "2026-07-14T00:00:00Z",
+    costUsd: equity * weight, openedAt: "2026-07-14T00:00:00Z",
+  };
+  state.cashUsd = equity * (1 - weight);
+  return state;
+}
+
+test("방어 매도로 빠진 현금은 일일 한도와 무관하게 한 사이클에 목표까지 복귀한다", () => {
+  const symmetric = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REGIME_CONFIRM_CYCLES: "1",
+  });
+  const state = fullyInvested(0.7);
+  const equity = state.funding.fundedUsd;
+
+  // RISK_OFF: AAA 목표 40%로 내려가며 초과분을 한 번에 매도합니다.
+  runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], symmetric,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("RISK_OFF"));
+  const soldUsd = state.trades.at(-1).amountUsd;
+  assert.equal(state.trades.at(-1).side, "SELL");
+  assert.ok(state.redeployableUsd > 0);
+  assert.ok(Math.abs(state.redeployableUsd - soldUsd) < 0.01);
+
+  // NEUTRAL 복귀: 매도액이 하루 한도($10)의 두 배여도 같은 사이클에 되돌아갑니다.
+  const back = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], symmetric,
+    new Date("2026-07-15T14:00:00Z"), macroSignal("NEUTRAL"));
+
+  assert.ok(soldUsd > symmetric.maxDailyBuyUsd, "매도액이 일일 한도보다 커야 의미 있는 검증입니다");
+  const buy = back.state.trades.at(-1);
+  assert.equal(buy.side, "BUY");
+  assert.ok(Math.abs(buy.amountUsd - soldUsd) < 0.05, `재진입액 ${buy.amountUsd}`);
+  assert.ok(Math.abs(back.summary.positions[0].marketValueUsd - equity * 0.7) < 0.05);
+  // 재투입분은 일일 한도를 소진하지 않습니다. 한도는 신규 투입만 제한합니다.
+  assert.equal(back.state.dailyBuyUsd["2026-07-15"], 0);
+  // 센트 절사로 1센트 미만이 남을 수 있습니다. 최소 주문($1) 아래라 다음 주문을 열지 못합니다.
+  assert.ok(back.state.redeployableUsd < 0.05);
+});
+
+test("판 적 없는 신규 투입은 여전히 일일 한도를 지킨다", () => {
+  const symmetric = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0",
+    REGIME_CONFIRM_CYCLES: "1",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  const result = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], symmetric,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"));
+
+  assert.equal(result.state.redeployableUsd, 0);
+  assert.equal(result.state.dailyBuyUsd["2026-07-14"], 10);
+});
+
+test("같은 사이클의 동일 종목 매수는 체결 한 건으로 합쳐진다", () => {
+  const fragmented = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "20", TRADE_COST_RATE: "0.001",
+    REGIME_CONFIRM_CYCLES: "1",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  const result = runPaperCycle(state, [{ symbol: "AAA", lastPrice: 100 }], fragmented,
+    new Date("2026-07-14T14:00:00Z"), macroSignal("NEUTRAL"));
+
+  // 예전에는 $5·$5·$5·$5로 4건이 쌓였습니다.
+  const buys = result.state.trades.filter((trade) => trade.side === "BUY");
+  assert.equal(buys.length, 1);
+  assert.equal(buys[0].amountUsd, 20);
+  assert.ok(Math.abs(buys[0].quantity - result.state.positions.AAA.quantity) < 1e-9);
+  assert.ok(Math.abs(buys[0].feeUsd - result.summary.feesUsd) < 1e-9);
+  // 결정 로그도 종목당 한 줄이어야 리포트가 부풀지 않습니다.
+  assert.equal(result.decisions.filter((item) => item.action === "BUY").length, 1);
+});
 
 test("목표에서 밴드 이내로만 벗어난 종목은 매수하지 않는다", () => {
   const banded = loadTradingPolicy({

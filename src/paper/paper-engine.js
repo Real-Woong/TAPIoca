@@ -24,6 +24,10 @@ export function createPaperState({ budget, watchlist, now = new Date() }) {
     },
     completedSymbols: [],
     dailyBuyUsd: {},
+    // 방어 매도로 빠져나온 현금입니다. 이 돈이 목표 비중으로 되돌아갈 때는
+    // 일일 매수 한도와 1회 주문 상한을 적용하지 않습니다. 매도는 1사이클에 전량,
+    // 매수는 하루 $10씩이던 비대칭이 신호 진동 위에서 확정적인 손실을 만들었습니다.
+    redeployableUsd: 0,
     trades: [],
     // 마지막으로 매매 판단에 사용한 FRED + X 통합 신호를 보관합니다.
     macro: null,
@@ -48,6 +52,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   state.symbolCooldowns ??= {};
   state.completedSymbols ??= [];
   state.feesUsd ??= 0;
+  state.redeployableUsd ??= 0;
   const costRate = Number(policy.tradeCostRate) || 0;
   // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
   updateBenchmark(state, priceMap, now, costRate);
@@ -70,6 +75,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
       state.cashUsd = roundUsd(state.cashUsd + proceedsUsd);
       state.realizedPnlUsd = roundUsd(state.realizedPnlUsd + pnlUsd);
       state.feesUsd = roundUsd(state.feesUsd + feeUsd);
+      state.redeployableUsd = roundUsd(state.redeployableUsd + proceedsUsd);
       state.trades.push({
         side: "SELL",
         symbol,
@@ -263,6 +269,8 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
     state.cashUsd = roundUsd(state.cashUsd + proceedsUsd);
     state.realizedPnlUsd = roundUsd(state.realizedPnlUsd + pnlUsd);
     state.feesUsd = roundUsd((state.feesUsd ?? 0) + feeUsd);
+    // 이 매도액은 목표 비중이 다시 오르면 같은 속도로 되돌아갈 수 있어야 합니다.
+    state.redeployableUsd = roundUsd((state.redeployableUsd ?? 0) + proceedsUsd);
 
     const reason = `MACRO_${macroSignal.regime}_REBALANCE_SELL`;
     state.trades.push({
@@ -323,10 +331,25 @@ function runMacroTargetBuys({
 }) {
   const allocation = macroSignal.targetAllocation ?? {};
   const cashWeight = validWeight(allocation.CASH);
+  // 같은 사이클에서 한 종목을 여러 번 사면 체결 기록도 한 건으로 합칩니다.
+  // $20 매수가 $5·$5·$5·$1.44로 쪼개져도 실익은 없고, 실제 증권사의 건당
+  // 최소수수료에서는 그대로 비용이 됩니다.
+  const boughtBySymbol = new Map();
 
   while (true) {
     const dailyRemaining = Math.max(0, policy.maxDailyBuyUsd - dailyBought);
-    if (dailyRemaining < policy.minOrderUsd || state.cashUsd < policy.minOrderUsd) break;
+    // 방어 매도로 빠져나온 현금은 되돌아올 때 한도를 적용받지 않습니다.
+    // 일일 한도는 "지갑을 하루에 얼마나 새로 투입하는가"만 제한하면 됩니다.
+    const redeployableUsd = Math.max(
+      0,
+      Math.min(Number(state.redeployableUsd) || 0, state.cashUsd),
+    );
+    const buyingPowerUsd = roundUsd(redeployableUsd + dailyRemaining);
+    if (buyingPowerUsd < policy.minOrderUsd || state.cashUsd < policy.minOrderUsd) break;
+    // 재투입분이 있으면 1회 주문 상한도 그만큼 풀어 매도와 같은 속도로 복귀합니다.
+    const orderCeilingUsd = redeployableUsd >= policy.minOrderUsd
+      ? buyingPowerUsd
+      : policy.maxOrderUsd;
 
     const summary = summarizePaperState(state, priceMap);
     // 목표 현금 비중을 침범하지 않도록 앞으로 더 투자할 수 있는 총액을 계산합니다.
@@ -370,13 +393,13 @@ function runMacroTargetBuys({
     if (!candidate) break;
 
     const requestedUsd = Math.min(
-      dailyRemaining,
+      buyingPowerUsd,
       investableRemaining,
       candidate.deficitUsd,
     );
     const amountUsd = sizePaperOrder({
       cashUsd: state.cashUsd,
-      maxOrderUsd: policy.maxOrderUsd,
+      maxOrderUsd: orderCeilingUsd,
       minOrderUsd: policy.minOrderUsd,
       requestedUsd,
     });
@@ -391,14 +414,25 @@ function runMacroTargetBuys({
       reason: `MACRO_${macroSignal.regime}_TARGET_BUY`,
       macroSignal,
       costRate: Number(policy.tradeCostRate) || 0,
+      mergeSameCycle: true,
     });
-    dailyBought = roundUsd(dailyBought + amountUsd);
+    // 재투입분을 먼저 쓰고, 모자란 만큼만 일일 한도에서 차감합니다.
+    const fromRedeployUsd = Math.min(amountUsd, redeployableUsd);
+    state.redeployableUsd = roundUsd(redeployableUsd - fromRedeployUsd);
+    dailyBought = roundUsd(dailyBought + (amountUsd - fromRedeployUsd));
+    boughtBySymbol.set(
+      candidate.symbol,
+      roundUsd((boughtBySymbol.get(candidate.symbol) ?? 0) + amountUsd),
+    );
+  }
+
+  for (const [symbol, amountUsd] of boughtBySymbol) {
     decisions.push({
-      symbol: candidate.symbol,
+      symbol,
       action: "BUY",
       reason: `MACRO_${macroSignal.regime}_TARGET_BUY`,
       amountUsd,
-      targetWeight: validWeight(allocation[candidate.symbol]),
+      targetWeight: validWeight(allocation[symbol]),
     });
   }
 
@@ -438,7 +472,10 @@ function runLegacyBuys({ state, priceMap, policy, now, dailyBought, decisions })
 }
 
 // 신규 포지션 생성과 기존 포지션 추가 매수를 한 함수에서 처리합니다.
-function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSignal, costRate = 0 }) {
+function addToPosition({
+  state, market, symbol, amountUsd, now, reason, macroSignal, costRate = 0,
+  mergeSameCycle = false,
+}) {
   // 거래비용은 같은 현금으로 살 수 있는 수량을 줄이는 방식으로 반영합니다.
   // 현금은 amountUsd 전액이 나가고, 실제로 받는 주식은 비용만큼 적어집니다(즉시 미실현손실 = 비용).
   const feeUsd = roundUsd(amountUsd * costRate);
@@ -471,6 +508,19 @@ function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSig
     };
   }
 
+  const executedAt = now.toISOString();
+  const twin = mergeSameCycle
+    ? findSameCycleBuy(state.trades, symbol, reason, executedAt)
+    : null;
+  if (twin) {
+    // 같은 사이클·같은 종목·같은 사유의 체결은 한 건으로 합칩니다.
+    // 사이클 안에서는 가격이 동일하므로 수량과 금액만 더하면 됩니다.
+    twin.quantity += addedQuantity;
+    twin.amountUsd = roundUsd(twin.amountUsd + amountUsd);
+    twin.feeUsd = roundUsd(twin.feeUsd + feeUsd);
+    return;
+  }
+
   state.trades.push({
     side: "BUY",
     symbol,
@@ -481,8 +531,19 @@ function addToPosition({ state, market, symbol, amountUsd, now, reason, macroSig
     reason,
     macroRegime: macroSignal?.regime,
     macroScore: macroSignal?.score,
-    executedAt: now.toISOString(),
+    executedAt,
   });
+}
+
+// 같은 실행 시각(=같은 사이클)의 체결만 뒤에서부터 훑습니다.
+// 시각이 달라지는 순간 이전 사이클이므로 더 볼 필요가 없습니다.
+function findSameCycleBuy(trades, symbol, reason, executedAt) {
+  for (let index = trades.length - 1; index >= 0; index -= 1) {
+    const trade = trades[index];
+    if (trade.executedAt !== executedAt) return null;
+    if (trade.side === "BUY" && trade.symbol === symbol && trade.reason === reason) return trade;
+  }
+  return null;
 }
 
 // 벤치마크는 원금 전액을 기준 종목(기본 VTI)에 한 번 넣고 그대로 두는 매수후보유입니다.

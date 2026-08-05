@@ -1,3 +1,7 @@
+// 미국 정규장 6.5시간을 15분 주기로 도는 사이클 수입니다.
+// 레짐 확정 기간을 "거래일"로 적고 여기서 사이클 수로 환산합니다.
+const CYCLES_PER_SESSION = 26;
+
 // .env에 별도 값이 없을 때 적용되는 보수적인 PAPER 기본값입니다.
 const DEFAULTS = Object.freeze({
   tradingCurrency: "USD",
@@ -10,9 +14,10 @@ const DEFAULTS = Object.freeze({
   // 매도에만 걸려 있던 밴드를 매수에도 대칭으로 적용합니다. 예전에는 매수가 결손
   // $1에서 트리거돼, 15분마다 매수와 리밸런싱 매도가 서로를 되돌렸습니다.
   rebalanceBandRate: 0.05,
-  // 레짐이 이 횟수만큼 연속으로 유지돼야 목표 비중을 바꿉니다(15분 주기 × 4 = 1시간).
-  // 뉴스 감성이 장중에 뒤집힐 때마다 주식 비중이 40%↔70%로 튀던 문제를 막습니다.
-  regimeConfirmCycles: 4,
+  // 레짐 확정에 필요한 거래일 수입니다. 예전 기본값은 4사이클(=1시간)이었는데,
+  // 월간 FRED 데이터로 만든 레짐에 1시간 확정은 사실상 무방비였습니다.
+  // 이제는 하루 단위로 세고, 사이클 수는 세션 길이에서 환산합니다.
+  regimeConfirmDays: 1,
   // 같은 레짐에서 하루에 허용하는 리밸런싱 매도 횟수입니다.
   // 레짐이 실제로 바뀌면 이 한도와 무관하게 방어 매도를 즉시 허용합니다.
   maxRebalancesPerDay: 1,
@@ -20,10 +25,16 @@ const DEFAULTS = Object.freeze({
   // 실제 손익을 정직하게 만들기 위한 보수적 가정값이며 실측으로 보정해야 합니다.
   tradeCostRate: 0.001,
   reentryCooldownHours: 24,
-  stopLossRate: 0.03,
-  trailingActivationRate: 0.025,
-  trailingDrawdownRate: 0.015,
-  maxHoldingDays: 15,
+  // 아래 청산 규칙은 개별 종목 모멘텀 매매용 값이었고, 광역 지수 ETF에는 맞지 않습니다.
+  // VTI의 연율 변동성 15%는 일변동 약 0.95%라, 3% 손절과 1.5% 트레일링은 노이즈에
+  // 그대로 걸립니다. 실제로 07-29 MAX_HOLDING_PERIOD가 VTI 전량을, 07-30
+  // TRAILING_PROFIT이 SCHD 전량을 팔아 목표 비중 90% 구간에서 주식 15%까지 내려갔고,
+  // 그 뒤 4일 랠리를 통째로 놓쳤습니다. 배분 레이어와 청산 레이어가 싸운 결과입니다.
+  // 손절은 재난 방어용으로만 남기고 나머지는 명시적으로 켤 때만 동작합니다.
+  stopLossRate: 0.12,
+  trailingActivationRate: null,
+  trailingDrawdownRate: null,
+  maxHoldingDays: null,
 });
 
 export function loadTradingPolicy(env = process.env) {
@@ -46,10 +57,13 @@ export function loadTradingPolicy(env = process.env) {
     maxTotalLossUsd: readPositive(env.MAX_TOTAL_LOSS_USD, DEFAULTS.maxTotalLossUsd),
     maxDailyLossUsd: readPositive(env.MAX_DAILY_LOSS_USD, DEFAULTS.maxDailyLossUsd),
     rebalanceBandRate: readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate),
-    regimeConfirmCycles: readPositiveInteger(
-      env.REGIME_CONFIRM_CYCLES,
-      DEFAULTS.regimeConfirmCycles,
-    ),
+    // 사이클 수를 직접 지정하면 그것이 이깁니다(테스트와 일봉 백테스트가 씁니다).
+    // 지정하지 않으면 거래일 수를 세션당 사이클 수로 환산합니다.
+    regimeConfirmCycles: env.REGIME_CONFIRM_CYCLES
+      ? readPositiveInteger(env.REGIME_CONFIRM_CYCLES, 1)
+      : Math.round(
+          readPositive(env.REGIME_CONFIRM_DAYS, DEFAULTS.regimeConfirmDays) * CYCLES_PER_SESSION,
+        ),
     maxRebalancesPerDay: readPositiveInteger(
       env.MAX_REBALANCES_PER_DAY,
       DEFAULTS.maxRebalancesPerDay,
@@ -60,12 +74,19 @@ export function loadTradingPolicy(env = process.env) {
       DEFAULTS.reentryCooldownHours,
     ),
     stopLossRate: readRate(env.STOP_LOSS_RATE, DEFAULTS.stopLossRate),
-    trailingActivationRate: readRate(
+    trailingActivationRate: readOptionalRate(
       env.TRAILING_ACTIVATION_RATE,
       DEFAULTS.trailingActivationRate,
     ),
-    trailingDrawdownRate: readRate(env.TRAILING_DRAWDOWN_RATE, DEFAULTS.trailingDrawdownRate),
-    maxHoldingDays: readPositiveInteger(env.MAX_HOLDING_DAYS, DEFAULTS.maxHoldingDays),
+    trailingDrawdownRate: readOptionalRate(
+      env.TRAILING_DRAWDOWN_RATE,
+      DEFAULTS.trailingDrawdownRate,
+    ),
+    maxHoldingDays: readOptional(
+      env.MAX_HOLDING_DAYS,
+      DEFAULTS.maxHoldingDays,
+      readPositiveInteger,
+    ),
     allowSellExisting: false,
   });
 }
@@ -91,6 +112,18 @@ function readNonNegativeRate(value, fallback) {
     throw new Error(`비율 설정값은 0 이상 1 이하여야 합니다: ${value}`);
   }
   return number;
+}
+
+// 끌 수 있는 설정값 리더입니다. "off"는 그 규칙 자체를 비활성으로 만듭니다.
+// 기본값이 null인 규칙은 .env에 값을 적어야만 켜집니다.
+function readOptional(value, fallback, reader) {
+  if (value === undefined || value === "") return fallback;
+  if (value === "off" || value === "none") return null;
+  return reader(value, fallback);
+}
+
+function readOptionalRate(value, fallback) {
+  return readOptional(value, fallback, readRate);
 }
 
 function readPositiveInteger(value, fallback) {
