@@ -64,6 +64,9 @@ export function runBacktest({
   });
 
   const equityCurve = [];
+  // 벤치마크의 낙폭도 함께 재야 "위험을 줄인 대가로 수익을 준 것인가"를 판정할 수 있습니다.
+  // 수익률만 비교하면 방어형 전략은 언제나 지는 것처럼 보입니다.
+  const benchmarkCurve = [];
   const exposures = [];
   let previousEquity = fundedUsd;
   const dailyReturns = [];
@@ -90,6 +93,7 @@ export function runBacktest({
 
     const { summary } = runPaperCycle(state, prices, policy, now, marketSignal);
     equityCurve.push({ date: isoDate(now), equityUsd: summary.equityUsd });
+    if (summary.benchmark) benchmarkCurve.push({ equityUsd: summary.benchmark.valueUsd });
     exposures.push(summary.equityUsd > 0 ? summary.marketValueUsd / summary.equityUsd : 0);
     dailyReturns.push(previousEquity > 0 ? summary.equityUsd / previousEquity - 1 : 0);
     previousEquity = summary.equityUsd;
@@ -104,7 +108,7 @@ export function runBacktest({
     summary: finalSummary,
     equityCurve,
     metrics: computeMetrics({
-      dailyReturns, equityCurve, exposures, summary: finalSummary, state, fundedUsd,
+      dailyReturns, equityCurve, benchmarkCurve, exposures, summary: finalSummary, state, fundedUsd,
       benchmarkSymbol: benchmarkSymbol ?? state.benchmark?.symbol,
     }),
   };
@@ -164,7 +168,7 @@ function constantMacro(score) {
 }
 
 function computeMetrics({
-  dailyReturns, equityCurve, exposures, summary, state, fundedUsd, benchmarkSymbol,
+  dailyReturns, equityCurve, benchmarkCurve, exposures, summary, state, fundedUsd, benchmarkSymbol,
 }) {
   const tradingDays = 252;
   const years = dailyReturns.length / tradingDays;
@@ -180,12 +184,8 @@ function computeMetrics({
   // 무위험이자율 0 가정입니다. 전략 간 상대 비교용이므로 절대값으로 읽지 마십시오.
   const sharpe = annualVol > 0 ? (mean * tradingDays) / annualVol : 0;
 
-  let peak = -Infinity;
-  let maxDrawdown = 0;
-  for (const point of equityCurve) {
-    peak = Math.max(peak, point.equityUsd);
-    if (peak > 0) maxDrawdown = Math.max(maxDrawdown, 1 - point.equityUsd / peak);
-  }
+  const maxDrawdown = maxDrawdownOf(equityCurve);
+  const benchmarkDrawdown = maxDrawdownOf(benchmarkCurve ?? []);
 
   // 회전율: 총 체결금액 / 평균 자산 / 연수. 비용이 엣지를 잡아먹는지 보는 지표입니다.
   const tradedUsd = state.trades.reduce((sum, trade) => sum + Math.abs(trade.amountUsd), 0);
@@ -199,6 +199,7 @@ function computeMetrics({
     annualVolPct: round3(annualVol * 100),
     sharpe: round3(sharpe),
     maxDrawdownPct: round3(maxDrawdown * 100),
+    benchmarkMaxDrawdownPct: benchmarkCurve?.length ? round3(benchmarkDrawdown * 100) : null,
     averageExposurePct: round3(average(exposures) * 100),
     tradeCount: state.trades.length,
     turnoverPerYear: round3(turnoverPerYear),
@@ -209,6 +210,17 @@ function computeMetrics({
       ? round3(totalReturn * 100 - summary.benchmark.returnPct)
       : null,
   };
+}
+
+/** 고점 대비 최대 낙폭입니다. */
+function maxDrawdownOf(curve) {
+  let peak = -Infinity;
+  let worst = 0;
+  for (const point of curve) {
+    peak = Math.max(peak, point.equityUsd);
+    if (peak > 0) worst = Math.max(worst, 1 - point.equityUsd / peak);
+  }
+  return worst;
 }
 
 function average(values) {

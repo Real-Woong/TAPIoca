@@ -221,7 +221,7 @@ async function buildDatasets() {
 function averageMetrics(results) {
   const keys = [
     "cagrPct", "annualVolPct", "sharpe", "maxDrawdownPct",
-    "averageExposurePct", "tradeCount", "turnoverPerYear", "alphaPct",
+    "averageExposurePct", "tradeCount", "turnoverPerYear", "alphaPct", "benchmarkMaxDrawdownPct",
   ];
   const averaged = {};
   for (const key of keys) {
@@ -235,6 +235,7 @@ function averageMetrics(results) {
     "변동성%": averaged.annualVolPct,
     Sharpe: averaged.sharpe,
     "MDD%": averaged.maxDrawdownPct,
+    "벤치MDD%": averaged.benchmarkMaxDrawdownPct,
     "평균노출%": averaged.averageExposurePct,
     체결: Math.round(averaged.tradeCount),
     "회전율/년": averaged.turnoverPerYear,
