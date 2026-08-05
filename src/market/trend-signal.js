@@ -229,7 +229,7 @@ async function fetchAllCloses(symbols, config, fetchImpl, apiKey) {
  * 검증 페이지를 200으로 돌려주기 시작했습니다. 우회 대신 API 키가 필요 없는
  * Yahoo Finance를 주 소스로 두고, Stooq는 폴백으로 남겨둡니다.
  */
-async function fetchDailyCloses(symbol, config, fetchImpl, apiKey) {
+export async function fetchDailyCloses(symbol, config, fetchImpl, apiKey) {
   const errors = [];
   for (const source of dailySources(apiKey)) {
     try {

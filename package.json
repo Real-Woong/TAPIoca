@@ -11,6 +11,7 @@
     "signals:check": "node --env-file=.env src/market/signals-check.js",
     "sentiment:status": "node --env-file=.env src/sentiment/sentiment-status.js",
     "macro:status": "node --env-file=.env src/FRED_data/macro-status.js",
+    "backtest": "node src/backtest/backtest-cli.js",
     "paper:run": "node --env-file=.env src/paper/paper-runner.js",
     "paper:status": "node --env-file=.env src/paper/paper-status.js",
     "paper:events": "node --env-file=.env src/paper/events-cli.js",
