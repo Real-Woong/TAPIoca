@@ -137,3 +137,31 @@ test("이력이 더 긴 종목은 최신일 기준으로 정렬한다", () => {
   assert.equal(base.SCHD.length, 500);
   assert.deepEqual(actual, expected);
 });
+
+// 기본 비중표는 VTI·SCHD·IWM을 전제한다. 종목을 골라 돌릴 때 빠진 종목의 몫이
+// 영구 현금으로 남으면, 2008년을 포함하려고 VTI·IWM만 돌리는 실험이 노출
+// 20%p를 손해 본 채로 측정된다.
+test("종목을 골라 돌리면 빠진 종목의 비중을 남은 종목에 재분배한다", () => {
+  const two = generateMarket(13, ["VTI", "IWM"], { days: 700 });
+  const three = generateMarket(13, ["VTI", "SCHD", "IWM"], { days: 700 });
+
+  const twoResult = runBacktest({ closesBySymbol: two, policy }).metrics;
+  const threeResult = runBacktest({ closesBySymbol: three, policy }).metrics;
+
+  // SCHD 몫 20%가 현금으로 남았다면 노출이 크게 낮아진다.
+  assert.ok(
+    Math.abs(twoResult.averageExposurePct - threeResult.averageExposurePct) < 8,
+    `2종목 ${twoResult.averageExposurePct}% vs 3종목 ${threeResult.averageExposurePct}%`,
+  );
+  assert.ok(twoResult.averageExposurePct > 60);
+});
+
+test("세 종목을 모두 넘기면 재분배가 비중을 바꾸지 않는다", () => {
+  const closes = market(9, 500);
+  const full = generateMarket(9, ["VTI", "SCHD"], { days: 500 });
+  // market()과 같은 입력이므로 결과도 같아야 한다(재분배 배수 1).
+  assert.deepEqual(
+    runBacktest({ closesBySymbol: closes, policy }).metrics,
+    runBacktest({ closesBySymbol: full, policy }).metrics,
+  );
+});

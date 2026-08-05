@@ -73,11 +73,15 @@ export function runBacktest({
     const history = sliceHistory(aligned, index, maxSamples);
     const trend = buildTrendSignal(history, {}, now);
     const macd = buildDailyMacdSignal(history, {}, now);
-    const marketSignal = combineMarketSignals(
+    const combined = combineMarketSignals(
       constantMacro(macroScore),
       null,
       { ...signalOptions, trend, macd, now },
     );
+    const marketSignal = {
+      ...combined,
+      targetAllocation: restrictAllocation(combined.targetAllocation, symbols),
+    };
     const prices = symbols.map((symbol) => ({
       symbol,
       lastPrice: aligned[symbol][index],
@@ -114,6 +118,35 @@ function sliceHistory(closesBySymbol, index, maxSamples) {
     history[symbol] = closes.slice(start, index + 1);
   }
   return history;
+}
+
+/**
+ * 목표 비중을 실제로 테스트하는 종목에만 재분배합니다(백테스트 전용).
+ *
+ * 기본 비중표는 VTI·SCHD·IWM을 전제하는데, 종목을 골라 돌리면 빠진 종목의
+ * 비중이 갈 곳 없이 남아 영구 현금이 됩니다. 예컨대 2008년을 포함하려고
+ * VTI·IWM만 돌리면(SCHD는 2011년 상장) SCHD 몫 20%가 그대로 현금이 되어
+ * 노출이 20%p 낮게 잡힙니다.
+ *
+ * 현금 목표는 그대로 두고 주식 몫만 남은 종목에 비례 배분합니다.
+ * 세 종목을 모두 넘기면 배수가 1이라 아무것도 바뀌지 않습니다.
+ */
+function restrictAllocation(allocation, symbols) {
+  const cashWeight = Number(allocation.CASH) || 0;
+  const present = symbols.filter((symbol) => symbol in allocation);
+  const equitySum = present.reduce((sum, symbol) => sum + (Number(allocation[symbol]) || 0), 0);
+  if (equitySum <= 0) return { ...allocation, CASH: 1 };
+
+  const scale = (1 - cashWeight) / equitySum;
+  const restricted = { CASH: round(cashWeight) };
+  for (const symbol of present) {
+    restricted[symbol] = round((Number(allocation[symbol]) || 0) * scale);
+  }
+  return restricted;
+}
+
+function round(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 }
 
 /** 과거 FRED 값을 되살리는 대신 상수 거시 점수를 씁니다. */
