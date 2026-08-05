@@ -1,7 +1,7 @@
 # TAPIoca File Structure
 
 > Architecture snapshot for external review  
-> Last updated: 2026-07-23
+> Last updated: 2026-08-05
 
 ## 1. Project Summary
 
@@ -29,6 +29,7 @@ toss-ai-agent/
 ├── README.md
 ├── file_structure.md
 ├── trading_method.md
+├── STRATEGY_REVIEW_2026-08-05.md   # PAPER 9영업일 사후분석 + 개선 로드맵
 ├── package.json
 ├── deploy/
 │   ├── toss-ai-paper.service
@@ -36,6 +37,12 @@ toss-ai-agent/
 │   ├── toss-ai-report.service
 │   └── toss-ai-report.timer
 ├── src/
+│   ├── backtest/
+│   │   ├── backtest-cli.js
+│   │   ├── backtest-engine.js
+│   │   ├── price-cache.js
+│   │   ├── scenarios.js
+│   │   └── synthetic-prices.js
 │   ├── toss/
 │   │   ├── doctor.js
 │   │   └── toss-client.js
@@ -50,8 +57,9 @@ toss-ai-agent/
 │   │   └── macro-status.js
 │   ├── market/
 │   │   ├── macd-signal.js
-│   │   ├── trend-signal.js
 │   │   ├── market-check.js
+│   │   ├── signals-check.js
+│   │   ├── trend-signal.js
 │   │   └── us-market-session.js
 │   ├── sentiment/
 │   │   ├── free-news-fetcher.js
@@ -60,6 +68,8 @@ toss-ai-agent/
 │   │   ├── sentiment-analyzer.js
 │   │   └── sentiment-status.js
 │   ├── paper/
+│   │   ├── event-log.js
+│   │   ├── events-cli.js
 │   │   ├── exit-strategy.js
 │   │   ├── paper-engine.js
 │   │   ├── paper-runner.js
@@ -73,7 +83,9 @@ toss-ai-agent/
 │       ├── telegram-client.js
 │       └── telegram-discover.js
 └── test/
+    ├── backtest-engine.test.js
     ├── daily-report.test.js
+    ├── event-log.test.js
     ├── exit-strategy.test.js
     ├── fred-client.test.js
     ├── free-news-fetcher.test.js
@@ -88,6 +100,8 @@ toss-ai-agent/
     ├── telegram-client.test.js
     ├── toss-client.test.js
     ├── trading-budget.test.js
+    ├── trading-policy.test.js
+    ├── trend-signal.test.js
     └── us-market-session.test.js
 ```
 
@@ -100,7 +114,9 @@ data/
 ├── macro-snapshot.json
 ├── free-news-cache.json
 ├── macd-snapshot.json
+├── paper-events.jsonl
 ├── trend-snapshot.json
+├── backtest-closes.json
 └── paper-runner.lock
 ```
 
@@ -166,7 +182,12 @@ Owns free news collection and sentiment analysis.
   - Separates official reporting from opinion sources
   - Applies a reduced weight to opinion sources
 - `market-signal.js`
-  - Combines FRED, sentiment, and MACD scores
+  - Combines FRED, sentiment, trend, and MACD scores
+  - Decays sentiment by snapshot age (6h half-life, dropped past 24h) so a reused
+    cache cannot keep flipping the target allocation
+  - Maps the combined score to a target allocation **continuously**, interpolating
+    between the RISK_OFF / NEUTRAL / RISK_ON tables instead of stepping at ±1.5
+  - Scales equity exposure down when realized volatility exceeds the target
 
 ### `src/market/`
 
@@ -213,15 +234,19 @@ Owns the virtual wallet and trading rules.
   - Loads validated PAPER risk settings
   - Rejects invalid rates and limits
 - `exit-strategy.js`
-  - Stop loss
-  - Trailing-profit exit
-  - Maximum holding period
+  - Catastrophe stop loss (12% by default)
+  - Trailing-profit exit and maximum holding period — **disabled by default**,
+    opt-in via `.env`; they are individual-stock momentum rules that fought the
+    target-allocation layer on broad index ETFs (see `STRATEGY_REVIEW_2026-08-05.md`)
   - Protection of positions not opened by the agent
 - `paper-engine.js`
   - Updates positions and cash
   - Evaluates exits before new purchases
   - Enforces daily and total loss brakes on new purchases
   - Applies target-allocation buys
+  - Credits defensive-sale proceeds to `redeployableUsd` so returning to target
+    is as fast as leaving it; daily/per-order caps then throttle only new capital
+  - Merges same-cycle buys of one symbol into a single fill
   - Applies minimum order size and re-entry cooldown
   - Records trades and risk state
 - `paper-runner.js`
@@ -232,6 +257,24 @@ Owns the virtual wallet and trading rules.
   - Writes state using temporary-file plus rename
 - `paper-status.js`
   - Prints the current PAPER state without placing trades
+
+### `src/backtest/`
+
+Owns historical evaluation. Parameter changes are decided here, not in live PAPER
+runs — 20 trading days at USD 67 cannot separate a path-dependent rule's effect
+from noise.
+
+- `backtest-engine.js`
+  - Replays daily closes through the **production** engine and signal functions
+    (`buildTrendSignal`, `buildDailyMacdSignal`, `combineMarketSignals`, `runPaperCycle`)
+  - Holds the FRED score constant and omits news sentiment; neither is
+    reconstructable for past dates, so only price layers and execution rules
+    are measured here
+  - Reports CAGR, volatility, Sharpe, max drawdown, average exposure, turnover, alpha
+- `synthetic-prices.js`: deterministic seeded GBM paths with drift/vol/autocorrelation
+- `scenarios.js`: bull / bear / choppy / momentum regime scripts
+- `price-cache.js`: fetches and caches real daily closes through the same source chain
+- `backtest-cli.js`: variant comparison presets (`exit`, `macd`, `band`, `cost`, `trend`)
 
 ### `src/telegram/`
 
@@ -325,6 +368,10 @@ npm run paper:run          Run one PAPER cycle during market hours
 npm run paper:run -- --force
                             Run one PAPER cycle outside market hours
 npm run paper:status       Print current PAPER state
+npm run backtest           Compare exit-rule variants on synthetic scenarios
+npm run backtest -- --compare macd|band|cost|trend
+npm run backtest -- --fetch          Cache real daily closes for backtesting
+npm run backtest -- --source cache   Backtest on the cached real data
 npm run telegram:discover  Discover Telegram chat information
 npm run telegram:test      Send a Telegram connection test
 npm run telegram:report    Send the scheduled daily report
@@ -347,17 +394,18 @@ npm test                   Run the complete test suite
 
 ## 9. Current Verification Status
 
-As of 2026-07-23:
+As of 2026-08-05:
 
 ```text
-Tests:   57
-Passed:  57
+Tests:   138
+Passed:  138
 Failed:  0
 ```
 
 The suite covers API clients, time handling, macro scoring, news collection,
-sentiment analysis, MACD, PAPER trading, risk brakes, exits, reporting, and
-portfolio analysis.
+sentiment analysis and snapshot freshness, MACD, trend, continuous allocation
+mapping, PAPER trading, redeployment symmetry, risk brakes, exits, the
+backtester (determinism and look-ahead safety), reporting, and portfolio analysis.
 
 ## 10. Repository Cleanup Candidates
 

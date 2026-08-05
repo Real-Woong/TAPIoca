@@ -91,12 +91,27 @@ MAX_DAILY_BUY_USD=10
 MAX_TOTAL_LOSS_USD=10
 MAX_DAILY_LOSS_USD=3
 REENTRY_COOLDOWN_HOURS=24
-STOP_LOSS_RATE=0.03
+# 재난 방어용 손절선입니다. 예전 값(0.03)은 지수 ETF의 일상적 변동에 걸려
+# 목표 비중 레이어가 "70% 보유"라고 말하는 동안 포지션을 비웠습니다.
+STOP_LOSS_RATE=0.12
+# 레짐 확정에 필요한 거래일 수입니다(내부에서 15분 사이클 수로 환산).
+REGIME_CONFIRM_DAYS=1
+ALLOW_SELL_EXISTING=false
+```
+
+`TRAILING_ACTIVATION_RATE`·`TRAILING_DRAWDOWN_RATE`·`MAX_HOLDING_DAYS`는
+**기본적으로 꺼져 있습니다.** 개별 종목 모멘텀 매매용 규칙이라 광역 지수 ETF에서는
+목표 비중 레이어와 충돌합니다. 켜려면 값을 적고, 다시 끄려면 `off`를 적으십시오.
+
+```dotenv
+# 개별 종목 워치리스트에서만 권장합니다.
 TRAILING_ACTIVATION_RATE=0.025
 TRAILING_DRAWDOWN_RATE=0.015
 MAX_HOLDING_DAYS=15
-ALLOW_SELL_EXISTING=false
 ```
+
+바꾸기 전에 `npm run backtest`로 먼저 재십시오. 배경과 실측은
+[`STRATEGY_REVIEW_2026-08-05.md`](STRATEGY_REVIEW_2026-08-05.md)에 있습니다.
 
 기본값은 전략의 수익성을 보장하지 않습니다. PAPER 로그를 충분히 모아 기준 전략과
 비교한 뒤 조정하기 위한 시작값입니다.
@@ -175,12 +190,15 @@ FRED·감성 판정에 영향을 주지 않습니다. 준비가 끝나면 다음
 최종점수 = 기본점수 + MACD 점수 × MACD 신뢰도 × MACD 가중치
 ```
 
-기본 MACD 가중치는 `0.15`입니다. 여러 ETF가 같은 방향일수록 신뢰도가 높아지고,
-방향이 엇갈리면 기여도가 줄어듭니다. 이 값은 매수·매도 신호가 아니라 기존 시장 상태를
-확인하는 후행 보조지표입니다.
+기본 MACD 가중치는 `0`입니다. 즉 계산과 표시는 하되 **판단에는 쓰지 않습니다.**
+예전 기본값 `0.15`의 실제 기여도는 +0.029였는데, 배분이 갈리는 지점이 ±1.5이므로
+어떤 값이 나와도 결정을 바꿀 수 없는 크기였습니다. 백테스트에서도 0 / 0.15 / 0.5 / 1.0
+사이에 일관된 차이가 나오지 않았습니다.
+
+실데이터 백테스트에서 증분이 확인되면 그때 켜십시오.
 
 ```dotenv
-MACD_SCORE_WEIGHT=0.15
+MACD_SCORE_WEIGHT=0
 ```
 
 실제 로컬 LLM을 쓰고 싶다면 Ollama 설치 및 모델 다운로드 후 아래처럼 바꿀 수 있습니다.
