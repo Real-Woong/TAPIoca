@@ -96,16 +96,35 @@ try {
 
 async function runFetch() {
   const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  // 키 없이도 시도는 하지만, 무료 소스는 2026-08 기준 둘 다 막혀 있어 거의 실패합니다.
+  // 조용히 타임아웃을 기다리게 두지 않고 먼저 알려줍니다.
+  if (!apiKey) {
+    console.warn(
+      "TWELVE_DATA_API_KEY가 없습니다. Yahoo(429)·Stooq(봇 차단)만 시도하므로 대개 실패합니다.\n" +
+        "  .env의 키를 쓰려면: npm run backtest:fetch",
+    );
+  }
   console.log(`일봉 수집: ${options.symbols.join(", ")} → ${dataDir}`);
-  const { sources, failures } = await fetchAndCacheCloses({
+
+  const { closesBySymbol, sources, failures } = await fetchAndCacheCloses({
     dataDir,
     symbols: options.symbols,
-    apiKey: process.env.TWELVE_DATA_API_KEY,
+    apiKey,
   });
   for (const [symbol, source] of Object.entries(sources)) {
-    console.log(`  ${symbol}: ${source}`);
+    // 받은 개수를 함께 찍습니다. 백테스터는 200일 워밍업을 쓰므로 개수가 곧 쓸모입니다.
+    console.log(`  ${symbol}: ${closesBySymbol[symbol]?.length ?? 0}개 (출처 ${source})`);
   }
   for (const failure of failures) console.error(`  실패 — ${failure}`);
+
+  const usable = Math.min(...Object.values(closesBySymbol).map((closes) => closes.length));
+  console.log(`\n가장 짧은 종목 기준 ${usable}일 — 워밍업 200일을 빼면 ${usable - 200}일 평가 가능`);
+  if (usable < 500) {
+    console.warn(
+      "  500일 미만이면 비교 결과가 우연과 구분되지 않습니다. outputsize 상한을 확인하십시오.",
+    );
+  }
 }
 
 async function runComparison() {

@@ -283,12 +283,13 @@ IWM도 점수가 오르며 연속적으로 편입되므로, "한 번도 거래�
 - 기본은 **결정론적 합성 경로**입니다(시드 고정 GBM + 국면 스크립트).
   무료 일봉 소스가 자주 막히므로 백테스터가 실데이터 없이도 항상 돌아가야 합니다.
 - 시나리오 4종: `bull` / `bear`(중간에 -35% 후 회복) / `choppy`(평균회귀) / `momentum`(추세 지속).
-- 실데이터는 `npm run backtest -- --fetch`로 캐시한 뒤 `--source cache`로 씁니다.
+- 실데이터는 `npm run backtest:fetch`로 캐시한 뒤 `--source cache`로 씁니다.
+  `backtest:fetch`만 `--env-file=.env`를 붙입니다. 나머지 실행은 키가 필요 없습니다.
   운영과 같은 소스 체인(Twelve Data → Yahoo → Stooq)을 재사용합니다.
 
 > **2026-08-05 현재 이 머신에서는 실데이터를 받지 못했습니다.**
 > Yahoo는 IP 단위 429, Stooq는 JavaScript proof-of-work 차단 상태입니다.
-> `TWELVE_DATA_API_KEY`가 있는 배포 호스트에서는 `--fetch`가 동작합니다.
+> `TWELVE_DATA_API_KEY`가 있는 배포 호스트에서는 `npm run backtest:fetch`가 동작합니다.
 
 ### 합성 경로로 잴 수 있는 것과 없는 것
 
@@ -322,7 +323,7 @@ npm run backtest -- --compare trend       추세 가중치
 npm run backtest -- --compare band        무거래 밴드
 npm run backtest -- --compare cost        거래비용 민감도
 npm run backtest -- --scenario bear --seeds 4
-npm run backtest -- --fetch               실데이터 캐시
+npm run backtest:fetch                    실데이터 캐시(.env의 API 키 사용)
 npm run backtest -- --source cache        실데이터로 실행
 ```
 
@@ -336,7 +337,7 @@ npm run backtest -- --source cache        실데이터로 실행
 ### P2 — 측정 인프라 (나머지)
 
 1. **실데이터 백테스트.** 위 결론은 전부 합성 경로 기준입니다.
-   `TWELVE_DATA_API_KEY`가 있는 환경에서 `--fetch` 후 `--source cache`로 재확인할 것.
+   `TWELVE_DATA_API_KEY`가 있는 환경에서 `npm run backtest:fetch` 후 `--source cache`로 재확인할 것.
    특히 MACD·추세 가중치 결정은 실데이터 확인 전까지 잠정입니다.
 2. **alpha 귀속 분해.** `alpha = 현금드래그 + 타이밍 + 종목선택 + 비용`.
    현재 리포트는 증상만 보여주고 원인을 안 보여줍니다.

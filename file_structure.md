@@ -370,7 +370,7 @@ npm run paper:run -- --force
 npm run paper:status       Print current PAPER state
 npm run backtest           Compare exit-rule variants on synthetic scenarios
 npm run backtest -- --compare macd|band|cost|trend
-npm run backtest -- --fetch          Cache real daily closes for backtesting
+npm run backtest:fetch     Cache real daily closes (uses .env for the API key)
 npm run backtest -- --source cache   Backtest on the cached real data
 npm run telegram:discover  Discover Telegram chat information
 npm run telegram:test      Send a Telegram connection test
