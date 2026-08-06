@@ -12,8 +12,12 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *
  *   npm run backtest                      기본 비교(청산 규칙) 실행
  *   npm run backtest -- --compare macd    MACD 가중치 비교
+ *   npm run backtest -- --compare vol     변동성 관리 목표 비교
+ *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --source cache    캐시된 실데이터로 실행
+ *
+ * 비교 종류: exit, macd, band, cost, strategy, vol, source, trend
  *
  * 파라미터를 바꾸기 전에 반드시 여기서 먼저 재십시오. 20일치 PAPER 운용으로는
  * 손절선 같은 경로 의존 규칙의 효과를 구분할 수 없습니다.
@@ -89,6 +93,30 @@ const COMPARISONS = {
       { name: "정적 90/10 (주식90·현금10)", options: { staticAllocation: EQUITY_MIX(0.9) } },
       { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
       { name: "정적 50/50", options: { staticAllocation: EQUITY_MIX(0.5) } },
+    ],
+  },
+  vol: {
+    label: "변동성 관리 목표 (Moreira & Muir 2017)",
+    variants: [
+      // volTarget 0이면 exposureMultiplier가 1로 고정돼 레이어가 꺼집니다.
+      { name: "끔 (변동성 관리 없음)", signal: { volTarget: 0 } },
+      { name: "0.10 (강하게 줄임)", signal: { volTarget: 0.1 } },
+      { name: "현재 0.15", signal: { volTarget: 0.15 } },
+      { name: "0.20 (약하게 줄임)", signal: { volTarget: 0.2 } },
+    ],
+  },
+  // §7에서 신호 스택이 정적 배분을 낙폭에서 이긴다는 것까지는 확인했지만,
+  // 그 우위가 추세에서 오는지 변동성 관리에서 오는지는 갈리지 않았습니다.
+  // 두 레이어를 하나씩 끄고 정적 배분과 나란히 놓으면 출처가 드러납니다.
+  source: {
+    label: "낙폭 우위의 출처 (추세인가 변동성 관리인가)",
+    variants: [
+      { name: "현재 스택 (추세1 + 변동성0.15)", signal: {} },
+      { name: "변동성 관리만 끔", signal: { volTarget: 0 } },
+      { name: "추세만 끔", signal: { trendWeight: 0 } },
+      { name: "둘 다 끔", signal: { trendWeight: 0, volTarget: 0 } },
+      // 대조군. "둘 다 끔"이 여기까지 내려오면 우위는 두 레이어에서 온 것입니다.
+      { name: "정적 70/30 (대조군)", options: { staticAllocation: EQUITY_MIX(0.7) } },
     ],
   },
   trend: {

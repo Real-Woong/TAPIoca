@@ -196,3 +196,20 @@ test("고정 비중 대조군은 신호 가중치에 반응하지 않는다", ()
   // 추세·MACD 가중치를 바꿔도 결과가 같아야 대조군으로 쓸 수 있다.
   assert.deepEqual(run({ trendWeight: 0, macdWeight: 0 }), run({ trendWeight: 2, macdWeight: 1 }));
 });
+
+// `--compare vol`이 실제로 무언가를 재는지 확인한다. 신호 옵션이 백테스터를
+// 통과하지 못하면 네 변형이 모두 같은 숫자를 내고, 그 표를 근거로 삼게 된다.
+test("변동성 목표를 낮추면 평균 노출이 줄어든다", () => {
+  // 목표 0.15보다 확실히 높은 변동성이라야 세 변형이 갈립니다.
+  const closes = generateMarket(31, ["VTI", "SCHD"], { days: 900, annualVol: 0.3 });
+  const exposureFor = (volTarget) =>
+    runBacktest({ closesBySymbol: closes, policy, signalOptions: { volTarget } })
+      .metrics.averageExposurePct;
+
+  const off = exposureFor(0);
+  const loose = exposureFor(0.2);
+  const tight = exposureFor(0.1);
+
+  assert.ok(off > tight, `끔 ${off}% vs 0.10 ${tight}%`);
+  assert.ok(loose > tight, `0.20 ${loose}% vs 0.10 ${tight}%`);
+});

@@ -237,3 +237,34 @@ test("수집 시각을 모르면 감쇠시키지 않는다", () => {
   assert.equal(combined.sentimentContribution, 1.6);
   assert.equal(combined.sentimentFreshness.ageHours, null);
 });
+
+// `--compare vol`의 "끔" 변형이 실제로 레이어를 끄는지 고정한다. volTarget이
+// 0으로 내려가도 배수가 1로 유지되지 않으면, 그 비교는 켠 것끼리 재는 셈이 된다.
+test("변동성 목표가 0이면 익스포저를 전혀 줄이지 않는다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.6 } },
+    trendWeight: 0,
+    volTarget: 0,
+    minExposure: 0.3,
+  });
+
+  assert.equal(combined.exposureMultiplier, 1);
+  // 목표 비중이 기본 NEUTRAL 표 그대로여야 한다.
+  assert.equal(combined.targetAllocation.VTI, 0.7);
+  assert.equal(combined.targetAllocation.SCHD, 0.2);
+});
+
+// 목표를 낮출수록 익스포저가 단조 감소해야 한다. 부호가 뒤집히면 비교표의
+// 해석이 통째로 뒤집힌다.
+test("변동성 목표가 낮을수록 익스포저가 작아진다", () => {
+  const multiplierFor = (volTarget) => combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.25 } },
+    trendWeight: 0,
+    volTarget,
+    minExposure: 0.3,
+  }).exposureMultiplier;
+
+  assert.ok(multiplierFor(0.1) < multiplierFor(0.15));
+  assert.ok(multiplierFor(0.15) < multiplierFor(0.2));
+  assert.equal(multiplierFor(0.2), 0.8);
+});
