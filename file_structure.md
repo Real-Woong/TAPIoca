@@ -74,6 +74,8 @@ toss-ai-agent/
 │   │   ├── paper-engine.js
 │   │   ├── paper-runner.js
 │   │   ├── paper-status.js
+│   │   ├── signal-history-cli.js
+│   │   ├── signal-history.js
 │   │   ├── trading-budget.js
 │   │   └── trading-policy.js
 │   └── telegram/
@@ -97,6 +99,7 @@ toss-ai-agent/
     ├── paper-engine.test.js
     ├── portfolio-analysis.test.js
     ├── sentiment-analyzer.test.js
+    ├── signal-history.test.js
     ├── telegram-client.test.js
     ├── toss-client.test.js
     ├── trading-budget.test.js
@@ -257,6 +260,21 @@ Owns the virtual wallet and trading rules.
   - Writes state using temporary-file plus rename
 - `paper-status.js`
   - Prints the current PAPER state without placing trades
+- `event-log.js`
+  - Append-only JSONL of every cycle: decisions, fills, equity, benchmark
+  - Also stores each signal layer's value **before** weights are applied, plus the
+    weights themselves and the prices at that instant. Contributions alone
+    (raw × confidence × weight × freshness) cannot be un-multiplied later
+- `signal-history.js`
+  - Rebuilds the news-sentiment series from that log, one row per collection
+    snapshot rather than per cycle (news is cached for `NEWS_CACHE_MINUTES`, so
+    counting cycles would inflate the sample and force autocorrelation toward 1)
+  - Reports mean, spread, mean absolute day-over-day change, sign flips, and
+    lag-1 autocorrelation — the statistic that decides whether the layer carries
+    information or is indistinguishable from a fresh draw each day
+- `signal-history-cli.js`
+  - `npm run paper:signals` prints that table; `--json --daily` exports the
+    series for backtesting
 
 ### `src/backtest/`
 
@@ -267,9 +285,10 @@ from noise.
 - `backtest-engine.js`
   - Replays daily closes through the **production** engine and signal functions
     (`buildTrendSignal`, `buildDailyMacdSignal`, `combineMarketSignals`, `runPaperCycle`)
-  - Holds the FRED score constant and omits news sentiment; neither is
-    reconstructable for past dates, so only price layers and execution rules
-    are measured here
+  - Holds the FRED score constant and omits news sentiment. Prices, trend, MACD
+    and the FRED series can all be re-fetched at any time; **the news sentiment
+    window cannot**, which is why `src/paper/signal-history.js` accumulates it
+    from live runs — that log is the only path to ever backtesting this layer
   - Accepts a fixed `staticAllocation` to run a signal-free control group
   - Reports CAGR, volatility, Sharpe, max drawdown (strategy and benchmark),
     average exposure, turnover, alpha

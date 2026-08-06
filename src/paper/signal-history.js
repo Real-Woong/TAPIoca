@@ -1,0 +1,119 @@
+import { readPaperEvents } from "./event-log.js";
+
+// 이벤트 로그에 쌓인 원본 신호를 사후 분석용 시계열로 되돌립니다.
+//
+// 추세·MACD·FRED는 언제든 원본 시계열을 다시 받아 재현할 수 있지만, 뉴스 감성은
+// 그날의 GDELT·Bluesky·RSS 수집창이 지나가면 복원할 방법이 없습니다. 그래서
+// 감성 층만은 운영 로그가 유일한 데이터 원천이고, 이 모듈이 그 원천을 읽습니다.
+
+const newYorkDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/**
+ * 감성 스냅샷 단위의 시계열을 만듭니다.
+ *
+ * PAPER 실행기는 15분마다 돌지만 뉴스는 NEWS_CACHE_MINUTES(기본 60분) 동안
+ * 같은 스냅샷을 재사용합니다. 사이클마다 한 줄씩 세면 같은 뉴스가 26번 계산돼
+ * 표본 수가 부풀고 자기상관이 1에 가깝게 왜곡됩니다. 그래서 수집 시각(fetchedAt)
+ * 하나당 한 건만 남깁니다.
+ */
+export function extractSentimentSeries(events) {
+  const bySnapshot = new Map();
+  for (const event of events) {
+    const sentiment = event?.signals?.sentiment;
+    if (!sentiment || !sentiment.fetchedAt) continue;
+    // 같은 스냅샷이 여러 사이클에 걸쳐 있으면 가장 이른 관측만 남깁니다.
+    if (bySnapshot.has(sentiment.fetchedAt)) continue;
+    bySnapshot.set(sentiment.fetchedAt, {
+      fetchedAt: sentiment.fetchedAt,
+      tradingDate: newYorkDate.format(new Date(event.at)),
+      score: sentiment.score,
+      confidence: sentiment.confidence,
+      articleCount: sentiment.articleCount,
+      sourceCounts: sentiment.sourceCounts ?? null,
+      ageHours: event.signals.sentimentFreshness?.ageHours ?? null,
+      multiplier: event.signals.sentimentFreshness?.multiplier ?? null,
+      contribution: event.contributions?.sentiment ?? null,
+      weight: event.signals.weights?.sentiment ?? null,
+      fredScore: event.signals.fred?.score ?? null,
+      trendScore: event.signals.trend?.score ?? null,
+      macdScore: event.signals.macd?.score ?? null,
+      combinedScore: event.score ?? null,
+    });
+  }
+  return [...bySnapshot.values()].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
+}
+
+/** 하루에 여러 스냅샷이 있으면 마지막 것만 남겨 일봉 백테스트에 맞춥니다. */
+export function toDailySeries(series) {
+  const byDate = new Map();
+  for (const row of series) byDate.set(row.tradingDate, row);
+  return [...byDate.values()].sort((a, b) => a.tradingDate.localeCompare(b.tradingDate));
+}
+
+/**
+ * 감성 층이 신호인지 잡음인지 판별하는 통계를 냅니다.
+ *
+ * 판정 기준은 1차 자기상관입니다. 시장에 대한 실제 정보를 담은 신호는 하루 만에
+ * 통째로 뒤집히지 않으므로 양의 자기상관이 나옵니다. 반대로 0 근처거나 음수면
+ * 매일 새로 뽑는 난수와 구분되지 않는다는 뜻이고, 그런 값에 가중치를 주는 것은
+ * 배분을 흔들어 거래비용만 쓰는 일입니다.
+ */
+export function summarizeSentimentSeries(series) {
+  const scores = series.map((row) => Number(row.score)).filter(Number.isFinite);
+  if (scores.length === 0) {
+    return { count: 0, mean: null, stdev: null, meanAbsChange: null, autocorrelation: null };
+  }
+  const mean = average(scores);
+  const stdev = Math.sqrt(average(scores.map((score) => (score - mean) ** 2)));
+  const changes = scores.slice(1).map((score, index) => Math.abs(score - scores[index]));
+
+  return {
+    count: scores.length,
+    firstDate: series[0].tradingDate,
+    lastDate: series[series.length - 1].tradingDate,
+    tradingDays: new Set(series.map((row) => row.tradingDate)).size,
+    mean: round(mean),
+    stdev: round(stdev),
+    min: round(Math.min(...scores)),
+    max: round(Math.max(...scores)),
+    // 하루 평균 변동폭. 표준편차와 비슷하면 값이 매일 처음부터 다시 뽑히는 것입니다.
+    meanAbsChange: changes.length ? round(average(changes)) : null,
+    signFlips: scores.slice(1).filter((score, index) => score * scores[index] < 0).length,
+    autocorrelation: autocorrelation(scores, mean, stdev),
+  };
+}
+
+function autocorrelation(scores, mean, stdev) {
+  // 표본이 너무 적으면 숫자가 나오더라도 의미가 없으므로 아예 내지 않습니다.
+  if (scores.length < 10 || stdev === 0) return null;
+  const covariance = average(
+    scores.slice(1).map((score, index) => (score - mean) * (scores[index] - mean)),
+  );
+  return round(covariance / stdev ** 2);
+}
+
+function average(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function round(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+}
+
+export async function loadSignalHistory(dataDir) {
+  const events = await readPaperEvents(dataDir);
+  const series = extractSentimentSeries(events);
+  return {
+    eventCount: events.length,
+    // 원본 신호가 없는 예전 이벤트가 몇 건인지 함께 알려, 표본이 언제부터 쌓였는지 드러냅니다.
+    withSignals: events.filter((event) => event.signals).length,
+    series,
+    daily: toDailySeries(series),
+    summary: summarizeSentimentSeries(series),
+  };
+}

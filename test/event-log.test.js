@@ -75,3 +75,68 @@ test("신호와 실행 결과에서 감사 가능한 이벤트를 만든다", ()
   assert.equal(event.benchmark.symbol, "VTI");
   assert.equal(event.alphaUsd, 0.55);
 });
+
+// 감성 층은 그날의 수집창이 지나가면 복원할 수 없다. 원본 값이 로그에 남지 않으면
+// 나중에 "가중치를 바꿨다면"을 되돌릴 방법이 영원히 사라지므로 여기서 고정한다.
+test("가중치를 곱하기 전 원본 신호와 그 시점 가격을 함께 남긴다", () => {
+  const event = buildPaperEvent({
+    now: new Date("2026-08-05T14:00:00Z"),
+    marketSignal: {
+      regime: "NEUTRAL",
+      score: 0.547,
+      macroScore: -0.5,
+      // 0.108 × 신뢰도 0.611 × 가중치 1 × 신선도 0.909
+      sentimentContribution: 0.06,
+      trendContribution: 0.981,
+      macdContribution: 0,
+      weights: { sentiment: 1, trend: 1, macd: 0, volTarget: 0.15, minExposure: 0.3 },
+      sentiment: {
+        sentiment_score: 0.108,
+        confidence: 0.611,
+        articleCount: 434,
+        sourceCounts: { FED_RSS: 30, GDELT: 75, BLUESKY: 229, OPINION_RSS: 100 },
+        provider: "LOCAL_RULES",
+        fetchedAt: "2026-08-05T13:10:00Z",
+      },
+      sentimentFreshness: { ageHours: 0.833, multiplier: 0.909 },
+      trend: {
+        score: 0.980867, confidence: 1, readySymbols: 3, totalSymbols: 3,
+        volatility: { annualized: 0.142 },
+      },
+      macd: { score: 0.468955, confidence: 1, readySymbols: 3, totalSymbols: 3 },
+    },
+    result: { decisions: [], summary: { equityUsd: 67.63, cashUsd: 6.39 } },
+    prices: [
+      { symbol: "VTI", lastPrice: 301.2 },
+      { symbol: "IWM", lastPrice: 240.8 },
+    ],
+  });
+
+  // 기여도(0)만 남으면 MACD 원점수 0.469를 되살릴 수 없다.
+  assert.equal(event.contributions.macd, 0);
+  assert.equal(event.signals.macd.score, 0.468955);
+  assert.equal(event.signals.weights.macd, 0);
+
+  assert.equal(event.signals.sentiment.score, 0.108);
+  assert.equal(event.signals.sentiment.fetchedAt, "2026-08-05T13:10:00Z");
+  assert.equal(event.signals.sentiment.sourceCounts.BLUESKY, 229);
+  assert.equal(event.signals.sentimentFreshness.multiplier, 0.909);
+  assert.equal(event.signals.trend.annualizedVol, 0.142);
+  assert.equal(event.signals.fred.score, -0.5);
+  assert.deepEqual(event.prices, { VTI: 301.2, IWM: 240.8 });
+
+  // 원본 기여도 = 원점수 × 신뢰도 × 가중치 × 신선도로 재계산이 되는지 확인한다.
+  const { sentiment, sentimentFreshness, weights } = event.signals;
+  const recomputed = sentiment.score * sentiment.confidence * weights.sentiment
+    * sentimentFreshness.multiplier;
+  assert.ok(Math.abs(recomputed - event.contributions.sentiment) < 0.001);
+});
+
+test("신호나 가격이 없어도 이벤트를 만든다", () => {
+  const event = buildPaperEvent({
+    marketSignal: null,
+    result: { decisions: [], summary: { equityUsd: 67 } },
+  });
+  assert.equal(event.signals, null);
+  assert.equal(event.prices, null);
+});

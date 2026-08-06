@@ -155,6 +155,15 @@ export function combineMarketSignals(
       layerStatus("MACD", "MACD", macdWeight, usableMacd, macdContribution, unavailableReason(macd)),
     ],
     signalSource: signalSource(Boolean(sentiment), usableTrend, usableMacd),
+    // 실제로 적용된 가중치를 결과에 실어 보냅니다. 기여도만 기록하면 나중에
+    // "가중치를 바꿨다면 어땠을까"를 되돌릴 수 없습니다(기여도 = 원점수 × 신뢰도 × 가중치).
+    weights: {
+      sentiment: sentimentWeight,
+      trend: trendWeight,
+      macd: macdWeight,
+      volTarget,
+      minExposure,
+    },
     macroScore: macroSignal.score,
     baseScore,
     sentimentContribution,

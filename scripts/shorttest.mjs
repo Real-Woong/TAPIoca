@@ -22,6 +22,7 @@ const LABELS = {
   "market-signal.test.js": "신호결합(추세·변동성)",
   "trend-signal.test.js": "추세·변동성",
   "event-log.test.js": "이벤트로그",
+  "signal-history.test.js": "신호이력",
   "exit-strategy.test.js": "청산전략",
   "daily-report.test.js": "일일리포트",
   "macd-signal.test.js": "MACD",

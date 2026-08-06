@@ -145,9 +145,10 @@ async function run() {
   const result = runPaperCycle(state, prices, policy, now, marketSignal);
   await writeState(result.state);
   // 모든 사이클을 append-only 로그에 남깁니다. 실패해도 매매·저장은 이미 끝났으므로 진행합니다.
-  await appendPaperEvent(dataDir, buildPaperEvent({ now, marketSignal, result })).catch((error) => {
-    console.error(`이벤트 로그 기록 실패: ${error.message}`);
-  });
+  await appendPaperEvent(dataDir, buildPaperEvent({ now, marketSignal, result, prices }))
+    .catch((error) => {
+      console.error(`이벤트 로그 기록 실패: ${error.message}`);
+    });
   printResult(result, exchangeRate, marketSignal);
 }
 
