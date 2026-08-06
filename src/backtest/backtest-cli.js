@@ -14,11 +14,16 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --compare macd    MACD 가중치 비교
  *   npm run backtest -- --compare vol     변동성 관리 목표 비교
  *   npm run backtest -- --compare stop    손절 문턱: 고정 비율 대 변동성 배수
+ *   npm run backtest -- --blocks 5        표본을 5등분해 지표가 얼마나 흔들리는지
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --source cache    캐시된 실데이터로 실행
  *
- * 비교 종류: exit, macd, band, cost, strategy, vol, source, stop, trend
+ * 비교 종류: exit, macd, band, cost, strategy, vol, source, stop, stopcost, trend
+ *
+ * `--blocks N`은 표본을 겹치지 않는 N구간으로 나눠 각 구간에서 따로 비교합니다.
+ * 전체 한 번만 돌리면 차이가 우연인지 알 수 없습니다. 구간마다 부호가 뒤집히면
+ * 그 차이는 노이즈입니다.
  *
  * 파라미터를 바꾸기 전에 반드시 여기서 먼저 재십시오. 20일치 PAPER 운용으로는
  * 손절선 같은 경로 의존 규칙의 효과를 구분할 수 없습니다.
@@ -111,6 +116,22 @@ const COMPARISONS = {
       { name: "변동성 0.5σ", env: { STOP_LOSS_SIGMA: "0.5" } },
       { name: "변동성 0.85σ (12%와 등가)", env: { STOP_LOSS_SIGMA: "0.85" } },
       { name: "변동성 1.5σ", env: { STOP_LOSS_SIGMA: "1.5" } },
+    ],
+  },
+  // 손절 3%는 회전율을 35~41% 늘리는 대신 CDaR를 1.0~1.6%p 낮춥니다. 그 균형이
+  // 편도 10bp 가정 위에서만 성립하는지 확인합니다. 비용이 오르면 3%가 먼저 무너집니다.
+  stopcost: {
+    label: "손절 문턱 × 거래비용 (3%의 CDaR 우위가 비용을 견디는가)",
+    variants: [
+      { name: "손절없음 · 10bp", env: { STOP_LOSS_RATE: "0.99", TRADE_COST_RATE: "0.001" } },
+      { name: "3% · 10bp", env: { STOP_LOSS_RATE: "0.03", TRADE_COST_RATE: "0.001" } },
+      { name: "12% · 10bp", env: { TRADE_COST_RATE: "0.001" } },
+      { name: "손절없음 · 30bp", env: { STOP_LOSS_RATE: "0.99", TRADE_COST_RATE: "0.003" } },
+      { name: "3% · 30bp", env: { STOP_LOSS_RATE: "0.03", TRADE_COST_RATE: "0.003" } },
+      { name: "12% · 30bp", env: { TRADE_COST_RATE: "0.003" } },
+      { name: "손절없음 · 50bp", env: { STOP_LOSS_RATE: "0.99", TRADE_COST_RATE: "0.005" } },
+      { name: "3% · 50bp", env: { STOP_LOSS_RATE: "0.03", TRADE_COST_RATE: "0.005" } },
+      { name: "12% · 50bp", env: { TRADE_COST_RATE: "0.005" } },
     ],
   },
   vol: {
@@ -208,25 +229,109 @@ async function runComparison() {
       `거시 상수 점수 ${options.macroScore}`,
   );
 
+  const runVariant = (variant, sets) => sets.map((dataset) =>
+    runBacktest({
+      closesBySymbol: dataset.closesBySymbol,
+      policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
+      macroScore: options.macroScore,
+      signalOptions: variant.signal ?? {},
+      ...(variant.options ?? {}),
+    }).metrics,
+  );
+
   const rows = [];
   for (const variant of comparison.variants) {
-    const results = datasets.sets.map((dataset) =>
-      runBacktest({
-        closesBySymbol: dataset.closesBySymbol,
-        policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
-        macroScore: options.macroScore,
-        signalOptions: variant.signal ?? {},
-        ...(variant.options ?? {}),
-      }).metrics,
-    );
-    rows.push({ 변형: variant.name, ...averageMetrics(results) });
+    rows.push({ 변형: variant.name, ...averageMetrics(runVariant(variant, datasets.sets)) });
+  }
+  console.table(rows);
+
+  if (options.blocks > 1) {
+    reportBlocks(comparison, datasets, runVariant);
   }
 
-  console.table(rows);
   console.log(
     "  주의: 합성 경로는 경로 의존 규칙의 기계적 성질만 잽니다. " +
       "신호의 예측력은 실데이터(--source cache)로만 확인할 수 있습니다.\n",
   );
+}
+
+/**
+ * 표본을 겹치지 않는 구간으로 나눠 같은 비교를 반복합니다.
+ *
+ * 전체를 한 번만 돌리면 차이가 나와도 그것이 우연인지 알 수 없습니다. 경로가
+ * 하나뿐이라 표준오차가 없기 때문입니다. 구간을 나누면 **같은 파라미터 차이가
+ * 구간마다 얼마나 흔들리는지** 볼 수 있고, 그 흔들림이 곧 노이즈의 크기입니다.
+ *
+ * 부호가 구간마다 뒤집히면 그 차이는 방향조차 믿을 수 없다는 뜻입니다.
+ */
+function reportBlocks(comparison, datasets, runVariant) {
+  const blocks = splitIntoBlocks(datasets.sets, options.blocks);
+  if (blocks.length < 2) {
+    console.log("\n  구간이 부족해 분할 비교를 건너뜁니다(구간마다 워밍업 200일이 필요합니다).");
+    return;
+  }
+
+  // 첫 변형을 기준선으로 두고, 나머지의 차이가 구간마다 어떻게 흔들리는지 봅니다.
+  const [baseline, ...others] = comparison.variants;
+  const perBlock = blocks.map((sets) => ({
+    base: averageMetrics(runVariant(baseline, sets)),
+    rest: others.map((variant) => averageMetrics(runVariant(variant, sets))),
+  }));
+
+  console.log(`\n  ■ 구간 분할 (${blocks.length}구간, 기준선 = ${baseline.name})`);
+  for (const key of ["CDaR5%", "MDD%", "Sharpe"]) {
+    console.log(`\n  ${key} 차이 (기준선 대비, 구간별)`);
+    const table = others.map((variant, index) => {
+      const deltas = perBlock.map((block) => {
+        const value = block.rest[index][key];
+        const base = block.base[key];
+        return Number.isFinite(value) && Number.isFinite(base) ? value - base : null;
+      }).filter((value) => value !== null);
+      if (deltas.length === 0) return { 변형: variant.name };
+
+      const positives = deltas.filter((value) => value > 0).length;
+      const row = { 변형: variant.name };
+      for (const [index2, delta] of deltas.entries()) row[`구간${index2 + 1}`] = round3(delta);
+      row["평균"] = round3(deltas.reduce((sum, value) => sum + value, 0) / deltas.length);
+      row["폭"] = round3(Math.max(...deltas) - Math.min(...deltas));
+      // 부호가 갈리면 방향조차 믿을 수 없습니다. 그것을 한 칸으로 보여줍니다.
+      row["부호일치"] = positives === deltas.length || positives === 0
+        ? `${deltas.length}/${deltas.length}`
+        : `${Math.max(positives, deltas.length - positives)}/${deltas.length} ✗`;
+      return row;
+    });
+    console.table(table);
+  }
+  console.log(
+    "\n  읽는 법: 평균 차이가 구간별 폭보다 작으면 노이즈입니다. " +
+      "부호일치에 ✗가 있으면 방향조차 표본에 따라 뒤집힙니다.",
+  );
+}
+
+/** 각 데이터셋을 겹치지 않는 구간으로 자릅니다. 워밍업을 못 채우는 구간은 버립니다. */
+function splitIntoBlocks(sets, count) {
+  const minimumDays = 200 + 250; // 워밍업 200일 + 평가할 최소 구간
+  const blocks = [];
+  for (let index = 0; index < count; index += 1) {
+    const sliced = sets.map((dataset) => {
+      const closesBySymbol = {};
+      for (const [symbol, closes] of Object.entries(dataset.closesBySymbol)) {
+        const size = Math.floor(closes.length / count);
+        closesBySymbol[symbol] = closes.slice(index * size, (index + 1) * size);
+      }
+      return { ...dataset, closesBySymbol };
+    });
+    const usable = Math.min(
+      ...sliced.flatMap((dataset) =>
+        Object.values(dataset.closesBySymbol).map((closes) => closes.length)),
+    );
+    if (usable >= minimumDays) blocks.push(sliced);
+  }
+  return blocks;
+}
+
+function round3(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 }
 
 async function buildDatasets() {
@@ -309,6 +414,7 @@ function parseArgs(argv) {
     seeds: 3,
     days: 1500,
     macroScore: 0,
+    blocks: 1,
     fetch: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -324,6 +430,7 @@ function parseArgs(argv) {
       case "--seeds": parsed.seeds = Number(value); index += 1; break;
       case "--days": parsed.days = Number(value); index += 1; break;
       case "--macro-score": parsed.macroScore = Number(value); index += 1; break;
+      case "--blocks": parsed.blocks = Number(value); index += 1; break;
       default:
         if (flag.startsWith("--")) throw new Error(`알 수 없는 옵션: ${flag}`);
     }

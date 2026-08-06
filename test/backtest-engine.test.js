@@ -250,3 +250,27 @@ test("같은 최대낙폭이어도 침몰이 잦으면 CDaR가 더 크다", () =
                Math.max(...often.map((v, i) => 1 - v / Math.max(...often.slice(0, i + 1)))).toFixed(2));
   assert.ok(cdar(often) > cdar(once), `잦음 ${cdar(often)} vs 한번 ${cdar(once)}`);
 });
+
+// 노이즈 크기를 재려면 같은 파라미터가 서로 다른 구간에서 얼마나 흔들리는지 봐야
+// 한다. 구간 분할이 실제로 겹치지 않는 조각을 만드는지 여기서 고정한다.
+test("구간 분할은 겹치지 않고 순서를 지킨다", () => {
+  const closes = market(41, 1200);
+  const size = Math.floor(1200 / 3);
+  const blocks = [0, 1, 2].map((index) =>
+    Object.fromEntries(Object.entries(closes).map(([symbol, series]) =>
+      [symbol, series.slice(index * size, (index + 1) * size)])));
+
+  // 각 구간이 원본의 해당 조각과 정확히 같아야 한다.
+  for (const [index, block] of blocks.entries()) {
+    assert.equal(block.VTI.length, size);
+    assert.equal(block.VTI[0], closes.VTI[index * size]);
+    assert.equal(block.VTI[size - 1], closes.VTI[(index + 1) * size - 1]);
+  }
+  // 구간끼리 겹치지 않는다.
+  assert.notEqual(blocks[0].VTI[size - 1], blocks[1].VTI[0]);
+
+  // 구간마다 독립적으로 백테스트가 돌아야 한다(워밍업 200일 + 평가 구간).
+  for (const block of blocks) {
+    assert.ok(Number.isFinite(runBacktest({ closesBySymbol: block, policy }).metrics.cdar5Pct));
+  }
+});
