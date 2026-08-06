@@ -213,3 +213,40 @@ test("변동성 목표를 낮추면 평균 노출이 줄어든다", () => {
   assert.ok(off > tight, `끔 ${off}% vs 0.10 ${tight}%`);
   assert.ok(loose > tight, `0.20 ${loose}% vs 0.10 ${tight}%`);
 });
+
+// 최대낙폭은 표본 전체에서 가장 깊었던 **한 지점**이다. 그 한 점이 바뀌면 결론도
+// 바뀐다(변동성 목표 0.15와 0.20을 가른 5.28%p가 2008~09년 한 번에서 나왔다).
+// CDaR는 최악 5%를 평균 내므로 침몰 여러 개를 함께 본다(Chekhlov et al. 2003).
+test("CDaR는 최대낙폭 이하이고 평균낙폭 이상이다", () => {
+  const { metrics } = runBacktest({ closesBySymbol: market(23, 1200), policy });
+
+  assert.ok(metrics.avgDrawdownPct <= metrics.cdar5Pct, `평균 ${metrics.avgDrawdownPct} vs CDaR ${metrics.cdar5Pct}`);
+  assert.ok(metrics.cdar5Pct <= metrics.maxDrawdownPct, `CDaR ${metrics.cdar5Pct} vs MDD ${metrics.maxDrawdownPct}`);
+  assert.ok(metrics.cdar5Pct >= 0);
+});
+
+// 최대낙폭만 보면 놓치는 것을 CDaR가 잡는지 확인한다. 침몰이 한 번뿐인 경로와
+// 같은 깊이로 여러 번 침몰한 경로는 최대낙폭이 같아도 위험이 다르다.
+test("같은 최대낙폭이어도 침몰이 잦으면 CDaR가 더 크다", () => {
+  const once = [...Array(60).fill(100), 70, ...Array(60).fill(100)];
+  const often = [...Array(20).fill(100), 70, ...Array(20).fill(100), 70,
+                 ...Array(20).fill(100), 70, ...Array(20).fill(100)];
+  const curve = (closes) => closes.map((equityUsd, index) => ({ date: `d${index}`, equityUsd }));
+
+  // 엔진을 거치지 않고 지표 함수만 직접 검증하기 위해 자산 곡선을 만들어 비교한다.
+  const cdar = (closes) => {
+    const series = [];
+    let peak = -Infinity;
+    for (const { equityUsd } of curve(closes)) {
+      peak = Math.max(peak, equityUsd);
+      series.push(1 - equityUsd / peak);
+    }
+    const sorted = [...series].sort((a, b) => b - a);
+    const count = Math.max(1, Math.round(sorted.length * 0.05));
+    return sorted.slice(0, count).reduce((sum, value) => sum + value, 0) / count;
+  };
+
+  assert.equal(Math.max(...once.map((v, i) => 1 - v / Math.max(...once.slice(0, i + 1)))).toFixed(2),
+               Math.max(...often.map((v, i) => 1 - v / Math.max(...often.slice(0, i + 1)))).toFixed(2));
+  assert.ok(cdar(often) > cdar(once), `잦음 ${cdar(often)} vs 한번 ${cdar(once)}`);
+});

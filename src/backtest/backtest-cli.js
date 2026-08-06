@@ -255,7 +255,7 @@ async function buildDatasets() {
 /** 시나리오·시드에 걸친 평균입니다. 한 경로의 우연을 결론으로 삼지 않기 위함입니다. */
 function averageMetrics(results) {
   const keys = [
-    "cagrPct", "annualVolPct", "sharpe", "maxDrawdownPct",
+    "cagrPct", "annualVolPct", "sharpe", "maxDrawdownPct", "cdar5Pct",
     "averageExposurePct", "tradeCount", "turnoverPerYear", "alphaPct", "benchmarkMaxDrawdownPct",
   ];
   const averaged = {};
@@ -270,6 +270,9 @@ function averageMetrics(results) {
     "변동성%": averaged.annualVolPct,
     Sharpe: averaged.sharpe,
     "MDD%": averaged.maxDrawdownPct,
+    // 최대낙폭은 관측 한 번이라 흔들립니다. 최악 5% 평균을 나란히 놓아
+    // 결론이 침몰 한 번에 매달려 있는지 바로 보이게 합니다(Chekhlov et al. 2003).
+    "CDaR5%": averaged.cdar5Pct,
     "벤치MDD%": averaged.benchmarkMaxDrawdownPct,
     "평균노출%": averaged.averageExposurePct,
     체결: Math.round(averaged.tradeCount),

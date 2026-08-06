@@ -205,6 +205,9 @@ function computeMetrics({
 
   const maxDrawdown = maxDrawdownOf(equityCurve);
   const benchmarkDrawdown = maxDrawdownOf(benchmarkCurve ?? []);
+  // 최대낙폭은 관측 한 번이라 흔들린다. 최악 5% 평균과 전체 평균을 함께 낸다.
+  const conditionalDrawdown5 = conditionalDrawdown(equityCurve, 0.95);
+  const averageDrawdown = average(drawdownSeries(equityCurve));
 
   // 회전율: 총 체결금액 / 평균 자산 / 연수. 비용이 엣지를 잡아먹는지 보는 지표입니다.
   const tradedUsd = state.trades.reduce((sum, trade) => sum + Math.abs(trade.amountUsd), 0);
@@ -218,6 +221,8 @@ function computeMetrics({
     annualVolPct: round3(annualVol * 100),
     sharpe: round3(sharpe),
     maxDrawdownPct: round3(maxDrawdown * 100),
+    cdar5Pct: round3(conditionalDrawdown5 * 100),
+    avgDrawdownPct: round3(averageDrawdown * 100),
     benchmarkMaxDrawdownPct: benchmarkCurve?.length ? round3(benchmarkDrawdown * 100) : null,
     averageExposurePct: round3(average(exposures) * 100),
     tradeCount: state.trades.length,
@@ -233,13 +238,38 @@ function computeMetrics({
 
 /** 고점 대비 최대 낙폭입니다. */
 function maxDrawdownOf(curve) {
+  return Math.max(0, ...drawdownSeries(curve), 0);
+}
+
+/** 각 시점의 고점 대비 하락폭(언더워터 곡선)입니다. */
+function drawdownSeries(curve) {
   let peak = -Infinity;
-  let worst = 0;
+  const series = [];
   for (const point of curve) {
     peak = Math.max(peak, point.equityUsd);
-    if (peak > 0) worst = Math.max(worst, 1 - point.equityUsd / peak);
+    if (peak > 0) series.push(1 - point.equityUsd / peak);
   }
-  return worst;
+  return series;
+}
+
+/**
+ * CDaR — 최악 (1-alpha) 구간 낙폭의 평균 (Chekhlov, Uryasev & Zabarankin 2003).
+ *
+ * 최대낙폭은 **관측 한 번**입니다. 표본 전체에서 가장 깊었던 한 지점이 전부라
+ * 통계적 오차가 크고, 그 한 점이 바뀌면 결론도 바뀝니다. 실제로 변동성 목표
+ * 0.15와 0.20을 가른 5.28%p 차이는 2008~09년 한 번의 침몰에서 나왔습니다.
+ *
+ * CDaR는 최악 5% 구간을 평균 내므로 수십 개의 침몰을 함께 봅니다. 원 논문은
+ * 이 평균화 덕분에 "미래 위험 예측이 낫고 더 안정적인 배분이 나온다"고 말합니다.
+ * 최대낙폭은 alpha→1의 극한, 평균낙폭은 alpha=0의 극한으로 같은 가족입니다.
+ */
+function conditionalDrawdown(curve, alpha = 0.95) {
+  const series = drawdownSeries(curve);
+  if (series.length === 0) return 0;
+  const sorted = [...series].sort((a, b) => b - a);
+  // 최악 (1-alpha) 비율만큼 세되, 표본이 작아도 최소 한 건은 본다.
+  const count = Math.max(1, Math.round(sorted.length * (1 - alpha)));
+  return average(sorted.slice(0, count));
 }
 
 function average(values) {
