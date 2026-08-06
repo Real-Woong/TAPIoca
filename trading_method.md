@@ -1,7 +1,14 @@
 # TAPIoca Trading Method
 
 > PAPER strategy specification for external review  
-> Last updated: 2026-07-23
+> Last updated: 2026-08-06
+
+> **Why several rules below are disabled by default.** Trailing-profit exits and
+> the maximum holding period are individual-stock momentum rules. On broad index
+> ETFs they fought the target-allocation layer: the allocation layer said "hold
+> 70% VTI" while the exit layer sold the whole position on ordinary index noise.
+> Twenty years of real daily closes showed the old settings raised turnover by
+> roughly 21x for no return. See `DEVELOPE_LOG.md` Part 3.
 
 ## 1. Purpose
 
@@ -181,7 +188,7 @@ Slow EMA:       26
 Signal EMA:      9
 Minimum samples: 34 daily closes
 Histogram scale: 0.5% of price
-Default weight:  0.15
+Default weight:  0            (was: 0.15 — see below)
 ```
 
 The MACD histogram is normalized relative to price and converted to a bounded
@@ -199,15 +206,27 @@ MACD contribution
     × MACD weight
 ```
 
-MACD ran on 15-minute price snapshots until 2026-08-03. That window needed 34
+That window needed 34
 samples (8.5 hours) but a regular session is only 6.5 hours, so it stitched the
 overnight gap into a single step and behaved as an intraday indicator driving a
 daily allocation — its sign flipped on 4 of 6 consecutive sessions. It now uses
 daily closes. The 15-minute snapshot file is still written, for diagnostics only.
 
-Important limitation: the contribution ceiling is weight x 1.0 = 0.15 while the
-regime band spans 3.0, so MACD alone cannot move the regime. It is a small
-confirmation signal, not a timing signal.
+**The default weight is now 0, so MACD does not affect allocation.** Two
+independent reasons:
+
+- Arithmetic. At weight 0.15 the contribution ceiling is 0.15 while the regime
+  band spans 3.0. With the no-trade band at 5% of equity, the largest weight
+  change MACD can produce is smaller than the band, so it could never by itself
+  cause an order.
+- Measurement. Weights of 0, 0.15, 0.5 and 1.0 were compared over 20 years of real
+  daily closes. No setting showed an edge that replicated across both samples, so
+  0 was kept for parsimony and the lowest turnover.
+
+MACD is still computed and reported, as a diagnostic. Set `MACD_SCORE_WEIGHT` to
+restore it.
+
+MACD ran on 15-minute price snapshots until 2026-08-03.
 
 ### 5.4 Moving-average trend (Faber)
 
@@ -238,13 +257,30 @@ final score
     = base score + trend contribution + MACD contribution
 ```
 
-Regime thresholds:
+Regime labels (used for reporting and trade tags):
 
 ```text
 final score >=  1.5  -> RISK_ON
 final score <= -1.5  -> RISK_OFF
 otherwise            -> NEUTRAL
 ```
+
+**The label is not what sets the weights.** Target weights interpolate
+continuously between the three anchor tables in section 6, so the score maps to a
+weight directly rather than through a step at +/-1.5:
+
+```text
+score <= -1.5            RISK_OFF table exactly
+-1.5 < score < 0         blend(NEUTRAL, RISK_OFF, -score / 1.5)
+score == 0               NEUTRAL table exactly
+0 < score < 1.5          blend(NEUTRAL, RISK_ON,   score / 1.5)
+score >=  1.5            RISK_ON table exactly
+```
+
+The previous step function put a 30-percentage-point jump in equity weight on a
+single score value. Between 07-22 and 08-04 the score oscillated between -1.2 and
+-2.3 and flipped the target every day. Interpolating turns a 0.1 score move into a
+2-point weight drift, which stays inside the no-trade band and produces no order.
 
 ## 6. Target Allocations
 
@@ -278,8 +314,13 @@ CASH  40%
 The regime changes target weights for both purchases and sales. A single no-trade
 band (default 5% of equity) now gates **both** sides: the engine only buys when a
 holding is below target by more than the band, and only trims when it is above
-target by more than the band. Rebalancing sells still run while a loss brake has
-paused new purchases, so a defensive regime change reduces exposure immediately.
+target by more than the band.
+
+Cash released by a defensive sale is exempt from the daily and per-order buy caps
+(`redeployableUsd`). Selling is instantaneous while buying used to be throttled to
+$13.40 a day, so a defensive round trip lost five sessions of market exposure. The
+caps now limit only how much **new** capital enters per day, not how fast the
+engine returns to its own target.
 
 ### 5.2b Sentiment cache and layer weights
 
@@ -302,6 +343,19 @@ the matcher reads as bearish. That is why the official layer sat near -0.65 for
 twelve days whenever GDELT was absent, and why the sentiment weight was cut from
 2.0 to 1.0 on 2026-08-04.
 
+Snapshot age decays the contribution:
+
+```text
+Half-life:      6 hours    (SENTIMENT_HALF_LIFE_HOURS)
+Cutoff:        24 hours    (SENTIMENT_MAX_AGE_HOURS) -> contribution 0
+Unknown time:  no decay
+```
+
+Between 07-23 and 07-31 the sentiment value repeated to three decimals for four
+straight days. That was a reused cache snapshot, not stable news, and it crossed a
+regime boundary and flipped the equity weight. The report now prints the snapshot
+age so the reused-cache case is visible without reading the logs.
+
 ### 6.1 Churn controls
 
 Added 2026-08-03 after the first 8 PAPER sessions showed cumulative trading costs
@@ -309,7 +363,7 @@ Added 2026-08-03 after the first 8 PAPER sessions showed cumulative trading cost
 
 ```text
 Symmetric band       buys use the same 5% band as sells   (was: $1 deficit)
-regimeConfirmCycles  4    consecutive cycles = 1 hour     (was: instant)
+regimeConfirmDays    1    trading day = 26 cycles         (was: 4 cycles = 1 hour)
 maxRebalancesPerDay  1    per regime, per day             (was: unlimited)
 ```
 
@@ -318,7 +372,9 @@ deficit. With a $10 daily buy cap, the engine bought $10 and rebalanced roughly
 $10 back out on the same day — around 50% daily turnover at 0.1% per fill.
 
 Regime confirmation holds the previous regime's target weights until a new regime
-persists for `regimeConfirmCycles`. The score and all diagnostics still show the
+persists for `regimeConfirmDays`, expressed internally as 15-minute cycles
+(1 day = 26 cycles over a 6.5-hour session; `REGIME_CONFIRM_CYCLES` overrides it
+directly when set). The score and all diagnostics still show the
 latest values; only the allocation is held, and the report prints the pending
 regime. A confirmed regime change re-enables rebalancing immediately, so the
 daily cap never blocks genuine defensive de-risking.
@@ -390,33 +446,42 @@ Real-account holdings are outside the PAPER engine.
 ### 9.1 Stop loss
 
 ```text
-Sell when current return <= -3%
+Sell when current return <= -12%   (default; STOP_LOSS_RATE)
 ```
 
 The return is measured against the current weighted-average entry price.
 
-### 9.2 Trailing-profit exit
+This is a disaster brake, not a trading rule. The previous 3% threshold triggered
+on ordinary index-ETF movement and emptied positions while the allocation layer
+still targeted 70% equity.
 
-The exit becomes eligible after the position has reached:
-
-```text
-Peak return >= 2.5%
-```
-
-It sells when the subsequent drawdown from the recorded peak reaches:
+### 9.2 Trailing-profit exit — **disabled by default**
 
 ```text
-Peak drawdown >= 1.5%
+TRAILING_ACTIVATION_RATE  off   (was: 2.5%)
+TRAILING_DRAWDOWN_RATE    off   (was: 1.5%)
 ```
 
-### 9.3 Maximum holding period
+Set both in `.env` to enable; `off` or `none` disables them again. When enabled,
+the exit becomes eligible once peak return reaches the activation rate and sells
+when the drawdown from that peak reaches the drawdown rate.
+
+Recommended only for an individual-stock watchlist. On index ETFs this rule sold
+entire positions on routine fluctuation — on 08-04 it liquidated all SCHD while the
+target weight was still 20%.
+
+### 9.3 Maximum holding period — **disabled by default**
 
 ```text
-Sell after 15 days
+MAX_HOLDING_DAYS  off   (was: 15 days)
 ```
 
-The holding period begins when the position is first opened. Additional
-purchases do not currently reset the opening timestamp.
+Set a number in `.env` to enable. When enabled, the holding period begins when the
+position is first opened; additional purchases do not reset the opening timestamp.
+
+A long-term allocation has no reason to sell purely because time passed. On 08-04
+this rule dumped the entire VTI position on day 15 while the target weight was 70%,
+and the daily buy cap then took five sessions to rebuild it — through a 4% rally.
 
 ### 9.4 Re-entry cooldown
 
@@ -441,16 +506,24 @@ Maximum total PAPER loss: USD 10
 Maximum daily PAPER loss: USD 3
 ```
 
-When either limit is reached:
+When either limit is reached, the engine **changes nothing about trading**:
 
-- New purchases stop
-- Existing exit evaluation continues
-- The risk state is saved
-- The Telegram report can show the pause reason
+- A `RISK_ALERT` decision is recorded and the risk state is saved
+- The Telegram report shows the warning and states that trading continues
+- Purchases, rebalancing and exits all proceed exactly as before
 
-Important distinction: the loss brake does **not** immediately liquidate every
-open position. It is currently a buy-stop mechanism, while position exits remain
-governed by stop loss, trailing profit, and maximum holding period.
+**These are alert thresholds, not stop thresholds.** Halting on a loss limit was
+measured over 20 years of real daily closes and made outcomes worse: it disabled
+risk management precisely during a crash and raised maximum drawdown from 29.8% to
+51.6%. A 10% limit produced the worst result of every variant tested.
+
+The mechanism was an absorbing state. Buying stopped while defensive selling
+continued, so the portfolio drained to all cash and never re-entered; equity froze
+for the remaining seventeen years of the sample. Freezing exits as well did not fix
+it. The decision on what to do about a loss belongs to a person looking at the
+alert, not to an automatic rule.
+
+See `DEVELOPE_LOG.md` Part 3 for the comparison table.
 
 ## 11. Failure Behavior
 
@@ -553,6 +626,25 @@ It includes:
 The application records only the most recent reported trading date and send
 time. It does not currently keep a server-side append-only archive of every
 Telegram message body.
+
+## 13b. Benchmarks
+
+Two benchmarks are tracked, both fixed at inception and both paying the same
+one-off entry cost the strategy pays:
+
+```text
+VTI buy-and-hold     100% VTI                          -> alpha
+Policy mix           VTI 70 / SCHD 20 / cash 10        -> signal excess return
+```
+
+The policy mix is the NEUTRAL anchor table held **without rebalancing** — the
+strategy's own allocation with the signals removed. It is risk-matched, so the gap
+against it isolates what the signal layers contribute; the gap against 100% VTI
+mixes that together with the cost of deliberately holding cash.
+
+Neither benchmark reacts to what the strategy does. A benchmark that waived the
+penalty while the strategy was defensive would excuse exactly the days the signals
+were wrong, which is when the comparison matters most.
 
 ## 14. Early Observed Results
 
@@ -682,11 +774,14 @@ Additional strategy limitations:
 - FRED series have different release frequencies and publication lags
 - News sentiment is not yet calibrated against forward returns
 - Opinion-source quality is not scored per author
-- MACD uses snapshots rather than official candles
 - Target allocation changes do not trigger full rebalancing sales
-- Maximum holding time applies to the whole averaged position
-- There is no benchmark engine yet
+- Maximum holding time, when enabled, applies to the whole averaged position
 - The observed evaluation period is extremely short
+- **The backtester cannot measure the FRED or news-sentiment layers.** It holds
+  the macro score constant and omits sentiment, because neither is reconstructable
+  for past dates. Only the price layers and the execution rules are measured
+  there. Sentiment snapshots have been accumulated in the event log since
+  2026-08-06 so this layer can eventually be tested
 
 ## 17. Questions for Trading and Risk Reviewers
 
