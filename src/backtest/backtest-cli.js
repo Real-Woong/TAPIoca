@@ -158,10 +158,15 @@ const COMPARISONS = {
       { name: "정적 70/30 (대조군)", options: { staticAllocation: EQUITY_MIX(0.7) } },
     ],
   },
+  // 구간 분할에서 추세의 MDD 기여가 2/4로 갈렸습니다(폭락 +1.4~1.8%p, 평온 −0.06~−0.45%p).
+  // 0.5를 넣는 이유: 가중치를 낮추면 평온기 기여가 무거래 밴드 아래로 내려가
+  // 해로운 거래가 사라지고, 추세 점수가 ±1에 포화되는 폭락기에는 여전히 밴드를
+  // 넘길 수 있습니다. 효과가 선형이 아닐 수 있는 지점입니다.
   trend: {
     label: "추세 가중치 (Faber 레이어의 기여)",
     variants: [
       { name: "추세 제거 (0)", signal: { trendWeight: 0 } },
+      { name: "0.5", signal: { trendWeight: 0.5 } },
       { name: "현재 (1)", signal: { trendWeight: 1 } },
       { name: "2", signal: { trendWeight: 2 } },
     ],
