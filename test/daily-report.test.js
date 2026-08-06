@@ -128,3 +128,45 @@ test("뉴스 소스 구성과 부분 수집 실패를 보고서에 함께 알린
   assert.match(report, /FED_RSS 70/);
   assert.match(report, /※ 일부 수집 실패: GDELT 응답 오류 503/);
 });
+
+// 08-05 실보고서에서 감성 줄에 수집 시각이 끝내 찍히지 않았습니다. 원인은 포맷터가
+// 아니라 compactMacroSignal이 sentimentFreshness를 상태에 옮기지 않은 것이었습니다.
+// 기존 보고서 테스트는 state.macro를 손으로 만들어서 이 누락을 잡지 못했으므로,
+// 여기서는 신호 결합 → 사이클 → 보고서까지 실제 경로로 확인합니다.
+test("감성 수집 시각이 신호 결합에서 보고서까지 살아남는다", async () => {
+  const { combineMarketSignals } = await import("../src/sentiment/market-signal.js");
+  const { createPaperState, runPaperCycle } = await import("../src/paper/paper-engine.js");
+  const { createUsdBudget } = await import("../src/paper/trading-budget.js");
+  const { loadTradingPolicy } = await import("../src/paper/trading-policy.js");
+
+  const now = new Date("2026-08-05T12:00:00Z");
+  const combined = combineMarketSignals(
+    { score: -0.5, regime: "NEUTRAL", targetAllocation: { VTI: 0.7, CASH: 0.3 }, reasons: [] },
+    {
+      sentiment_score: 0.108,
+      confidence: 0.611,
+      articleCount: 434,
+      // 반감기 6시간 기준 3시간 지난 스냅샷이므로 나이와 감쇠 배수가 함께 찍힙니다.
+      fetchedAt: "2026-08-05T09:00:00Z",
+    },
+    { sentimentWeight: 1, now },
+  );
+  assert.equal(combined.sentimentFreshness.ageHours, 3);
+
+  const state = createPaperState({
+    budget: createUsdBudget("67.05"), watchlist: ["VTI"], now,
+  });
+  const result = runPaperCycle(
+    state,
+    [{ symbol: "VTI", lastPrice: 100 }],
+    loadTradingPolicy({ MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10" }),
+    now,
+    combined,
+  );
+
+  assert.equal(result.state.macro.sentimentFreshness.ageHours, 3);
+  assert.match(
+    formatDailyReport(result.state, "2026-08-05"),
+    /무료 뉴스 감성: .* ※ 수집 3시간 전, 신선도 ×0\.707/,
+  );
+});

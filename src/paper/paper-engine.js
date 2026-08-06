@@ -612,6 +612,7 @@ function compactMacroSignal(signal) {
     macroScore: signal.macroScore,
     sentimentContribution: signal.sentimentContribution,
     sentiment: signal.sentiment,
+    sentimentFreshness: signal.sentimentFreshness,
     baseScore: signal.baseScore,
     trendContribution: signal.trendContribution,
     trend: signal.trend,
