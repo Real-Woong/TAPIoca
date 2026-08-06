@@ -29,7 +29,7 @@ toss-ai-agent/
 ├── README.md
 ├── file_structure.md
 ├── trading_method.md
-├── STRATEGY_REVIEW_2026-08-05.md   # PAPER 9영업일 사후분석 + 개선 로드맵
+├── DEVELOPE_LOG.md                 # 개발 이력 3개 문서를 통합한 로그
 ├── package.json
 ├── deploy/
 │   ├── toss-ai-paper.service
@@ -243,7 +243,7 @@ Owns the virtual wallet and trading rules.
   - Catastrophe stop loss (12% by default)
   - Trailing-profit exit and maximum holding period — **disabled by default**,
     opt-in via `.env`; they are individual-stock momentum rules that fought the
-    target-allocation layer on broad index ETFs (see `STRATEGY_REVIEW_2026-08-05.md`)
+    target-allocation layer on broad index ETFs (see `DEVELOPE_LOG.md` Part 3)
   - Protection of positions not opened by the agent
 - `paper-engine.js`
   - Updates positions and cash
