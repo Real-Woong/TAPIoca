@@ -1,5 +1,6 @@
 import { evaluateExit } from "./exit-strategy.js";
 import { sizePaperOrder } from "./trading-budget.js";
+import { ALLOCATIONS } from "../sentiment/market-signal.js";
 
 export function createPaperState({ budget, watchlist, now = new Date() }) {
   // 실제 계좌와 분리된 가상 지갑입니다. 모든 매매 기록은 JSON 장부에만 남습니다.
@@ -56,6 +57,7 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   const costRate = Number(policy.tradeCostRate) || 0;
   // 첫 실행에 벤치마크(매수후보유)를 개설하고, 이후에는 최신가로 평가액만 갱신합니다.
   updateBenchmark(state, priceMap, now, costRate);
+  updatePolicyBenchmark(state, priceMap, now, costRate);
 
   // 손실 한도는 **경고**입니다. 매매 동작을 바꾸지 않습니다.
   //
@@ -584,6 +586,68 @@ function updateBenchmark(state, priceMap, now, costRate = 0) {
   }
 }
 
+// 두 번째 벤치마크: 같은 종목·같은 비중을 신호 없이 그대로 들고 있는 경우입니다.
+//
+// VTI 100%와만 비교하면 "현금을 들고 있어서 뒤처진 것"과 "타이밍이 틀려서 뒤처진 것"이
+// 한 숫자에 섞입니다. 그렇다고 방어 중일 때 alpha를 면제해 주면 벤치마크가 우리
+// 행동에 따라 움직이게 되고, 방어가 틀렸을 때 그 사실을 영영 못 보게 됩니다.
+//
+// 그래서 벤치마크를 고치는 대신 **미리 정해진 벤치마크를 하나 더** 둡니다.
+// 비중은 NEUTRAL 앵커(VTI 70·SCHD 20·현금 10)로, 우리 배분표에서 신호만 뺀 것입니다.
+// 사후에 고를 수 없으므로 유리하게 조작할 여지가 없습니다.
+//
+// 리밸런싱은 하지 않습니다. 비중이 시간이 지나며 흘러가지만, 그 대가로 이 기준선은
+// 매매 규칙을 전혀 포함하지 않게 됩니다. 순수한 "안 하기"의 결과입니다.
+function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
+  const mix = ALLOCATIONS.NEUTRAL;
+  const symbols = Object.keys(mix).filter((symbol) => symbol !== "CASH" && mix[symbol] > 0);
+
+  if (state.policyBenchmark) {
+    for (const [symbol, position] of Object.entries(state.policyBenchmark.positions)) {
+      const price = Number(priceMap.get(symbol)?.lastPrice);
+      if (price > 0) position.lastPrice = price;
+    }
+    return;
+  }
+
+  // 한 종목이라도 가격이 없으면 비중이 틀어진 채로 고정되므로 개설을 미룹니다.
+  if (!symbols.every((symbol) => Number(priceMap.get(symbol)?.lastPrice) > 0)) return;
+
+  const fundedUsd = state.funding.fundedUsd;
+  const positions = {};
+  for (const symbol of symbols) {
+    const price = priceMap.get(symbol).lastPrice;
+    const amountUsd = fundedUsd * mix[symbol];
+    // 우리와 같은 진입 비용을 부담시킵니다.
+    positions[symbol] = { quantity: (amountUsd * (1 - costRate)) / price, lastPrice: price };
+  }
+  state.policyBenchmark = {
+    mix: { ...mix },
+    fundedUsd,
+    cashUsd: roundUsd(fundedUsd * (Number(mix.CASH) || 0)),
+    positions,
+    startedAt: now.toISOString(),
+  };
+}
+
+function summarizePolicyBenchmark(state, priceMap) {
+  const benchmark = state.policyBenchmark;
+  if (!benchmark) return null;
+  let valueUsd = Number(benchmark.cashUsd) || 0;
+  for (const [symbol, position] of Object.entries(benchmark.positions)) {
+    const price = Number(priceMap.get(symbol)?.lastPrice) || position.lastPrice;
+    valueUsd += position.quantity * price;
+  }
+  valueUsd = roundUsd(valueUsd);
+  const pnlUsd = roundUsd(valueUsd - benchmark.fundedUsd);
+  return {
+    mix: benchmark.mix,
+    valueUsd,
+    pnlUsd,
+    returnPct: benchmark.fundedUsd > 0 ? round3((pnlUsd / benchmark.fundedUsd) * 100) : 0,
+  };
+}
+
 function summarizeBenchmark(state, priceMap) {
   const benchmark = state.benchmark;
   if (!benchmark) return null;
@@ -655,6 +719,7 @@ export function summarizePaperState(state, prices = new Map()) {
   const equityUsd = roundUsd(state.cashUsd + marketValueUsd);
   const totalPnlUsd = roundUsd(equityUsd - state.funding.fundedUsd);
   const benchmark = summarizeBenchmark(state, priceMap);
+  const policyBenchmark = summarizePolicyBenchmark(state, priceMap);
   return {
     fundingKrw: state.funding.fundingKrw,
     fundedUsd: state.funding.fundedUsd,
@@ -671,6 +736,9 @@ export function summarizePaperState(state, prices = new Map()) {
       : 0,
     benchmark,
     alphaUsd: benchmark ? roundUsd(totalPnlUsd - benchmark.pnlUsd) : null,
+    // 위험을 맞춘 두 번째 기준선. 이쪽 초과성과가 신호 레이어의 순수한 성적입니다.
+    policyBenchmark,
+    policyAlphaUsd: policyBenchmark ? roundUsd(totalPnlUsd - policyBenchmark.pnlUsd) : null,
     tradeCount: state.trades.length,
     positions,
   };

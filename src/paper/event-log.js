@@ -137,5 +137,14 @@ export function buildPaperEvent({ now = new Date(), marketSignal, result, prices
         }
       : null,
     alphaUsd: summary.alphaUsd ?? null,
+    // 위험을 맞춘 두 번째 기준선. 나중에 alpha 귀속 분해가 이 값을 쓸 수 있게 남깁니다.
+    policyBenchmark: summary.policyBenchmark
+      ? {
+          valueUsd: summary.policyBenchmark.valueUsd,
+          pnlUsd: summary.policyBenchmark.pnlUsd,
+          returnPct: summary.policyBenchmark.returnPct,
+        }
+      : null,
+    policyAlphaUsd: summary.policyAlphaUsd ?? null,
   };
 }

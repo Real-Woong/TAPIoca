@@ -701,3 +701,104 @@ test("브레이크가 없으면 손절은 평소대로 발동한다", () => {
   assert.equal(result.state.trades.at(-1).reason, "STOP_LOSS");
   assert.equal(result.state.positions.AAA, undefined);
 });
+
+// VTI 100%와만 비교하면 "현금을 들고 있어서 뒤처진 것"과 "타이밍이 틀려서 뒤처진 것"이
+// 한 숫자에 섞인다. 방어 중일 때 alpha를 면제해 주면 벤치마크가 우리 행동을 따라
+// 움직여 방어가 틀렸을 때를 못 보게 되므로, 대신 미리 정해진 기준선을 하나 더 둔다.
+test("같은 비중을 신호 없이 들고 있었을 때를 두 번째 기준선으로 잰다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA", "BBB", "CCC"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  const result = runPaperCycle(
+    state, prices, policy, new Date("2026-07-14T00:00:00Z"), macroSignal("NEUTRAL"),
+  );
+  const summary = result.summary;
+
+  // 기준선은 NEUTRAL 앵커(VTI·SCHD)를 쓰는데 이 워치리스트에는 그 가격이 없다.
+  // 한 종목이라도 빠진 채 개설하면 비중이 틀어진 기준선이 영구히 고정되므로 미룬다.
+  assert.equal(result.state.policyBenchmark, undefined);
+  assert.equal(summary.policyBenchmark, null);
+  assert.equal(summary.policyAlphaUsd, null);
+  // 반면 VTI 100% 벤치마크는 워치리스트 첫 종목으로 대체해 계속 잰다.
+  assert.ok(summary.benchmark);
+});
+
+test("정책믹스 기준선은 진입 비용을 부담하고 현금 몫을 그대로 남긴다", () => {
+  // 공유 policy는 수량 단언을 위해 비용 0이므로, 비용 부담은 여기서 따로 켠다.
+  const costPolicy = loadTradingPolicy({
+    MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10", TRADE_COST_RATE: "0.001",
+  });
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["VTI", "SCHD"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const marketPrices = [
+    { symbol: "VTI", lastPrice: 100 },
+    { symbol: "SCHD", lastPrice: 50 },
+  ];
+
+  const first = runPaperCycle(
+    state, marketPrices, costPolicy, new Date("2026-07-14T00:00:00Z"), macroSignal("NEUTRAL"),
+  );
+  const benchmark = first.state.policyBenchmark;
+  const funded = first.state.funding.fundedUsd;
+
+  // 현금 10%는 주식으로 바꾸지 않고 그대로 둔다.
+  assert.equal(benchmark.cashUsd, roundTo(funded * 0.1));
+  // 수량 = 배분액 × (1 − 비용) / 가격
+  assert.ok(Math.abs(benchmark.positions.VTI.quantity - (funded * 0.7 * 0.999) / 100) < 1e-9);
+  assert.ok(Math.abs(benchmark.positions.SCHD.quantity - (funded * 0.2 * 0.999) / 50) < 1e-9);
+  // 개설 직후에는 비용만큼만 손실이다.
+  assert.ok(Math.abs(first.summary.policyBenchmark.pnlUsd + funded * 0.9 * 0.001) < 0.02);
+
+  // 주식이 10% 오르면 기준선도 주식 몫만큼만 오른다(현금 10%는 그대로).
+  const second = runPaperCycle(
+    first.state,
+    [{ symbol: "VTI", lastPrice: 110 }, { symbol: "SCHD", lastPrice: 55 }],
+    costPolicy,
+    new Date("2026-07-15T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+  const expected = funded * 0.9 * 0.999 * 1.1 + funded * 0.1;
+  assert.ok(
+    Math.abs(second.summary.policyBenchmark.valueUsd - expected) < 0.02,
+    `${second.summary.policyBenchmark.valueUsd} vs ${expected}`,
+  );
+});
+
+// 기준선이 우리 행동을 따라 움직이면 방어가 틀렸을 때를 영영 못 본다.
+// 신호가 무엇을 하든 이 기준선은 개설 시점 그대로여야 한다.
+test("정책믹스 기준선은 레짐이 바뀌어도 재조정되지 않는다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["VTI", "SCHD"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const marketPrices = [
+    { symbol: "VTI", lastPrice: 100 },
+    { symbol: "SCHD", lastPrice: 50 },
+  ];
+
+  let current = runPaperCycle(
+    state, marketPrices, policy, new Date("2026-07-14T00:00:00Z"), macroSignal("NEUTRAL"),
+  ).state;
+  const opened = { ...current.policyBenchmark.positions.VTI };
+
+  for (const [index, regime] of ["RISK_OFF", "RISK_OFF", "RISK_ON"].entries()) {
+    current = runPaperCycle(
+      current, marketPrices, policy,
+      new Date(`2026-07-${16 + index}T00:00:00Z`), macroSignal(regime),
+    ).state;
+  }
+
+  assert.equal(current.policyBenchmark.positions.VTI.quantity, opened.quantity);
+  assert.deepEqual(current.policyBenchmark.mix, { VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 });
+});
+
+function roundTo(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}

@@ -1,4 +1,4 @@
-const ALLOCATIONS = {
+export const ALLOCATIONS = {
   RISK_ON: { VTI: 0.7, SCHD: 0.15, IWM: 0.15, CASH: 0 },
   NEUTRAL: { VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 },
   RISK_OFF: { VTI: 0.4, SCHD: 0.2, IWM: 0, CASH: 0.4 },

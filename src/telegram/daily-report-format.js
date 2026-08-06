@@ -46,6 +46,17 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
           `초과성과(alpha): ${signedUsd(summary.alphaUsd)}`,
         ]
       : []),
+    // 위험을 맞춘 두 번째 기준선입니다. VTI 100%와만 비교하면 "현금을 들고 있어서"와
+    // "타이밍이 틀려서"가 한 숫자에 섞입니다. 같은 종목·같은 비중을 신호 없이 들고
+    // 있었을 때와 비교해야 신호 레이어의 순수한 성적이 보입니다.
+    ...(summary.policyBenchmark
+      ? [
+          `정책믹스(${formatMix(summary.policyBenchmark.mix)} 고정): ` +
+            `${signedUsd(summary.policyBenchmark.pnlUsd)} ` +
+            `(${summary.policyBenchmark.returnPct}%)`,
+          `└ 신호 초과성과: ${signedUsd(summary.policyAlphaUsd)}`,
+        ]
+      : []),
     `누적 거래: ${summary.tradeCount}건`,
     // 손실 한도는 매매를 멈추지 않고 알리기만 합니다. 자동 중단은 폭락 중에
     // 위험관리를 꺼버려 오히려 낙폭을 키웠습니다. 대응은 사람이 판단합니다.
@@ -185,6 +196,15 @@ function formatAllocation(allocation = {}) {
   return Object.entries(allocation)
     .map(([symbol, weight]) => `${symbol} ${(Number(weight) * 100).toFixed(0)}%`)
     .join(", ");
+}
+
+/** 정책믹스 비중을 "VTI70·SCHD20·현금10"처럼 한 줄로 줄입니다. */
+function formatMix(mix) {
+  return Object.entries(mix ?? {})
+    .filter(([, weight]) => Number(weight) > 0)
+    .map(([symbol, weight]) =>
+      `${symbol === "CASH" ? "현금" : symbol}${Math.round(Number(weight) * 100)}`)
+    .join("·");
 }
 
 function signedUsd(value) {

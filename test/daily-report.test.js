@@ -170,3 +170,32 @@ test("감성 수집 시각이 신호 결합에서 보고서까지 살아남는�
     /무료 뉴스 감성: .* ※ 수집 3시간 전, 신선도 ×0\.707/,
   );
 });
+
+test("정책믹스 기준선과 그 대비 초과성과를 보고서에 함께 알린다", () => {
+  const state = {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 6.39,
+    realizedPnlUsd: -0.25,
+    positions: {
+      VTI: { symbol: "VTI", quantity: 0.15, entryPrice: 290, lastPrice: 293.2, costUsd: 43.5 },
+    },
+    trades: [],
+    benchmark: { symbol: "VTI", quantity: 0.2296, entryPriceUsd: 292, lastPrice: 301.75,
+      fundedUsd: 67.05 },
+    policyBenchmark: {
+      mix: { VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 },
+      fundedUsd: 67.05,
+      cashUsd: 6.71,
+      positions: { VTI: { quantity: 0.1607, lastPrice: 301.75 } },
+      startedAt: "2026-07-14T14:00:00Z",
+    },
+  };
+
+  const report = formatDailyReport(state, "2026-08-05");
+
+  assert.match(report, /정책믹스\(VTI70·SCHD20·현금10 고정\)/);
+  assert.match(report, /└ 신호 초과성과: [+-]\$/);
+  // VTI 100% 벤치마크도 그대로 남아야 한다. 기준선을 갈아치우는 게 아니라 더하는 것이다.
+  assert.match(report, /벤치마크\(VTI 매수후보유\)/);
+  assert.match(report, /초과성과\(alpha\)/);
+});

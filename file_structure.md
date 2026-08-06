@@ -255,6 +255,10 @@ Owns the virtual wallet and trading rules.
   - Merges same-cycle buys of one symbol into a single fill
   - Applies minimum order size and re-entry cooldown
   - Records trades and risk state
+  - Tracks **two** fixed benchmarks: 100% VTI buy-and-hold, and the NEUTRAL anchor
+    mix (VTI 70 / SCHD 20 / cash 10) held without rebalancing. The second is
+    risk-matched, so the gap against it is the signal layers' own result. Both are
+    fixed at inception and never react to what the strategy does
 - `paper-runner.js`
   - Main scheduled execution entry point
   - Checks the US regular session
