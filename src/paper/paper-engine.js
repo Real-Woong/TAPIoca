@@ -85,7 +85,10 @@ export function runPaperCycle(state, prices, policy, now = new Date(), macroSign
   for (const [symbol, position] of Object.entries(state.positions)) {
     const market = priceMap.get(symbol);
     if (!market) continue;
-    const exit = evaluateExit(position, market.lastPrice, policy, now);
+    // 변동성 연동 손절을 쓰면 이번 사이클의 연율 변동성이 문턱을 정합니다.
+    const exit = evaluateExit(
+      position, market.lastPrice, policy, now, macroSignal?.volatilityAnnualized,
+    );
     position.peakPrice = exit.peakPrice ?? position.peakPrice;
     position.lastPrice = market.lastPrice;
     position.lastPriceAt = market.timestamp ?? now.toISOString();

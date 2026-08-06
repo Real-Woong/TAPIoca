@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { evaluateExit } from "../src/paper/exit-strategy.js";
+import { evaluateExit, stopThreshold } from "../src/paper/exit-strategy.js";
 import { loadTradingPolicy } from "../src/paper/trading-policy.js";
 
 const policy = loadTradingPolicy({});
@@ -84,4 +84,53 @@ test("청산 조건이 없으면 보유하고 새로운 고점을 기록한다",
   const result = evaluateExit(position(), 101, policy, now);
   assert.equal(result.action, "HOLD");
   assert.equal(result.peakPrice, 101);
+});
+
+// Kaminski & Lo(2014)는 손절 문턱을 표준편차 배수로 잡는다. 고정 비율은 변동성에
+// 반비례해 잘못 스케일되어, 폭락장에서 가장 쉽게 발동한다.
+test("변동성 배수를 설정하면 손절 문턱이 그때의 변동성을 따라간다", () => {
+  const sigmaPolicy = loadTradingPolicy({ STOP_LOSS_SIGMA: "0.85" });
+
+  // 평시(연율 14%)에는 0.85 × 0.14 = 11.9%로 지금의 12%와 사실상 같다.
+  assert.ok(Math.abs(stopThreshold(sigmaPolicy, 0.14) - 0.119) < 1e-9);
+  // 폭락장(연율 40%)에서는 34%로 넓어져 일상적 등락에 발동하지 않는다.
+  assert.ok(Math.abs(stopThreshold(sigmaPolicy, 0.4) - 0.34) < 1e-9);
+  // 고정 비율은 같은 두 국면에서 12%로 똑같다. 이것이 문제의 핵심이다.
+  assert.equal(stopThreshold(loadTradingPolicy({}), 0.14), 0.12);
+  assert.equal(stopThreshold(loadTradingPolicy({}), 0.4), 0.12);
+});
+
+// 변동성을 모르는 사이클에 문턱이 0이 되면 전 포지션이 즉시 청산된다.
+test("변동성을 알 수 없으면 고정 비율로 되돌아간다", () => {
+  const policy = loadTradingPolicy({ STOP_LOSS_SIGMA: "0.85", STOP_LOSS_RATE: "0.12" });
+
+  for (const vol of [undefined, null, NaN, 0, -0.2]) {
+    assert.equal(stopThreshold(policy, vol), 0.12, `변동성 ${vol}`);
+  }
+});
+
+test("변동성 배수를 쓰면 같은 하락이 국면에 따라 다르게 판정된다", () => {
+  const policy = loadTradingPolicy({ STOP_LOSS_SIGMA: "0.85" });
+  const position = {
+    openedByAgent: true, quantity: 1, entryPrice: 100, peakPrice: 100,
+    openedAt: "2026-08-01T00:00:00Z", costUsd: 100,
+  };
+  const now = new Date("2026-08-05T00:00:00Z");
+
+  // -20% 하락: 평시(문턱 11.9%)에는 손절, 폭락장(문턱 34%)에는 보유.
+  assert.equal(evaluateExit(position, 80, policy, now, 0.14).action, "SELL");
+  assert.equal(evaluateExit(position, 80, policy, now, 0.4).action, "HOLD");
+});
+
+test("변동성 배수를 설정하지 않으면 기존 동작이 그대로다", () => {
+  const policy = loadTradingPolicy({});
+  const position = {
+    openedByAgent: true, quantity: 1, entryPrice: 100, peakPrice: 100,
+    openedAt: "2026-08-01T00:00:00Z", costUsd: 100,
+  };
+  const now = new Date("2026-08-05T00:00:00Z");
+
+  // 변동성을 넘겨도 무시하고 고정 12%로 판단한다.
+  assert.equal(evaluateExit(position, 80, policy, now, 0.4).action, "SELL");
+  assert.equal(evaluateExit(position, 90, policy, now, 0.4).action, "HOLD");
 });

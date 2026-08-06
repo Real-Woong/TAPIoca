@@ -1,6 +1,22 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function evaluateExit(position, currentPrice, policy, now = new Date()) {
+/**
+ * 이번 판단에 적용할 손절 문턱을 정합니다.
+ *
+ * `stopLossSigma`가 설정돼 있고 현재 연율 변동성을 알 수 있으면 그 배수를 쓰고,
+ * 아니면 고정 비율로 되돌아갑니다. 변동성을 모르는 사이클(추세 신호 수집 실패 등)에
+ * 문턱이 0이 되면 전 포지션이 즉시 청산되므로, 되돌아갈 값이 항상 있어야 합니다.
+ */
+export function stopThreshold(policy, annualizedVol) {
+  const sigma = Number(policy?.stopLossSigma);
+  const vol = Number(annualizedVol);
+  if (Number.isFinite(sigma) && sigma > 0 && Number.isFinite(vol) && vol > 0) {
+    return sigma * vol;
+  }
+  return policy.stopLossRate;
+}
+
+export function evaluateExit(position, currentPrice, policy, now = new Date(), annualizedVol) {
   // 이 에이전트가 PAPER 장부에서 직접 만든 포지션만 청산 대상으로 봅니다.
   // Toss 계좌의 기존 QQQ, SPY 등은 이 함수로 들어와도 매도하지 않습니다.
   if (!position?.openedByAgent) {
@@ -17,12 +33,14 @@ export function evaluateExit(position, currentPrice, policy, now = new Date()) {
   const holdingDays = Math.max(0, (now.getTime() - new Date(position.openedAt).getTime()) / DAY_MS);
 
   // 1순위: 진입가 기준 손절선에 도달하면 손실을 제한합니다.
-  if (returnRate <= -policy.stopLossRate) {
+  const stopRate = stopThreshold(policy, annualizedVol);
+  if (returnRate <= -stopRate) {
     return decision("SELL", "STOP_LOSS", {
       peakPrice,
       returnRate,
       drawdownFromPeak,
       holdingDays,
+      stopRate,
     });
   }
 

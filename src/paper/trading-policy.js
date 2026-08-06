@@ -32,6 +32,13 @@ const DEFAULTS = Object.freeze({
   // 그 뒤 4일 랠리를 통째로 놓쳤습니다. 배분 레이어와 청산 레이어가 싸운 결과입니다.
   // 손절은 재난 방어용으로만 남기고 나머지는 명시적으로 켤 때만 동작합니다.
   stopLossRate: 0.12,
+  // 손절선을 연율 변동성의 배수로 잡습니다. null이면 위 고정 비율을 씁니다.
+  //
+  // Kaminski & Lo(2014)는 손절 문턱을 표준편차 −1.5σ ~ −0.5σ로 설정합니다.
+  // 고정 비율은 변동성에 반비례해 잘못 스케일됩니다. 12%는 연율 변동성 14%에서
+  // 0.85σ지만 40%짜리 폭락장에서는 0.30σ가 되어, 가장 팔면 안 되는 순간에
+  // 가장 쉽게 발동합니다. 기본값은 null입니다 — 백테스트로 재기 전에는 바꾸지 않습니다.
+  stopLossSigma: null,
   trailingActivationRate: null,
   trailingDrawdownRate: null,
   maxHoldingDays: null,
@@ -74,6 +81,7 @@ export function loadTradingPolicy(env = process.env) {
       DEFAULTS.reentryCooldownHours,
     ),
     stopLossRate: readRate(env.STOP_LOSS_RATE, DEFAULTS.stopLossRate),
+    stopLossSigma: readOptional(env.STOP_LOSS_SIGMA, DEFAULTS.stopLossSigma, readPositive),
     trailingActivationRate: readOptionalRate(
       env.TRAILING_ACTIVATION_RATE,
       DEFAULTS.trailingActivationRate,

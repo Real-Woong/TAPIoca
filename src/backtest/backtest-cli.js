@@ -13,11 +13,12 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest                      기본 비교(청산 규칙) 실행
  *   npm run backtest -- --compare macd    MACD 가중치 비교
  *   npm run backtest -- --compare vol     변동성 관리 목표 비교
+ *   npm run backtest -- --compare stop    손절 문턱: 고정 비율 대 변동성 배수
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --source cache    캐시된 실데이터로 실행
  *
- * 비교 종류: exit, macd, band, cost, strategy, vol, source, trend
+ * 비교 종류: exit, macd, band, cost, strategy, vol, source, stop, trend
  *
  * 파라미터를 바꾸기 전에 반드시 여기서 먼저 재십시오. 20일치 PAPER 운용으로는
  * 손절선 같은 경로 의존 규칙의 효과를 구분할 수 없습니다.
@@ -93,6 +94,23 @@ const COMPARISONS = {
       { name: "정적 90/10 (주식90·현금10)", options: { staticAllocation: EQUITY_MIX(0.9) } },
       { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
       { name: "정적 50/50", options: { staticAllocation: EQUITY_MIX(0.5) } },
+    ],
+  },
+  // Kaminski & Lo(2014)는 손절 문턱을 고정 비율이 아니라 표준편차 배수(-1.5σ ~ -0.5σ)로
+  // 잡습니다. 고정 비율은 변동성에 반비례해 잘못 스케일됩니다 — 12%는 연율 변동성
+  // 14%에서 0.85σ지만 40%짜리 폭락장에서는 0.30σ가 되어, 가장 팔면 안 되는 순간에
+  // 가장 쉽게 발동합니다. 같은 논문의 명제 1·3은 애초에 손절이 값을 못 할 수도
+  // 있다고 말하므로 "손절 없음"도 후보에 넣습니다.
+  stop: {
+    label: "손절 문턱: 고정 비율 대 변동성 배수 (Kaminski & Lo 2014)",
+    variants: [
+      // 손절선 100%는 현실적으로 도달 불가라 규칙을 끈 것과 같습니다.
+      { name: "손절 없음", env: { STOP_LOSS_RATE: "0.99" } },
+      { name: "고정 3% (이전 기본값)", env: { STOP_LOSS_RATE: "0.03" } },
+      { name: "고정 12% (현재)", env: {} },
+      { name: "변동성 0.5σ", env: { STOP_LOSS_SIGMA: "0.5" } },
+      { name: "변동성 0.85σ (12%와 등가)", env: { STOP_LOSS_SIGMA: "0.85" } },
+      { name: "변동성 1.5σ", env: { STOP_LOSS_SIGMA: "1.5" } },
     ],
   },
   vol: {
