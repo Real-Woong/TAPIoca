@@ -23,6 +23,7 @@ const LABELS = {
   "trend-signal.test.js": "추세·변동성",
   "event-log.test.js": "이벤트로그",
   "signal-history.test.js": "신호이력",
+  "alpha-attribution.test.js": "alpha귀속",
   "exit-strategy.test.js": "청산전략",
   "daily-report.test.js": "일일리포트",
   "macd-signal.test.js": "MACD",

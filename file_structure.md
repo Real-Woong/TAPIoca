@@ -68,6 +68,8 @@ toss-ai-agent/
 │   │   ├── sentiment-analyzer.js
 │   │   └── sentiment-status.js
 │   ├── paper/
+│   │   ├── alpha-attribution.js
+│   │   ├── alpha-cli.js
 │   │   ├── event-log.js
 │   │   ├── events-cli.js
 │   │   ├── exit-strategy.js
@@ -85,6 +87,7 @@ toss-ai-agent/
 │       ├── telegram-client.js
 │       └── telegram-discover.js
 └── test/
+    ├── alpha-attribution.test.js
     ├── backtest-engine.test.js
     ├── daily-report.test.js
     ├── event-log.test.js
@@ -275,6 +278,17 @@ Owns the virtual wallet and trading rules.
 - `signal-history-cli.js`
   - `npm run paper:signals` prints that table; `--json --daily` exports the
     series for backtesting
+- `alpha-attribution.js`
+  - Splits alpha into a **designed** cost and a **defect**, per cycle:
+    `(target equity weight − 1) × benchmark return` is the price of deliberately
+    holding cash; `(actual − target) × benchmark return` is failing to reach the
+    target. The first is a risk decision, the second is a bug — opposite responses
+  - Weights are taken at the **start** of each interval, so a large mid-interval
+    sale lands in the residual rather than the shortfall. Only sustained
+    under-allocation is caught
+  - Reports the sum-vs-actual gap as `compoundingUsd` instead of hiding it
+- `alpha-cli.js`
+  - `npm run paper:alpha` prints the split, a verdict, and the worst days
 
 ### `src/backtest/`
 
