@@ -115,7 +115,8 @@ MAX_HOLDING_DAYS=15
 (실데이터 20년에서 MDD 29.8% → 51.6%). 대응은 사람이 판단합니다.
 
 바꾸기 전에 `npm run backtest`로 먼저 재십시오. 배경과 실측은
-[`DEVELOPE_LOG.md`](DEVELOPE_LOG.md) Part 3에 있습니다.
+[`STRATEGY.md`](STRATEGY.md)에 있습니다. 조사 과정 전체는
+[`develope-log/2026-08-06_사후분석과-백테스터.md`](develope-log/2026-08-06_사후분석과-백테스터.md)에 있습니다.
 
 기본값은 전략의 수익성을 보장하지 않습니다. PAPER 로그를 충분히 모아 기준 전략과
 비교한 뒤 조정하기 위한 시작값입니다.

@@ -8,7 +8,7 @@
 > ETFs they fought the target-allocation layer: the allocation layer said "hold
 > 70% VTI" while the exit layer sold the whole position on ordinary index noise.
 > Twenty years of real daily closes showed the old settings raised turnover by
-> roughly 21x for no return. See `DEVELOPE_LOG.md` Part 3.
+> roughly 21x for no return. See `STRATEGY.md`.
 
 ## 1. Purpose
 
@@ -523,7 +523,7 @@ for the remaining seventeen years of the sample. Freezing exits as well did not 
 it. The decision on what to do about a loss belongs to a person looking at the
 alert, not to an automatic rule.
 
-See `DEVELOPE_LOG.md` Part 3 for the comparison table.
+See `develope-log/2026-08-06_사후분석과-백테스터.md` for the comparison table.
 
 ## 11. Failure Behavior
 
