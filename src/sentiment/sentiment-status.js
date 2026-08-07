@@ -18,6 +18,26 @@ try {
   });
   console.log(JSON.stringify(result, null, 2));
 
+  // **수집이 얼마나 오래됐는지를 먼저 찍습니다.**
+  //
+  // 파이프라인이 멈추면 가장 먼저 드러나는 곳이 여기입니다. JSON 안의
+  // `fetchedAt`만으로는 오늘 날짜와 머릿속으로 빼야 알 수 있는데, 그 계산을
+  // 안 하면 "값이 안 변한다"를 신호가 잔잔한 것으로 오해합니다.
+  const ageHours = (Date.now() - new Date(result.fetchedAt).getTime()) / 3_600_000;
+  if (Number.isFinite(ageHours)) {
+    const label = ageHours < 1
+      ? `${Math.round(ageHours * 60)}분 전`
+      : `${ageHours.toFixed(1)}시간 전`;
+    console.log(`\n■ 수집 시각: ${result.fetchedAt} (${label})`);
+    // 감성 기여도는 6시간 반감기로 깎이고 24시간을 넘기면 0이 됩니다.
+    if (ageHours > 24) {
+      console.log("  ⚠️  24시간을 넘겼습니다. 이 값은 배분에서 이미 제외됩니다(기여도 0).");
+      console.log("     수집이 멈춰 있을 가능성이 큽니다 — 실행기가 도는지 보십시오.");
+    } else if (ageHours > 6) {
+      console.log("  ⚠️  반감기(6시간)를 넘겼습니다. 기여도가 그만큼 깎입니다.");
+    }
+  }
+
   // JSON 안에 묻히면 안 보입니다. **어느 소스가 죽었는지는 한눈에 보여야 합니다** —
   // 소스 구성이 바뀌면 이 층이 재는 대상 자체가 달라지기 때문입니다.
   const health = result.sourceHealth;
