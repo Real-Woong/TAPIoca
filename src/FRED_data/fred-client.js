@@ -138,9 +138,14 @@ export async function fetchFredSeries({
     signal: AbortSignal.timeout(15_000),
   });
 
-  // 200번대 응답이 아니면 HTTP 상태를 포함해 오류를 냅니다.
+  // 200번대 응답이 아니면 HTTP 상태와 **FRED가 적어 보낸 이유**를 함께 냅니다.
+  // 상태 코드만 남기면 400의 원인을 추측하게 되는데, FRED는 무엇이 잘못됐는지
+  // error_message에 정확히 적어 줍니다. 버리면 안 되는 정보입니다.
   if (!response.ok) {
-    throw new Error(`FRED ${seriesId} 조회 실패: HTTP ${response.status}`);
+    const reason = await readFredError(response);
+    throw new Error(
+      `FRED ${seriesId} 조회 실패: HTTP ${response.status}${reason ? ` — ${reason}` : ""}`,
+    );
   }
 
   // JSON 문자열을 JavaScript 객체로 변환합니다.
@@ -165,6 +170,22 @@ export async function fetchFredSeries({
     }))
     // 날짜가 없거나 숫자 변환에 실패한 관측값을 마지막으로 제거합니다.
     .filter((item) => item.date && Number.isFinite(item.value));
+}
+
+/** 오류 응답에서 FRED가 적어 보낸 이유를 꺼냅니다. 못 읽으면 조용히 빈 값입니다. */
+async function readFredError(response) {
+  try {
+    const text = await response.text();
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed?.error_message) return String(parsed.error_message);
+    } catch {
+      // JSON이 아니면 본문 앞부분이라도 남깁니다.
+    }
+    return text.trim().slice(0, 300);
+  } catch {
+    return "";
+  }
 }
 
 
