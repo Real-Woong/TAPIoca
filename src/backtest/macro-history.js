@@ -46,11 +46,43 @@ export function observationsAsOf(observations, asOfDate) {
   return [...latestByDate.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+/**
+ * 원지수를 전년 대비 변화율(%)로 바꿉니다. FRED의 `units=pc1`과 같은 계산입니다.
+ *
+ * **왜 우리가 계산하는가** — FRED는 `units`가 `lin`이 아니면 개정 이력을 함께
+ * 주지 않습니다(realtime 범위를 하루로 고정하라고 400을 냅니다). 그래서 원지수를
+ * 개정 이력으로 받고 변환은 여기서 합니다.
+ *
+ * **그리고 이 순서가 더 정확합니다.** 변환을 as-of 필터 **뒤에** 하므로, 전년
+ * 대비를 구할 때 쓰는 12개월 전 값도 그 시점에 알려져 있던 값입니다. FRED가
+ * 계산해 준 pc1을 썼다면 개정된 과거 값이 분모에 섞였을 것입니다.
+ *
+ * 관측은 날짜 내림차순이므로 12칸 뒤가 1년 전입니다. 1년치가 없는 구간은
+ * 계산할 수 없으므로 버립니다 — 워밍업에서 `evaluateMacroRegime`이 예외를
+ * 던지고 그 날은 null이 됩니다.
+ */
+export function toYearOverYear(observations) {
+  const result = [];
+  for (let index = 0; index + 12 < observations.length; index += 1) {
+    const current = observations[index];
+    const yearAgo = observations[index + 12];
+    if (!(yearAgo.value > 0)) continue;
+    result.push({ ...current, value: (current.value / yearAgo.value - 1) * 100 });
+  }
+  return result;
+}
+
 /** `evaluateMacroRegime`이 기대하는 `{ series: { key: { observations } } }` 모양으로 만듭니다. */
 export function macroDataAsOf(vintages, asOfDate) {
   const series = {};
   for (const [key, item] of Object.entries(vintages.series ?? {})) {
-    series[key] = { ...item, observations: observationsAsOf(item.observations, asOfDate) };
+    // 순서가 중요합니다. **먼저 그날 알 수 있었던 것만 남기고, 그 다음에
+    // 변환합니다.** 뒤집으면 개정된 미래 값이 분모로 들어옵니다.
+    const known = observationsAsOf(item.observations, asOfDate);
+    series[key] = {
+      ...item,
+      observations: item.transform === "pc1" ? toYearOverYear(known) : known,
+    };
   }
   return { fetchedAt: toDateString(asOfDate), series };
 }

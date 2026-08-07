@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { chunkVintageWindows } from "../src/backtest/macro-cache.js";
 import {
   macroDataAsOf,
   macroScoreTimeline,
   observationsAsOf,
   summarizeMacroTimeline,
+  toYearOverYear,
 } from "../src/backtest/macro-history.js";
 import { parseStooqBars, parseTwelveDataBars, parseYahooBars } from "../src/market/trend-signal.js";
 
@@ -84,6 +86,64 @@ test("되살린 점수가 상수인지 움직이는지 요약이 갈라 준다",
   assert.equal(moving.unknown, 1);
   assert.equal(moving.min, -3.5);
   assert.equal(moving.changeDays, 2);
+});
+
+/**
+ * ── FRED의 제약 둘 ────────────────────────────────────────────────────────
+ *
+ * 2026-08-07에 실측으로 드러난 것입니다.
+ *  1. 한 요청에 vintage 날짜는 2000개까지 (T10Y2Y 3094, DFEDTARL 5067)
+ *  2. units가 lin이 아니면 realtime 범위를 하루로 고정해야 함 (PCEPILFE의 pc1)
+ */
+
+test("vintage 날짜가 2000개를 넘으면 나눠 요청한다", () => {
+  const dates = Array.from({ length: 5067 }, (_, index) => `2000-01-${index}`);
+  const windows = chunkVintageWindows(dates);
+
+  assert.equal(windows.length, 3, "5067개는 1900씩 세 창으로 갈린다");
+  assert.equal(windows[0].start, dates[0]);
+  // 마지막 창의 끝은 열어둬야 이후에 나올 개정본까지 들어옵니다.
+  assert.equal(windows.at(-1).end, "9999-12-31");
+});
+
+test("vintage가 적으면 한 번에 받는다", () => {
+  assert.equal(chunkVintageWindows(["2008-10-03", "2009-02-06"]).length, 1);
+  assert.equal(chunkVintageWindows([]).length, 1, "목록이 비어도 요청은 한 번 나간다");
+});
+
+test("전년 대비 변환은 as-of 필터 뒤에 하므로 개정된 미래 값이 안 섞인다", () => {
+  // 원지수를 내림차순으로 13개 만듭니다. 12칸 뒤가 1년 전입니다.
+  const index = Array.from({ length: 13 }, (_, offset) => ({
+    date: `2026-${String(12 - offset).padStart(2, "0")}-01`,
+    value: 100 + (12 - offset),
+    realtimeStart: "2020-01-01",
+  }));
+
+  const yoy = toYearOverYear(index);
+  assert.equal(yoy.length, 1, "1년치가 있어야 한 점이 나온다");
+  // 112 / 100 − 1 = 12%
+  assert.ok(Math.abs(yoy[0].value - 12) < 1e-9, `12%여야 한다: ${yoy[0].value}`);
+  assert.equal(yoy[0].date, index[0].date, "관측일은 그대로다");
+});
+
+test("transform이 붙은 시리즈만 변환하고 나머지는 원값을 유지한다", () => {
+  const vintages = {
+    series: {
+      corePce: {
+        transform: "pc1",
+        observations: Array.from({ length: 13 }, (_, offset) => ({
+          date: `2026-${String(12 - offset).padStart(2, "0")}-01`,
+          value: 100 + (12 - offset),
+          realtimeStart: "2020-01-01",
+        })),
+      },
+      unemployment: { transform: null, observations: UNEMPLOYMENT },
+    },
+  };
+
+  const asOf = macroDataAsOf(vintages, "2026-12-31");
+  assert.ok(Math.abs(asOf.series.corePce.observations[0].value - 12) < 1e-9);
+  assert.equal(asOf.series.unemployment.observations[0].value, 6.2, "변환 없는 층은 그대로다");
 });
 
 /**

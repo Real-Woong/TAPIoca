@@ -172,6 +172,40 @@ export async function fetchFredSeries({
     .filter((item) => item.date && Number.isFinite(item.value));
 }
 
+/**
+ * 시리즈의 개정 공개일(vintage date) 목록을 받습니다.
+ *
+ * 한 요청에 담을 수 있는 vintage 날짜가 2000개까지라, 그보다 많은 시리즈는
+ * 나눠 요청해야 합니다. 어디서 잘라야 하는지 알려면 목록이 먼저 필요합니다.
+ * (2026-08-07 실측: T10Y2Y 3094개, DFEDTARU 3740개, DFEDTARL 5067개)
+ */
+export async function fetchFredVintageDates({ apiKey, seriesId, fetchImpl = fetch }) {
+  if (!apiKey) throw new Error("FRED_API_KEY가 필요합니다.");
+  if (!seriesId) throw new Error("FRED seriesId가 필요합니다.");
+
+  const url = new URL("https://api.stlouisfed.org/fred/series/vintagedates");
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("series_id", seriesId);
+  url.searchParams.set("file_type", "json");
+  url.searchParams.set("limit", "10000");
+
+  const response = await fetchImpl(url, {
+    headers: { accept: "application/json", "user-agent": "toss-ai-invest-agent/0.1" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    const reason = await readFredError(response);
+    throw new Error(
+      `FRED ${seriesId} 개정일 조회 실패: HTTP ${response.status}${reason ? ` — ${reason}` : ""}`,
+    );
+  }
+  const body = await response.json();
+  if (!Array.isArray(body.vintage_dates)) {
+    throw new Error(`FRED ${seriesId} 응답에 vintage_dates가 없습니다.`);
+  }
+  return body.vintage_dates;
+}
+
 /** 오류 응답에서 FRED가 적어 보낸 이유를 꺼냅니다. 못 읽으면 조용히 빈 값입니다. */
 async function readFredError(response) {
   try {

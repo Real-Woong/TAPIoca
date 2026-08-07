@@ -307,7 +307,13 @@ async function runFetchMacro() {
   if (!apiKey) throw new Error("FRED_API_KEY가 필요합니다(.env).");
 
   console.log(`거시 개정 이력 수집 → ${dataDir}`);
-  const { series } = await fetchAndCacheMacroVintages({ dataDir, apiKey });
+  const { series } = await fetchAndCacheMacroVintages({
+    dataDir,
+    apiKey,
+    // vintage가 2000개를 넘는 시리즈는 나눠 받습니다. 몇 번 나눠 받는지
+    // 보이지 않으면 오래 걸릴 때 멈춘 것인지 알 수 없습니다.
+    log: (line) => console.log(line),
+  });
   for (const [key, item] of Object.entries(series)) {
     console.log(
       `  ${item.id}: 관측 ${item.observations.length}개 (개정본 포함) — ${item.name}`,
