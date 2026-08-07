@@ -61,6 +61,15 @@ export function combineMarketSignals(
     // Moreira & Muir(2017) 변동성 관리: 목표 연율 변동성보다 시장이 요동치면 익스포저를 줄입니다.
     volTarget = 0.15,
     minExposure = 0.3,
+    // 익스포저 배수의 상한입니다. 기본 1은 "조용할 때도 기본 배분보다 더 들지
+    // 않는다"는 뜻이라, 변동성 관리가 **한 방향으로만** 동작해 왔습니다.
+    // 1보다 크게 두면 변동성이 목표보다 낮은 구간에서 주식을 더 듭니다.
+    //
+    // 이 시스템이 사는 것은 낙폭인데, 낙폭 여유를 현금으로 쌓아두기만 하면
+    // CAGR로 돌아오지 않습니다. 아낀 낙폭을 노출로 되쓰는 손잡이입니다.
+    // **기본값 1은 지금까지의 모든 측정과 동일한 동작입니다** — 재기 전에는
+    // 켜지 않습니다.
+    maxExposure = 1,
     // 감성 스냅샷이 오래될수록 신뢰도를 깎고, 이 시간을 넘기면 기여도를 0으로 만듭니다.
     sentimentHalfLifeHours = 6,
     sentimentMaxAgeHours = 24,
@@ -121,16 +130,21 @@ export function combineMarketSignals(
   const annualizedVol = usableTrend ? Number(trend.volatility?.annualized) : NaN;
   let exposureMultiplier = 1;
   if (volTarget > 0 && Number.isFinite(annualizedVol) && annualizedVol > 0) {
-    exposureMultiplier = clamp(round(volTarget / annualizedVol), minExposure, 1);
+    exposureMultiplier = clamp(round(volTarget / annualizedVol), minExposure, maxExposure);
   }
   const regimeAllocation = allocationFor(score, macroSignal.targetAllocation);
-  const targetAllocation = exposureMultiplier < 1
-    ? scaleForExposure(regimeAllocation, exposureMultiplier)
-    : regimeAllocation;
+  const targetAllocation = exposureMultiplier === 1
+    ? regimeAllocation
+    : scaleForExposure(regimeAllocation, exposureMultiplier);
   if (exposureMultiplier < 1) {
     reasons.push(
       `변동성 관리: 연율 변동성 ${round(annualizedVol * 100)}% > 목표 ${round(volTarget * 100)}% → ` +
         `주식 익스포저 ×${exposureMultiplier}`,
+    );
+  } else if (exposureMultiplier > 1) {
+    reasons.push(
+      `변동성 관리: 연율 변동성 ${round(annualizedVol * 100)}% < 목표 ${round(volTarget * 100)}% → ` +
+        `주식 익스포저 ×${exposureMultiplier} (상한 ${maxExposure})`,
     );
   }
 
@@ -186,6 +200,15 @@ function scaleForExposure(allocation, multiplier) {
     if (symbol === "CASH") continue;
     scaled[symbol] = round(Number(weight) * multiplier);
     equitySum += scaled[symbol];
+  }
+  // 배수가 1을 넘으면 주식 합이 100%를 넘을 수 있습니다. 현금이 마이너스가 되는
+  // 것은 곧 레버리지이고 이 지갑에는 없는 수단이므로, 비율을 유지한 채 100%로
+  // 눌러 담습니다. 그래서 상한을 아무리 올려도 실제 노출은 전액 주식에서 멈춥니다.
+  if (equitySum > 1) {
+    for (const symbol of Object.keys(scaled)) {
+      scaled[symbol] = round(scaled[symbol] / equitySum);
+    }
+    equitySum = 1;
   }
   // 줄인 주식 비중만큼 현금으로 돌립니다.
   scaled.CASH = round(Math.max(0, 1 - equitySum));

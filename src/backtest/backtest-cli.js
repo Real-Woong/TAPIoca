@@ -13,6 +13,7 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest                      기본 비교(청산 규칙) 실행
  *   npm run backtest -- --compare macd    MACD 가중치 비교
  *   npm run backtest -- --compare vol     변동성 관리 목표 비교
+ *   npm run backtest -- --compare exposure 익스포저 상한: 낙폭 여유를 수익으로 되사는가
  *   npm run backtest -- --compare stop    손절 문턱: 고정 비율 대 변동성 배수
  *   npm run backtest -- --blocks 5        표본을 5등분해 지표가 얼마나 흔들리는지
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
@@ -100,9 +101,10 @@ const COMPARISONS = {
       { name: "ⓑ 이탈밴드 2%", env: { REBALANCE_EXIT_BAND_RATE: "0.02" } },
       // ⓒ 목표 대비 상한을 함께 겁니다. 큰 포지션에서는 자산 대비 5%가 여전히
       //    먼저 걸리므로 이론상 작은 포지션에만 작용합니다. 그 "이론상"을 여기서 확인합니다.
-      //    교차점 = 밴드 / (배수−1). 배수 2에서만 교차점이 밴드 5%와 일치해
-      //    "목표 전체가 밴드 안에 드는 종목"만 좁아집니다. 1.25는 교차점이 20%라
-      //    SCHD(19.5%)까지 끌려들어옵니다 — 그 대가를 여기서 함께 봅니다.
+      //    교차점 = 밴드 / 배수입니다. 문턱이 보유액이 아니라 **초과분** 기준이라
+      //    (`exitBand()`), 배수 2의 교차점은 2.5%입니다. 08-07 기록의
+      //    `밴드/(배수−1) = 5%`는 틀렸고 08-07 채택 시 정정했습니다.
+      //    2.5%면 VTI·SCHD는 여전히 자산 대비 5%가 먼저 걸립니다.
       { name: "ⓒ 목표대비 2배", env: { TARGET_DRIFT_CAP: "2" } },
       { name: "ⓒ 목표대비 1.25배", env: { TARGET_DRIFT_CAP: "1.25" } },
     ],
@@ -113,6 +115,36 @@ const COMPARISONS = {
       { name: "비용 0", env: { TRADE_COST_RATE: "0" } },
       { name: "현재 10bp", env: { TRADE_COST_RATE: "0.001" } },
       { name: "30bp", env: { TRADE_COST_RATE: "0.003" } },
+    ],
+  },
+  // 지금까지의 모든 비교는 **노출을 맞춰놓고 낙폭을 쟀습니다.** 이 비교만 방향이
+  // 반대입니다 — 낙폭을 벤치마크 수준까지 풀어주고 그동안 수익이 얼마나 오르는지 봅니다.
+  //
+  // 익스포저 배수는 `clamp(volTarget / 변동성, minExposure, maxExposure)`이고
+  // 상한이 1로 박혀 있었습니다. 그래서 변동성 관리가 **한 방향으로만** 동작했습니다 —
+  // 시끄러우면 줄이고, 조용해도 기본 배분 이상으로는 늘리지 않았습니다.
+  // 그 결과 아낀 낙폭(같은 노출에서 정적 배분 대비 10~16%p)이 현금으로만 쌓이고
+  // CAGR로 돌아오지 않았습니다. 이 비교가 묻는 것은 하나입니다:
+  //
+  //   **낙폭 여유를 노출로 되쓰면 CAGR을 얼마나 살 수 있는가.**
+  //
+  // 판정은 "CAGR이 올랐는가"가 아닙니다. 노출을 늘리면 CAGR은 당연히 오릅니다.
+  // 봐야 할 것은 **같은 MDD에서 정적 배분보다 CAGR이 높은가**이고, 그래서 정적
+  // 배분 3점을 같은 표에 둡니다. 정적 배분의 (MDD, CAGR) 점들이 기준선이고,
+  // 우리 변형이 그 선 위쪽에 있어야 노출 확대가 값을 한 것입니다.
+  //
+  // 레버리지는 없습니다. `scaleForExposure()`가 주식 합을 100%에서 눌러 담으므로
+  // 상한을 아무리 올려도 전액 주식에서 멈춥니다.
+  exposure: {
+    label: "익스포저 상한 (아낀 낙폭을 수익으로 되사는가)",
+    variants: [
+      { name: "현재 (상한 1.0)", signal: { maxExposure: 1 } },
+      { name: "상한 1.2", signal: { maxExposure: 1.2 } },
+      { name: "상한 1.4", signal: { maxExposure: 1.4 } },
+      { name: "상한 1.6", signal: { maxExposure: 1.6 } },
+      // 낙폭 사다리의 기준선입니다. 이 점들을 잇는 선보다 위에 있어야 의미가 있습니다.
+      { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
+      { name: "정적 90/10", options: { staticAllocation: EQUITY_MIX(0.9) } },
     ],
   },
   strategy: {

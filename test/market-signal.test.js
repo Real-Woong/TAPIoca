@@ -121,6 +121,74 @@ test("변동성이 목표 이하이면 익스포저를 줄이지 않는다", () 
   assert.equal(combined.targetAllocation.VTI, 0.7);
 });
 
+test("기본 상한 1이라 변동성이 아무리 낮아도 기본 배분 이상으로 늘리지 않는다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.05 } },
+    trendWeight: 0,
+    volTarget: 0.15,
+  });
+
+  // 0.15/0.05 = 3이지만 상한 1에서 잘립니다. 이것이 지금까지의 모든 측정과 같은
+  // 동작이고, 변동성 관리가 한 방향으로만 작동해 온 이유입니다.
+  assert.equal(combined.exposureMultiplier, 1);
+  assert.equal(combined.targetAllocation.VTI, 0.7);
+});
+
+test("maxExposure를 올리면 조용한 구간에서 주식을 더 든다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.1 } },
+    trendWeight: 0,
+    volTarget: 0.11,
+    maxExposure: 1.2,
+  });
+
+  // 0.11/0.1 = 1.1 → 상한 1.2 안이라 그대로 통과합니다.
+  assert.equal(combined.exposureMultiplier, 1.1);
+  // NEUTRAL 기본 VTI 0.7 → 0.77, SCHD 0.2 → 0.22. 늘린 만큼 현금이 줄어듭니다.
+  assert.equal(combined.targetAllocation.VTI, 0.77);
+  assert.equal(combined.targetAllocation.SCHD, 0.22);
+  assert.ok(Math.abs(combined.targetAllocation.CASH - 0.01) < 1e-9);
+});
+
+test("기본 배분이 주식 90%라 상한 1.12 부근에서 이미 포화된다", () => {
+  // 이것이 이 손잡이의 실효 범위를 정합니다. NEUTRAL 기본 배분은 주식 90%(VTI 70 +
+  // SCHD 20)이므로 배수 1/0.9 = 1.111에서 주식 합이 100%에 닿습니다. 그 위로는
+  // 상한을 아무리 올려도 배분이 같습니다 — 남은 현금 10%를 다 쓴 뒤에는 살 것이
+  // 없기 때문입니다. **상한을 1.2 위로 올리는 것은 의미가 없습니다.**
+  const atCap = (maxExposure) =>
+    combineMarketSignals(macro, null, {
+      trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.02 } },
+      trendWeight: 0,
+      volTarget: 0.15,
+      maxExposure,
+    }).targetAllocation;
+
+  assert.deepEqual(atCap(1.2), atCap(1.6));
+  assert.deepEqual(atCap(1.6), atCap(5));
+});
+
+test("maxExposure를 아무리 올려도 레버리지가 되지 않는다 — 주식 합이 100%에서 멈춘다", () => {
+  const combined = combineMarketSignals(macro, null, {
+    trend: { available: true, score: 0.5, confidence: 1, volatility: { annualized: 0.02 } },
+    trendWeight: 0,
+    volTarget: 0.15,
+    maxExposure: 5,
+  });
+
+  assert.equal(combined.exposureMultiplier, 5);
+
+  const allocation = combined.targetAllocation;
+  const equitySum = Object.entries(allocation)
+    .filter(([symbol]) => symbol !== "CASH")
+    .reduce((sum, [, weight]) => sum + weight, 0);
+
+  // 이 지갑에는 차입이 없습니다. 비율은 유지한 채 100%로 눌러 담습니다.
+  assert.ok(Math.abs(equitySum - 1) < 1e-9, `주식 합이 100%여야 한다: ${equitySum}`);
+  assert.equal(allocation.CASH, 0);
+  // 눌러 담아도 종목 사이 비율(VTI:SCHD = 7:2)은 그대로입니다.
+  assert.ok(Math.abs(allocation.VTI / allocation.SCHD - 3.5) < 0.01);
+});
+
 test("minExposure 아래로는 익스포저를 줄이지 않는다", () => {
   const combined = combineMarketSignals(macro, null, {
     trend: { available: true, score: 0, confidence: 1, volatility: { annualized: 0.9 } },
