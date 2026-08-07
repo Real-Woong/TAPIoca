@@ -10,6 +10,7 @@ import {
   reconcile,
   unresolvedOrders,
 } from "../src/live/order-lifecycle.js";
+import { HALT_REASONS, planCycle } from "../src/live/execution-plan.js";
 import { clientOrderId } from "../src/live/order-store.js";
 
 /**
@@ -158,4 +159,66 @@ test("이미 체결된 주문은 취소되지 않는다", async () => {
   const broker = createFakeBroker({ behaviors: [{ fill: 1 }] });
   await broker.submitOrder({ clientOrderId: "끝", symbol: "VTI", side: "BUY", amountUsd: 10 });
   assert.equal((await broker.cancelOrder("끝")).canceled, false);
+});
+
+/**
+ * ── 사이클 계획 ───────────────────────────────────────────────────────────
+ *
+ * "무엇을 낼지, 아니면 멈출지"를 정하는 판단입니다. 실거래에서 다치는 곳이
+ * 정확히 여기라, 네트워크도 시간도 없이 테스트할 수 있게 떼어 놨습니다.
+ */
+
+const DECISIONS = [
+  { symbol: "VTI", side: "BUY", amountUsd: 5 },
+  { symbol: "SCHD", side: "BUY", amountUsd: 3 },
+];
+
+test("긴급 중지는 다른 모든 판단보다 먼저 이긴다", () => {
+  const plan = planCycle({ decisions: DECISIONS, emergencyStop: true });
+  assert.equal(plan.halted, true);
+  assert.equal(plan.reason, HALT_REASONS.EMERGENCY_STOP);
+  assert.deepEqual(plan.submit, []);
+});
+
+test("결말이 안 난 주문이 있으면 새 주문을 내지 않는다", () => {
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "열림", symbol: "VTI", side: "BUY", requestedUsd: 10 },
+  ]);
+  const plan = planCycle({ decisions: DECISIONS, orders });
+  assert.equal(plan.reason, HALT_REASONS.UNRESOLVED_ORDERS);
+  assert.match(plan.message, /열림/);
+});
+
+test("브로커와 장부가 어긋나면 멈춘다", () => {
+  const plan = planCycle({
+    decisions: DECISIONS,
+    reconciliation: reconcile({ IWM: 3.69 }, { IWM: 1.08 }),
+  });
+  assert.equal(plan.reason, HALT_REASONS.RECONCILE_MISMATCH);
+  assert.match(plan.message, /IWM/);
+});
+
+test("기본은 한 번에 하나만 내고 나머지는 미룬다", () => {
+  // 브로커가 우리 주문 아이디를 안 받아 주면, 응답을 못 받았을 때 후보가
+  // 여럿이면 어느 것인지 가릴 수 없다. 하나만 띄우면 조회로 결말이 난다.
+  const plan = planCycle({ decisions: DECISIONS });
+  assert.equal(plan.halted, false);
+  assert.deepEqual(plan.submit, [DECISIONS[0]]);
+  assert.deepEqual(plan.skipped, [DECISIONS[1]], "버리는 것이 아니라 미룬다");
+});
+
+test("멱등키가 확인되면 동시 주문 수를 올릴 수 있다", () => {
+  const plan = planCycle({ decisions: DECISIONS, maxInFlight: 2 });
+  assert.equal(plan.submit.length, 2);
+  assert.deepEqual(plan.skipped, []);
+});
+
+test("장이 닫혀 있으면 내지 않는다", () => {
+  assert.equal(planCycle({ decisions: DECISIONS, marketOpen: false }).reason, HALT_REASONS.MARKET_CLOSED);
+});
+
+test("낼 것이 없으면 멈춘 것이 아니라 그냥 빈 계획이다", () => {
+  const plan = planCycle({ decisions: [] });
+  assert.equal(plan.halted, false, "거래 없음은 사고가 아니다");
+  assert.deepEqual(plan.submit, []);
 });
