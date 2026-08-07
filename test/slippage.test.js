@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeSlippage, extractQuote, summarizeSlippage } from "../src/live/slippage.js";
+import {
+  computeSlippage,
+  extractQuote,
+  impliedFillPrice,
+  summarizeSlippage,
+} from "../src/live/slippage.js";
 
 /**
  * 슬리피지 측정을 고정합니다.
@@ -130,4 +135,50 @@ test("못 잰 값은 표에서 0이 아니라 하이픈이어야 한다", async 
 
   assert.doesNotMatch(stdout, /0\.00bp/, "못 잰 값이 0.00bp로 찍히면 안 된다");
   assert.match(stdout, /측정 가능 0건/);
+});
+
+/** ── 실효 체결가 역산 ─────────────────────────────────────────────────── */
+
+test("보고 체결가는 눈금이 굵어 슬리피지를 왜곡한다", () => {
+  // 2026-08-07 실측. 보고값 $33.69는 중간가 $33.695보다 낮아서, 시장가 매수가
+  // 매수호가에 체결된 것처럼 보였다. 그럴 리가 없다.
+  const reported = computeSlippage({
+    side: "BUY", quote: { bid: 33.69, ask: 33.70, mid: 33.695 }, filledPrice: 33.69,
+  });
+  assert.ok(reported.slippageBps < 0, `보고값만 쓰면 이득처럼 보인다: ${reported.slippageBps}`);
+  assert.equal(reported.priceSource, "reported");
+
+  // 수량에서 역산하면 $2.00 / 0.059349 = $33.6990 — 매도호가 $33.70에 붙는다.
+  // 시장가 매수의 당연한 결과이고, 보고값이 그리던 그림보다 훨씬 말이 된다.
+  const implied = computeSlippage({
+    side: "BUY", quote: { bid: 33.69, ask: 33.70, mid: 33.695 }, filledPrice: 33.69,
+    requestedUsd: 2, filledQuantity: 0.059349, terminal: true,
+  });
+  assert.equal(implied.priceSource, "implied");
+  assert.ok(Math.abs(implied.effectivePrice - 33.699) < 0.001, `${implied.effectivePrice}`);
+  assert.ok(implied.slippageBps > 0, "매수는 중간가 위에서 체결된다");
+  // 반스프레드(1.48bp)와 같은 자리 — 즉 매도호가를 친 것이다.
+  assert.ok(Math.abs(implied.slippageBps - implied.halfSpreadBps) < 0.5,
+    `반스프레드 근처여야 한다: ${implied.slippageBps} 대 ${implied.halfSpreadBps}`);
+});
+
+test("부분 체결이면 역산하지 않는다", () => {
+  // 요청 금액이 실제로 쓰인 금액이 아니므로 나눗셈이 성립하지 않는다.
+  assert.equal(impliedFillPrice({ requestedUsd: 10, filledQuantity: 0.1, terminal: false }), null);
+});
+
+test("역산에 필요한 값이 없으면 보고값으로 물러선다", () => {
+  const result = computeSlippage({
+    side: "BUY", quote: { mid: 33.695 }, filledPrice: 33.69, requestedUsd: 2,
+  });
+  assert.equal(result.priceSource, "reported", "수량이 없으면 역산할 수 없다");
+});
+
+test("어느 가격을 썼는지 요약에 남는다", () => {
+  const summary = summarizeSlippage([
+    { slippageBps: 1, priceSource: "implied" },
+    { slippageBps: 2, priceSource: "reported" },
+  ]);
+  // 정밀도가 열 배 다르므로 섞였다는 사실이 드러나야 한다.
+  assert.equal(summary.reportedPriceCount, 1);
 });

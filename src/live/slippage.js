@@ -73,17 +73,58 @@ function readQuoteFrom(node) {
 }
 
 /**
+ * 실효 체결가를 **수량에서 역산**합니다.
+ *
+ * `averageFilledPrice`는 소수점 **둘째 자리**까지만 옵니다. $33.69에서 1센트는
+ * **2.97bp**라, 10bp 가정을 검증하기에는 눈금이 너무 굵습니다. 실제로 2026-08-07
+ * 측정에서 보고값 $33.69가 중간가 $33.695보다 낮게 나와 **시장가 매수가
+ * 매수호가에 체결된 것처럼** 보였습니다. 그럴 리가 없습니다.
+ *
+ * 반면 **체결 수량은 소수점 여섯째 자리**까지 옵니다. 금액 주문은 요청 금액을
+ * 가격으로 나눠 수량을 정하므로, 되돌리면 훨씬 정밀한 가격이 나옵니다.
+ *
+ *   요청 $2.00 ÷ 0.059349주 = $33.6990   (보고값 $33.69, 호가 33.69/33.70)
+ *
+ * 역산값은 **매도호가 $33.70에 붙습니다** — 시장가 매수의 당연한 결과이고,
+ * 보고값이 그리던 "매수호가 체결"보다 훨씬 말이 됩니다.
+ *
+ * 오차는 수량 눈금 하나(1e-6주)에서만 오므로 이 예에서 **0.17bp** 수준입니다.
+ * 보고 가격의 ±1.5bp보다 열 배 촘촘합니다.
+ *
+ * **전량 체결일 때만 씁니다.** 부분 체결이면 요청 금액이 실제로 쓰인 금액이
+ * 아니라서 역산이 성립하지 않습니다.
+ */
+export function impliedFillPrice({ requestedUsd, filledQuantity, terminal = true }) {
+  const amount = Number(requestedUsd);
+  const quantity = Number(filledQuantity);
+  if (!terminal) return null;
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  return amount / quantity;
+}
+
+/**
  * 체결가와 기준 호가로 비용을 나눕니다. 값이 모자라면 `null`을 담아 **모른다는
  * 사실을 남깁니다** — 0으로 채우면 "쟀는데 0이었다"와 구분되지 않습니다.
+ *
+ * 체결가는 역산값을 **먼저** 씁니다(위 참조). 못 구하면 보고값으로 물러서되,
+ * 어느 쪽을 썼는지 `priceSource`에 남깁니다 — 정밀도가 다르므로 나중에 섞어
+ * 평균 내면 안 됩니다.
  */
-export function computeSlippage({ side, quote, filledPrice }) {
-  const price = Number(filledPrice);
+export function computeSlippage({ side, quote, filledPrice, requestedUsd, filledQuantity, terminal }) {
+  const implied = impliedFillPrice({ requestedUsd, filledQuantity, terminal });
+  const priceSource = implied === null ? "reported" : "implied";
+  const price = implied === null ? Number(filledPrice) : implied;
   const mid = Number(quote?.mid);
   const bid = Number(quote?.bid);
   const ask = Number(quote?.ask);
 
   if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(mid) || mid <= 0) {
-    return { slippageBps: null, halfSpreadBps: null, beyondSpreadBps: null, reason: "기준 호가 없음" };
+    return {
+      slippageBps: null, halfSpreadBps: null, beyondSpreadBps: null,
+      priceSource: null,
+      reason: !Number.isFinite(price) || price <= 0 ? "체결가 없음" : "기준 호가 없음",
+    };
   }
 
   // 매수는 위로 밀리면 손해, 매도는 아래로 밀리면 손해입니다. 부호를 맞춰
@@ -99,6 +140,10 @@ export function computeSlippage({ side, quote, filledPrice }) {
     slippageBps,
     halfSpreadBps,
     beyondSpreadBps: halfSpreadBps === null ? null : round2(slippageBps - halfSpreadBps),
+    // 어느 가격을 썼는지 남깁니다. 보고값은 ±1.5bp, 역산값은 ±0.2bp 수준이라
+    // 정밀도가 열 배 다릅니다. 섞어서 평균 내면 안 됩니다.
+    priceSource,
+    effectivePrice: round6(price),
     reason: null,
   };
 }
@@ -126,6 +171,8 @@ export function summarizeSlippage(measurements, { minimumSamples = 10 } = {}) {
     maxBps: round2(Math.max(...values)),
     minBps: round2(Math.min(...values)),
     meanHalfSpreadBps: spreads.length ? round2(average(spreads)) : null,
+    // 보고값으로 잰 건이 섞여 있으면 정밀도가 떨어집니다. 몇 건인지 밝힙니다.
+    reportedPriceCount: usable.filter((item) => item.priceSource === "reported").length,
     // 백테스트 가정과의 대조입니다. 이것이 이 측정의 목적입니다.
     assumptionBps: 10,
   };
@@ -162,4 +209,8 @@ function median(values) {
 
 function round2(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function round6(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1e6) / 1e6;
 }

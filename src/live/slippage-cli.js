@@ -36,7 +36,9 @@ for (const event of events) {
   if (event.type === "FILL") {
     order.filledPrice = event.filledPrice ?? order.filledPrice;
     order.filledUsd = (order.filledUsd ?? 0) + (Number(event.filledUsd) || 0);
+    order.filledQuantity = (order.filledQuantity ?? 0) + (Number(event.filledQuantity) || 0);
     order.fees = (order.fees ?? 0) + (Number(event.fees) || 0);
+    order.terminal = order.terminal || event.terminal === true;
   }
 }
 
@@ -45,6 +47,8 @@ for (const order of byOrder.values()) {
   if (!order.filledPrice) continue;
   const slip = computeSlippage({
     side: order.side, quote: order.quote, filledPrice: order.filledPrice,
+    requestedUsd: order.requestedUsd, filledQuantity: order.filledQuantity,
+    terminal: order.terminal,
   });
   rows.push({ ...order, ...slip });
 }
@@ -61,7 +65,7 @@ for (const row of rows) {
     `${String(row.at).slice(0, 16).replace("T", " ")}  ` +
       `${String(row.symbol ?? "?").padEnd(5)}  ${String(row.side ?? "?").padEnd(4)}  ` +
       `$${String(row.requestedUsd ?? "?").padEnd(6)} ` +
-      `$${fmt(row.filledPrice, 8)} ` +
+      `$${fmt(row.effectivePrice ?? row.filledPrice, 8)} ` +
       `$${fmt(row.quote?.mid, 8)} ` +
       `${fmt(row.slippageBps, 8)}bp ${fmt(row.halfSpreadBps, 8)}bp`,
   );
@@ -91,6 +95,12 @@ if (summary.count === 0) {
   );
   if (summary.meanHalfSpreadBps !== null) {
     console.log(`  이 중 반스프레드가 평균 ${summary.meanHalfSpreadBps}bp입니다.`);
+  }
+  if (summary.reportedPriceCount > 0) {
+    console.log(
+      `  주의: ${summary.reportedPriceCount}건은 보고 체결가로 쟀습니다(±1.5bp). ` +
+        "역산값(±0.2bp)과 정밀도가 다릅니다.",
+    );
   }
   const verdict = summary.medianBps <= summary.assumptionBps ? "안에 들어옵니다" : "**넘습니다**";
   console.log(`\n  백테스트 가정 ${summary.assumptionBps}bp — 중앙값 기준으로 ${verdict}.`);

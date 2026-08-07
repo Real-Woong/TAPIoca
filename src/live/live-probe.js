@@ -249,14 +249,25 @@ async function main() {
         console.log(`\n  수수료·세금: ${feeBps.toFixed(1)}bp`);
       }
 
-      const slip = computeSlippage({ side, quote, filledPrice: detail.filledPrice });
+      const slip = computeSlippage({
+        side, quote,
+        filledPrice: detail.filledPrice,
+        // 보고 체결가는 소수 둘째 자리까지라 눈금이 굵습니다. 요청 금액을
+        // 체결 수량으로 나눈 역산값이 열 배 정밀합니다.
+        requestedUsd: amountUsd,
+        filledQuantity: detail.filledQuantity,
+        terminal: detail.status === "FILLED",
+      });
       if (slip.slippageBps === null) {
         console.log(`  슬리피지: 못 쟀습니다 (${slip.reason})`);
       } else {
         console.log(`  슬리피지: ${slip.slippageBps}bp` +
           (slip.halfSpreadBps === null ? "" :
             ` (반스프레드 ${slip.halfSpreadBps}bp + 초과 ${slip.beyondSpreadBps}bp)`));
-        console.log(`  중간가 $${quote.mid} → 체결가 $${detail.filledPrice}`);
+        console.log(
+          `  중간가 $${quote.mid} → 실효 체결가 $${slip.effectivePrice}` +
+            ` (보고값 $${detail.filledPrice}, ${slip.priceSource === "implied" ? "수량에서 역산" : "보고값 사용"})`,
+        );
       }
       console.log("\n  백테스트 가정은 전 구간 10bp입니다. 환전 비용은 아직 이 경로에 없습니다.");
       return;
