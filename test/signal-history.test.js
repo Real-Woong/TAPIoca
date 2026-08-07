@@ -115,6 +115,50 @@ test("표본이 10건 미만이면 자기상관을 계산하지 않는다", () =
   assert.equal(summary.autocorrelation, null);
 });
 
+test("판정은 일별 시계열로 한다 — 스냅샷 단위는 참고용이다", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const pathModule = await import("node:path");
+  const { loadSignalHistory } = await import("../src/paper/signal-history.js");
+
+  // 하루 안에서는 값이 붙어 있고(시간별 자기상관이 높음) 날짜가 바뀔 때마다
+  // 부호가 뒤집히는 경우입니다. 스냅샷 단위로 재면 "값이 이어진다"로,
+  // 일별로 재면 "매일 새로 뽑힌다"로 정반대 판정이 나옵니다.
+  const events = [];
+  for (let day = 0; day < 12; day += 1) {
+    const date = `2026-09-${String(day + 1).padStart(2, "0")}`;
+    const score = day % 2 === 0 ? 0.5 : -0.5;
+    for (const hour of ["14", "15", "16"]) {
+      events.push(
+        event(`${date}T${hour}:05:00Z`, { fetchedAt: `${date}T${hour}:00:00Z`, score }),
+      );
+    }
+  }
+
+  const dataDir = await mkdtemp(pathModule.join(tmpdir(), "signal-history-"));
+  await writeFile(
+    pathModule.join(dataDir, "paper-events.jsonl"),
+    `${events.map((item) => JSON.stringify(item)).join("\n")}\n`,
+  );
+
+  const history = await loadSignalHistory(dataDir);
+
+  // 일별로 12건이 남고, 매일 부호가 뒤집히므로 자기상관이 음수여야 합니다.
+  assert.equal(history.summary.count, 12, "판정 표본은 거래일 수다");
+  assert.ok(
+    history.summary.autocorrelation < 0,
+    `일별 자기상관은 음수여야 한다: ${history.summary.autocorrelation}`,
+  );
+
+  // 스냅샷 단위는 하루 안에서 값이 붙어 있어 양수로 나옵니다. 같은 뉴스
+  // 사이클을 반복해서 센 것이므로 판정에 쓰면 안 됩니다.
+  assert.equal(history.snapshotSummary.count, 36);
+  assert.ok(
+    history.snapshotSummary.autocorrelation > history.summary.autocorrelation,
+    "스냅샷 단위가 더 높게 나온다 — 그래서 판정에 쓰지 않는다",
+  );
+});
+
 test("기록이 없으면 빈 요약을 낸다", () => {
   const summary = summarizeSentimentSeries([]);
   assert.equal(summary.count, 0);

@@ -108,12 +108,30 @@ function round(value) {
 export async function loadSignalHistory(dataDir) {
   const events = await readPaperEvents(dataDir);
   const series = extractSentimentSeries(events);
+  const daily = toDailySeries(series);
   return {
     eventCount: events.length,
     // 원본 신호가 없는 예전 이벤트가 몇 건인지 함께 알려, 표본이 언제부터 쌓였는지 드러냅니다.
     withSignals: events.filter((event) => event.signals).length,
     series,
-    daily: toDailySeries(series),
-    summary: summarizeSentimentSeries(series),
+    daily,
+    // **판정은 일별로 한다.** 이유는 아래 두 가지입니다.
+    //
+    // 1. 스냅샷 단위는 뉴스 캐시(기본 60분) 때문에 1시간 간격입니다. 같은 뉴스
+    //    사이클 안이라 자기상관이 부풀려지고, "1시간 뒤에도 값이 비슷하다"로
+    //    0.3을 넘겨 정보를 담았다고 판정할 수 있습니다.
+    // 2. 스냅샷 시계열은 간격이 고르지 않습니다. 장 마감 마지막 스냅샷과 다음 날
+    //    첫 스냅샷 사이는 17.5시간인데 같은 1차 시차로 취급됩니다.
+    //
+    // 그리고 실제로 문제가 된 것이 일간이었습니다 — 08-05 +0.108에서 08-06
+    // −0.545로 하루 만에 부호가 뒤집혀 IWM 편입이 촉발됐습니다. 매매 판단이
+    // 일어나는 시간축도 그쪽입니다.
+    //
+    // 08-06에 정한 판정 규칙은 문턱(0.1/0.3)과 표본 수(10)만 박았고 간격은
+    // 비어 있었습니다. **그 빈칸을 결과가 나오기 전에 채운 것이지 규칙을 바꾼
+    // 것이 아닙니다.** 문턱과 표본 수는 그대로입니다.
+    summary: summarizeSentimentSeries(daily),
+    // 참고용입니다. 판정에 쓰지 않습니다.
+    snapshotSummary: summarizeSentimentSeries(series),
   };
 }

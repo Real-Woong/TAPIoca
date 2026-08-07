@@ -36,22 +36,28 @@ if (asJson) {
     );
   }
 
-  const { summary } = history;
+  const { summary, snapshotSummary } = history;
   console.log(
-    `\n${summary.firstDate} ~ ${summary.lastDate} · 거래일 ${summary.tradingDays}일 · ` +
-      `스냅샷 ${summary.count}건`,
+    `\n${summary.firstDate} ~ ${summary.lastDate} · 거래일 ${summary.count}일 · ` +
+      `스냅샷 ${snapshotSummary.count}건`,
   );
   console.log(
     `평균 ${summary.mean} · 표준편차 ${summary.stdev} · 범위 ${summary.min}~${summary.max}`,
   );
-  console.log(`연속 스냅샷 간 평균 변동폭 ${summary.meanAbsChange} · 부호 반전 ${summary.signFlips}회`);
+  console.log(`일간 평균 변동폭 ${summary.meanAbsChange} · 부호 반전 ${summary.signFlips}회`);
+
+  // 판정은 일별입니다. 스냅샷 단위(1시간 간격)는 같은 뉴스 사이클 안이라
+  // 자기상관이 부풀려지고, 간격도 고르지 않습니다. 참고로만 함께 냅니다.
+  if (snapshotSummary.autocorrelation !== null) {
+    console.log(`(참고) 스냅샷 단위 자기상관: ${snapshotSummary.autocorrelation} — 판정에 쓰지 않습니다.`);
+  }
 
   if (summary.autocorrelation === null) {
     console.log(
-      `1차 자기상관: 표본 부족 (${summary.count}/10건) — 최소 10건은 모여야 계산합니다.`,
+      `1차 자기상관(일별): 표본 부족 (${summary.count}/10거래일) — 최소 10거래일은 모여야 계산합니다.`,
     );
   } else {
-    console.log(`1차 자기상관: ${summary.autocorrelation}`);
+    console.log(`1차 자기상관(일별): ${summary.autocorrelation}`);
     // 판정 기준을 코드에 박아 두면 나중에 눈대중으로 해석이 흔들리지 않습니다.
     console.log(
       summary.autocorrelation >= 0.3
