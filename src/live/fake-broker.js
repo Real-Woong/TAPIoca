@@ -16,6 +16,8 @@ export function createFakeBroker({
   //   { reject: "사유" }   거절
   //   { timeout: true }    응답 없음(예외). 브로커 쪽에는 접수됐을 수도 있다
   //   { accept: true }     접수만 하고 체결은 나중에
+  //   { conflict: true }   같은 아이디에 다른 내용 (idempotency-key-conflict)
+  //   { inProgress: true } 같은 주문이 처리 중 (request-in-progress)
   behaviors = [],
   price = 100,
 } = {}) {
@@ -33,6 +35,27 @@ export function createFakeBroker({
       const behavior = nextBehavior();
       sequence += 1;
       const brokerOrderId = `BRK-${sequence}`;
+
+      // 토스증권의 멱등 규약을 흉내 냅니다. 둘 다 "이미 보냈다"는 증거이므로
+      // 재제출하면 안 되고 조회로 결말을 지어야 합니다.
+      if (behavior.conflict || behavior.inProgress) {
+        const error = new Error(
+          behavior.conflict ? "같은 아이디에 다른 내용이 접수돼 있습니다" : "같은 주문을 처리 중입니다",
+        );
+        error.code = behavior.conflict ? "idempotency-key-conflict" : "request-in-progress";
+        // 브로커에는 남아 있습니다 - 그래서 조회하면 나옵니다.
+        if (!orders.has(clientOrderId)) {
+          orders.set(clientOrderId, {
+            clientOrderId, brokerOrderId: `BRK-${sequence + 1}`, symbol, side, amountUsd,
+            status: "OPEN", filledUsd: 0, filledQuantity: 0,
+          });
+        }
+        throw error;
+      }
+
+      // 같은 아이디로 같은 내용이 다시 오면 새 주문을 만들지 않고 기존 것을 돌려줍니다.
+      const existing = orders.get(clientOrderId);
+      if (existing && existing.amountUsd === amountUsd) return { ...existing, deduplicated: true };
 
       if (behavior.timeout) {
         // **응답을 못 받았지만 브로커에는 접수됐다.** 이것이 가장 위험한 경우다.

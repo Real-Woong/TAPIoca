@@ -11,6 +11,12 @@ import {
   unresolvedOrders,
 } from "../src/live/order-lifecycle.js";
 import { HALT_REASONS, planCycle } from "../src/live/execution-plan.js";
+import {
+  OUTCOMES,
+  classifyOutcome,
+  eventsFromLookup,
+  resolveOrders,
+} from "../src/live/order-outcome.js";
 import { clientOrderId } from "../src/live/order-store.js";
 
 /**
@@ -221,4 +227,102 @@ test("낼 것이 없으면 멈춘 것이 아니라 그냥 빈 계획이다", () 
   const plan = planCycle({ decisions: [] });
   assert.equal(plan.halted, false, "거래 없음은 사고가 아니다");
   assert.deepEqual(plan.submit, []);
+});
+
+/**
+ * ── 멱등 규약 ─────────────────────────────────────────────────────────────
+ *
+ * 토스증권은 주문 본문의 clientOrderId로 중복을 막습니다(2026-08-07 확인).
+ * 같은 아이디 + 다른 내용이면 idempotency-key-conflict, 처리 중이면
+ * request-in-progress입니다. **둘 다 오류처럼 생겼지만 "이미 보냈다"는
+ * 가장 확실한 증거이고, 그래서 재제출하면 안 됩니다.**
+ */
+
+test("접수 확인만이 다음 단계로 나아간다", () => {
+  const accepted = classifyOutcome({ response: { brokerOrderId: "BRK-1" } });
+  assert.equal(accepted.outcome, OUTCOMES.ACCEPTED);
+});
+
+test("명시적 거절만 재제출해도 안전하다 — 주문이 존재하지 않기 때문", () => {
+  const rejected = classifyOutcome({ response: { status: "REJECTED", reason: "잔고 부족" } });
+  assert.equal(rejected.outcome, OUTCOMES.REJECTED);
+  assert.equal(rejected.mayResubmit, true);
+});
+
+test("멱등 충돌과 처리 중은 재제출 금지다", () => {
+  for (const code of ["idempotency-key-conflict", "request-in-progress"]) {
+    const error = Object.assign(new Error("x"), { code });
+    const outcome = classifyOutcome({ error });
+    assert.equal(outcome.outcome, OUTCOMES.NEEDS_LOOKUP, code);
+    assert.equal(outcome.mayResubmit, false, code);
+  }
+});
+
+test("타임아웃도 재제출 금지다 — 접수 여부를 모르기 때문", () => {
+  const outcome = classifyOutcome({ error: new Error("응답 시간 초과") });
+  assert.equal(outcome.outcome, OUTCOMES.NEEDS_LOOKUP);
+  assert.equal(outcome.mayResubmit, false);
+});
+
+test("주문번호 없는 응답은 성공으로 보지 않는다", () => {
+  assert.equal(classifyOutcome({ response: {} }).outcome, OUTCOMES.NEEDS_LOOKUP);
+});
+
+test("조회 결과 없음은 확실한 사실이라 결말을 짓는다", () => {
+  // 열린 채로 두면 다음 사이클이 영영 멈춥니다.
+  const events = eventsFromLookup("A", null);
+  assert.equal(events[0].type, "CANCELED");
+  assert.equal(buildOrders([{ type: "PLANNED", clientOrderId: "A", requestedUsd: 5 }, ...events])
+    .get("A").state, ORDER_STATES.CANCELED);
+});
+
+test("멱등 충돌 뒤 조회하면 실제로 접수된 주문이 나온다", async () => {
+  const broker = createFakeBroker({ behaviors: [{ conflict: true }] });
+  const id = "충돌";
+
+  let caught = null;
+  try {
+    await broker.submitOrder({ clientOrderId: id, symbol: "VTI", side: "BUY", amountUsd: 5 });
+  } catch (error) {
+    caught = error;
+  }
+
+  const outcome = classifyOutcome({ error: caught });
+  assert.equal(outcome.mayResubmit, false, "여기서 재제출하면 중복 매수다");
+
+  // 조회가 결말을 짓습니다.
+  const found = await broker.getOrder(id);
+  assert.ok(found, "충돌은 이미 보냈다는 증거다");
+});
+
+test("미결 주문을 조회해 결말을 짓되 재제출은 하지 않는다", async () => {
+  const broker = createFakeBroker({ behaviors: [{ timeout: true }] });
+  const id = "복구";
+  await assert.rejects(() =>
+    broker.submitOrder({ clientOrderId: id, symbol: "VTI", side: "BUY", amountUsd: 5 }));
+
+  const before = buildOrders([
+    { type: "PLANNED", clientOrderId: id, symbol: "VTI", side: "BUY", requestedUsd: 5 },
+  ]);
+  const { events, stillUnresolved } = await resolveOrders(broker, unresolvedOrders(before));
+
+  assert.deepEqual(stillUnresolved, []);
+  // 브로커에 살아 있었으므로 SUBMITTED로 결말이 납니다. 주문은 하나뿐입니다.
+  assert.equal(events[0].type, "SUBMITTED");
+  assert.equal(broker._orders.size, 1, "재제출하지 않았다");
+});
+
+test("조회 자체가 실패하면 미결로 남긴다 — 모르는 채로 매매하지 않는다", async () => {
+  const broker = createFakeBroker();
+  broker.getOrder = async () => { throw new Error("조회 실패"); };
+
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "X", symbol: "VTI", side: "BUY", requestedUsd: 5 },
+  ]);
+  const { events, stillUnresolved } = await resolveOrders(broker, unresolvedOrders(orders));
+
+  assert.deepEqual(events, []);
+  assert.equal(stillUnresolved.length, 1);
+  // 다음 사이클도 멈춥니다. 그것이 맞는 동작입니다.
+  assert.equal(planCycle({ decisions: DECISIONS, orders }).reason, HALT_REASONS.UNRESOLVED_ORDERS);
 });
