@@ -5,7 +5,12 @@ import path from "node:path";
 import { loadTradingPolicy } from "../paper/trading-policy.js";
 import { runBacktest } from "./backtest-engine.js";
 import { fetchAndCacheMacroVintages, loadMacroVintages } from "./macro-cache.js";
-import { compareSahmSources, macroScoreTimeline, summarizeMacroTimeline } from "./macro-history.js";
+import {
+  compareSahmSources,
+  diagnoseCoverage,
+  macroScoreTimeline,
+  summarizeMacroTimeline,
+} from "./macro-history.js";
 import { fetchAndCacheCloses, loadCachedCloses } from "./price-cache.js";
 import { buildScenario, SCENARIOS } from "./scenarios.js";
 
@@ -446,6 +451,15 @@ async function buildMacroTimeline(datasets, { required = false } = {}) {
   // 최대 낙폭 구간이 통째로 판정 불가 구간 안에 있어 MDD가 상수 0과 소수점까지
   // 같았습니다. 결과가 "차이 없음"처럼 보였지만 실제로는 **재지 못한 것**입니다.
   if (coverage < 0.9) {
+    // 어느 층이 막는지 먼저 보여줍니다. 전체 적용률만으로는 무엇을 고쳐야
+    // 하는지 알 수 없고, 가장 늦게 시작하는 하나가 곧 병목입니다.
+    console.log("\n  지표별 최초 사용 가능일 (늦은 순 — 맨 위가 병목):");
+    for (const row of diagnoseCoverage(vintages, dates)) {
+      console.log(
+        `    ${row.key.padEnd(14)} ${row.firstUsable ?? "사용 불가"}` +
+          (row.firstIndex === null ? "" : ` (${row.firstIndex}일째)`),
+      );
+    }
     throw new Error(
       `되살린 거시의 적용률이 ${(coverage * 100).toFixed(1)}%입니다(90% 미만). ` +
         `나머지 ${summary.unknown}일은 상수 ${options.macroScore}로 떨어지므로 ` +

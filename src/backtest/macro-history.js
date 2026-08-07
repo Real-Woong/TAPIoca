@@ -217,6 +217,42 @@ export function compareSahmSources(vintages, asOfDates) {
   };
 }
 
+/**
+ * 적용률이 낮을 때 **어느 지표가 막고 있는지** 지표별로 찾습니다.
+ *
+ * 여섯 층 중 하나라도 비면 그날은 통째로 판정 불가라, 전체 적용률만 봐서는
+ * 무엇을 고쳐야 하는지 알 수 없습니다. 지표마다 "언제부터 쓸 수 있는가"를
+ * 내면 가장 늦게 시작하는 하나가 곧 병목입니다.
+ *
+ * 날짜가 정렬돼 있으므로 이분탐색으로 찾습니다.
+ */
+export function diagnoseCoverage(vintages, dates) {
+  const keys = [...new Set([...Object.keys(vintages.series ?? {}), "sahm"])];
+  const usableAt = (key, index) => {
+    const series = macroDataAsOf(vintages, dates[index]).series[key];
+    return (series?.observations?.length ?? 0) > 0;
+  };
+
+  const report = [];
+  for (const key of keys) {
+    // fedLegacy는 fedUpper를 메우는 재료일 뿐 직접 쓰이지 않습니다.
+    if (key === "fedLegacy") continue;
+    if (!usableAt(key, dates.length - 1)) {
+      report.push({ key, firstUsable: null, firstIndex: null });
+      continue;
+    }
+    let low = 0;
+    let high = dates.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (usableAt(key, middle)) high = middle;
+      else low = middle + 1;
+    }
+    report.push({ key, firstUsable: toDateString(dates[low]), firstIndex: low });
+  }
+  return report.sort((a, b) => (b.firstIndex ?? Infinity) - (a.firstIndex ?? Infinity));
+}
+
 /** 되살린 점수가 실제로 움직이는지 보는 요약입니다. 안 움직이면 신호가 아니라 상수입니다. */
 export function summarizeMacroTimeline(scores) {
   const known = scores.filter((score) => score !== null);
