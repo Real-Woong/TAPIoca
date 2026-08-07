@@ -10,9 +10,15 @@ import { createFakeBroker } from "../src/live/fake-broker.js";
 import { runLiveCycle } from "../src/live/live-cycle.js";
 import { ORDER_STATES } from "../src/live/order-lifecycle.js";
 import { readOrderEvents } from "../src/live/order-store.js";
+import { expectedPositions, readBaseline, restrictToManaged, saveBaseline } from "../src/live/position-baseline.js";
 import { getUsRegularSessionStatus } from "../src/market/us-market-session.js";
 
-const scratch = () => mkdtemp(path.join(tmpdir(), "live-cycle-"));
+/** 기준선을 깔아 둔 임시 디렉터리입니다. 실거래는 기준선 없이 시작할 수 없습니다. */
+async function scratch(baseline = {}) {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "live-cycle-"));
+  await saveBaseline(dataDir, baseline);
+  return dataDir;
+}
 const DECISION = { symbol: "VTI", side: "BUY", amountUsd: 5 };
 
 /**
@@ -106,14 +112,65 @@ test("보유 조회가 실패하면 대사를 통과로 보지 않는다", async
   assert.equal(result.reason, HALT_REASONS.RECONCILE_MISMATCH);
 });
 
-test("장부와 브로커가 어긋나면 멈춘다", async () => {
-  const dataDir = await scratch();
-  const broker = createFakeBroker({ positions: { VTI: 40 } });
+test("우리가 안 만든 변화가 생기면 멈춘다", async () => {
+  // 기준선 VTI 1.0주로 시작했는데 브로커에 1.5주가 있습니다. 우리 체결이 없으므로
+  // 누군가 손수 샀다는 뜻이고, 그 상태로 리밸런싱하면 오차를 키웁니다.
+  const dataDir = await scratch({ VTI: 1 });
+  const broker = createFakeBroker({ positions: { VTI: 1.5 } });
 
   const result = await runLiveCycle({
-    dataDir, broker, decisions: [DECISION], ledgerPositions: { VTI: 43.83 },
+    dataDir, broker, decisions: [DECISION], managedSymbols: ["VTI"],
   });
   assert.equal(result.reason, HALT_REASONS.RECONCILE_MISMATCH);
+});
+
+test("계좌에 원래 있던 자산은 대사를 깨뜨리지 않는다", async () => {
+  // 2026-08-07 실계좌 확인: 이미 평가 [가림]이 들어 있었다. 계좌 전체를 우리
+  // 것으로 보면 첫 사이클부터 영구 정지한다.
+  const dataDir = await scratch({ VTI: 8.2 });
+  const broker = createFakeBroker({ positions: { VTI: 8.2 } });
+
+  const result = await runLiveCycle({
+    dataDir, broker, decisions: [DECISION], managedSymbols: ["VTI"],
+  });
+  assert.equal(result.halted, false, "기준선과 같으면 통과한다");
+  assert.equal(result.submitted.length, 1);
+});
+
+test("우리가 관리하지 않는 종목은 사용자가 사고팔아도 무시한다", async () => {
+  const dataDir = await scratch({ VTI: 1 });
+  // 사용자가 QQQ를 샀습니다. 우리 워치리스트 밖이므로 우리 일이 아닙니다.
+  const broker = createFakeBroker({ positions: { VTI: 1, QQQ: 12 } });
+
+  const result = await runLiveCycle({
+    dataDir, broker, decisions: [DECISION], managedSymbols: ["VTI", "SCHD", "IWM"],
+  });
+  assert.equal(result.halted, false);
+});
+
+test("기준선이 없으면 실거래를 시작하지 않는다", async () => {
+  // 기준선이 없으면 계좌에 원래 있던 자산을 우리가 만든 것으로 오해합니다.
+  const dataDir = await mkdtemp(path.join(tmpdir(), "no-baseline-"));
+  const result = await runLiveCycle({
+    dataDir, broker: createFakeBroker(), decisions: [DECISION],
+  });
+  assert.equal(result.reason, HALT_REASONS.RECONCILE_MISMATCH);
+  assert.match(result.log.join(" "), /기준선이 없습니다/);
+});
+
+test("기준선은 덮어쓰지 않는다 — 잘못 산 것이 대사에서 사라진다", async () => {
+  const dataDir = await scratch({ VTI: 1 });
+  await assert.rejects(() => saveBaseline(dataDir, { VTI: 99 }), /이미 있습니다/);
+  assert.deepEqual((await readBaseline(dataDir)).positions, { VTI: 1 });
+});
+
+test("기대 보유는 기준선에 우리 체결을 더한 값이다", () => {
+  const realized = new Map([["VTI", { quantity: 0.034, usd: 10 }]]);
+  assert.deepEqual(expectedPositions({ VTI: 1, SCHD: 2 }, realized), { VTI: 1.034, SCHD: 2 });
+});
+
+test("관리 종목만 남긴다", () => {
+  assert.deepEqual(restrictToManaged({ VTI: 1, QQQ: 5 }, ["VTI"]), { VTI: 1 });
 });
 
 test("금액 주문 시간창이 닫혔으면 내지 않는다", async () => {

@@ -1,8 +1,9 @@
 import { readEmergencyStop } from "./emergency-stop.js";
 import { HALT_REASONS, planCycle } from "./execution-plan.js";
-import { buildOrders, reconcile, unresolvedOrders } from "./order-lifecycle.js";
+import { buildOrders, realizedFills, reconcile, unresolvedOrders } from "./order-lifecycle.js";
 import { OUTCOMES, classifyOutcome, resolveOrders } from "./order-outcome.js";
 import { appendOrderEvent, clientOrderId, readOrderEvents } from "./order-store.js";
+import { expectedPositions, readBaseline, restrictToManaged } from "./position-baseline.js";
 
 /**
  * 실거래 한 사이클입니다. PAPER 엔진이 낸 **의도**를 받아 실제 주문으로 옮깁니다.
@@ -26,8 +27,12 @@ export async function runLiveCycle({
   broker,
   // PAPER 엔진이 낸 의도입니다: [{ symbol, side, amountUsd }]
   decisions = [],
-  // 우리 장부가 생각하는 종목별 평가액입니다. 대사의 한쪽입니다.
-  ledgerPositions = {},
+  // 우리가 매매하는 종목입니다. 이 밖의 종목은 대사에서 뺍니다 — 사용자가
+  // 다른 것을 사고팔아도 우리 대사가 깨지면 안 됩니다.
+  managedSymbols = [],
+  // 수량 대사의 허용치입니다. 소수점 매매라 아주 작게 잡습니다. 금액 기준의
+  // 기본값(0.05)을 그대로 쓰면 VTI 15달러어치가 통과해 검사가 사실상 꺼집니다.
+  positionTolerance = 1e-6,
   session = { isOpen: true, isAmountOrderWindow: true },
   now = new Date(),
   maxInFlight,
@@ -56,9 +61,24 @@ export async function runLiveCycle({
 
   // 브로커 보유를 못 읽으면 대사를 할 수 없습니다. **못 한 대사를 통과로 보면
   // 안 됩니다** — 어긋난 채로 매매하지 않는 것이 이 단계의 목적입니다.
+  //
+  // 대사는 "브로커 보유 == 우리 장부"가 아니라 **"브로커 보유 == 기준선 + 우리가
+  // 체결시킨 것"**입니다. 계좌에 이미 다른 자산이 있기 때문입니다(2026-08-07 확인).
   let reconciliation;
   try {
-    reconciliation = reconcile(ledgerPositions, await broker.getPositions());
+    const baseline = await readBaseline(dataDir);
+    if (!baseline) {
+      throw new Error(
+        "보유 기준선이 없습니다. 실거래를 시작하기 전에 한 번 기록해야 합니다 — "
+        + "기준선이 없으면 계좌에 원래 있던 자산을 우리가 만든 것으로 오해합니다.",
+      );
+    }
+    const expected = expectedPositions(
+      restrictToManaged(baseline.positions, managedSymbols),
+      realizedFills(orders),
+    );
+    const actual = restrictToManaged(await broker.getPositions(), managedSymbols);
+    reconciliation = reconcile(expected, actual, { tolerance: positionTolerance });
   } catch (error) {
     reconciliation = {
       matched: false,
