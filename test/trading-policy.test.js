@@ -39,3 +39,24 @@ test("잘못된 설정값은 조용히 기본값으로 넘어가지 않고 실�
   assert.throws(() => loadTradingPolicy({ STOP_LOSS_RATE: "2" }), /0보다 크고 1 이하/);
   assert.throws(() => loadTradingPolicy({ MAX_HOLDING_DAYS: "1.5" }), /정수/);
 });
+
+/**
+ * 거시 층 가중치의 운영 기본값입니다.
+ *
+ * 2026-08-08 결정: 0. 근거는 STRATEGY.md ⑨⑩입니다. 기본값을 코드에 박은 이유는
+ * `.env` 한 줄에 의존하면 재배포 때 사라질 수 있기 때문입니다 —
+ * `TARGET_DRIFT_CAP`을 채택할 때와 같은 방식입니다.
+ *
+ * `paper-runner.js`는 최상위에서 실행되는 스크립트라 테스트에서 import할 수
+ * 없습니다. 그래서 소스를 읽어 기본값을 확인합니다. 값을 바꾸면 이 테스트가
+ * 먼저 깨지므로, 결정이 조용히 뒤집히지 않습니다.
+ */
+test("거시 가중치의 운영 기본값은 0이다", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile("src/paper/paper-runner.js", "utf8");
+  const match = /function readMacroWeight\(value\) \{\s*\n\s*if \(value === undefined \|\| value === ""\) return (\d+)/
+    .exec(source);
+
+  assert.ok(match, "readMacroWeight의 기본값을 찾지 못했다");
+  assert.equal(match[1], "0", "거시 층은 배분에 관여하지 않는다(2026-08-08 결정)");
+});

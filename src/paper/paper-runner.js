@@ -199,13 +199,24 @@ function readSentimentWeight(value) {
 }
 
 /**
- * 거시 층의 가중치입니다. 기본 1은 지금까지와 같은 동작입니다.
+ * 거시 층의 가중치입니다. **기본값은 0입니다** — 2026-08-08에 사람이 정했습니다.
  *
- * 0으로 두면 이 층이 배분에 관여하지 않지만 점수는 계속 계산·기록됩니다.
- * 판정 근거는 `STRATEGY.md` ⑨⑩입니다.
+ * 근거는 `STRATEGY.md` ⑨⑩입니다.
+ *   · 상수인 동안 이 층은 신호가 아니라 **노출 다이얼**이다 (Sharpe 부호일치 전부 ✗)
+ *   · 값이 움직이는 것은 **평균적으로 해롭다** — 2008 한 구간만 우위, 나머지 3구간 열세
+ *
+ * 그리고 남은 선택(어떤 상수로 둘 것인가)에서 0을 골랐습니다. −0.5는 오늘의
+ * FRED 값일 뿐이고, 20년 되살리기 평균은 +0.153이라 **분포의 비관 쪽 끝에
+ * 고정할 이유가 없었습니다.** 노출을 줄이고 싶다면 여섯 개 FRED 문턱의
+ * 부산물이 아니라 명시적인 손잡이로 정합니다.
+ *
+ * **점수는 계속 계산되고 기록됩니다.** 배분에만 관여하지 않습니다 — 폭락이
+ * 한 번 더 쌓이면 같은 질문을 다시 물을 수 있어야 합니다.
+ *
+ * 되돌리려면 `.env`에 `MACRO_SCORE_WEIGHT=1`을 넣습니다.
  */
 function readMacroWeight(value) {
-  if (value === undefined || value === "") return 1;
+  if (value === undefined || value === "") return 0;
   const weight = Number(value);
   if (!Number.isFinite(weight) || weight < 0 || weight > 1) {
     throw new Error("MACRO_SCORE_WEIGHT는 0~1 숫자여야 합니다.");
