@@ -17,6 +17,7 @@
     "paper:run": "node --env-file=.env src/paper/paper-runner.js",
     "stop": "node src/live/emergency-stop-cli.js",
     "live:probe": "node --env-file=.env src/live/live-probe.js",
+    "live:slippage": "node src/live/slippage-cli.js",
     "paper:status": "node --env-file=.env src/paper/paper-status.js",
     "paper:events": "node --env-file=.env src/paper/events-cli.js",
     "paper:signals": "node --env-file=.env src/paper/signal-history-cli.js",

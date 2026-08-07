@@ -8,6 +8,7 @@ import { readEmergencyStop } from "./emergency-stop.js";
 import { OUTCOMES, classifyOutcome, eventsFromLookup } from "./order-outcome.js";
 import { appendOrderEvent, clientOrderId, readOrderEvents } from "./order-store.js";
 import { buildOrders } from "./order-lifecycle.js";
+import { computeSlippage, extractQuote } from "./slippage.js";
 import { createTossBroker } from "./toss-broker.js";
 
 /**
@@ -168,10 +169,27 @@ async function main() {
     },
   });
 
+  // **주문 직전 호가를 찍습니다.** 이것이 슬리피지의 기준선이고, 지나가면
+  // 되살릴 수 없습니다. 조회가 실패해도 주문은 냅니다 — 측정을 위해 매매를
+  // 멈추는 것은 본말이 뒤바뀐 것입니다.
+  let quote = null;
+  let quoteRaw = null;
+  try {
+    quoteRaw = await client.getOrderbook(symbol);
+    quote = extractQuote(quoteRaw);
+    line("주문 직전 호가", `매수 ${quote.bid} / 매도 ${quote.ask} / 중간 ${quote.mid}`);
+  } catch (quoteError) {
+    line("주문 직전 호가", `조회 실패: ${quoteError.message}`);
+  }
+
   // **기록이 제출보다 먼저입니다.** 운영 사이클과 같은 순서를 여기서도 지킵니다.
   await appendOrderEvent(dataDir, {
     type: "PLANNED", clientOrderId: id, at: cycleAt,
     symbol, side, requestedUsd: amountUsd, source: "live-probe",
+    quote,
+    // **원본을 버리지 않습니다.** 파서가 틀렸어도 나중에 고쳐서 과거 측정을
+    // 다시 계산할 수 있습니다. 파싱보다 원본 보관이 중요합니다.
+    quoteRaw: quoteRaw ?? null,
   });
 
   let response = null;
@@ -221,10 +239,20 @@ async function main() {
       console.log("\n결말이 났습니다. 원장에 기록했습니다.");
 
       if (detail.filledUsd > 0 && detail.fees !== null) {
-        const bps = (detail.fees / detail.filledUsd) * 10_000;
-        console.log(`\n  실측 비용: ${bps.toFixed(1)}bp (백테스트 가정 10bp)`);
-        console.log("  ※ 수수료·세금만입니다. 슬리피지와 환전 비용은 여기에 없습니다.");
+        const feeBps = (detail.fees / detail.filledUsd) * 10_000;
+        console.log(`\n  수수료·세금: ${feeBps.toFixed(1)}bp`);
       }
+
+      const slip = computeSlippage({ side, quote, filledPrice: detail.filledPrice });
+      if (slip.slippageBps === null) {
+        console.log(`  슬리피지: 못 쟀습니다 (${slip.reason})`);
+      } else {
+        console.log(`  슬리피지: ${slip.slippageBps}bp` +
+          (slip.halfSpreadBps === null ? "" :
+            ` (반스프레드 ${slip.halfSpreadBps}bp + 초과 ${slip.beyondSpreadBps}bp)`));
+        console.log(`  중간가 $${quote.mid} → 체결가 $${detail.filledPrice}`);
+      }
+      console.log("\n  백테스트 가정은 전 구간 10bp입니다. 환전 비용은 아직 이 경로에 없습니다.");
       return;
     }
   }

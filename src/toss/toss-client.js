@@ -133,6 +133,21 @@ export class TossInvestClient {
     return this.#getValidToken();
   }
 
+  /**
+   * 호가입니다. **슬리피지의 기준선**이 여기서 나옵니다.
+   *
+   * 시장가 주문은 체결가를 우리가 정하지 못하므로, 주문 직전 중간가와 실제
+   * 체결가의 차이가 곧 우리가 치른 비용입니다. 그 기준선을 주문 전에 찍어
+   * 두지 않으면 나중에 되살릴 방법이 없습니다.
+   */
+  async getOrderbook(symbol) {
+    const normalized = String(symbol ?? "").trim();
+    if (!normalized) throw new Error("호가를 조회할 종목이 필요합니다.");
+    const query = new URLSearchParams({ symbols: normalized });
+    const response = await this.#request(`/api/v1/orderbook?${query}`);
+    return response?.result ?? response;
+  }
+
   /** 미국 장 운영 정보입니다. 조기 폐장일 판단에 씁니다. */
   async getUsMarketCalendar() {
     const response = await this.#request("/api/v1/market-calendar/US");

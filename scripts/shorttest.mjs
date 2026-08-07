@@ -34,6 +34,7 @@ const LABELS = {
   "live-safety.test.js": "긴급중지·호출제한",
   "toss-broker.test.js": "Toss 주문 어댑터",
   "live-cycle.test.js": "실거래 사이클",
+  "slippage.test.js": "슬리피지 측정",
   "macro-snapshot.test.js": "거시캐시",
   "market-sentiment.test.js": "감성결합",
   "sentiment-analyzer.test.js": "감성분석",
