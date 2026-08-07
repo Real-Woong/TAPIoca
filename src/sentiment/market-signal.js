@@ -53,6 +53,21 @@ export function combineMarketSignals(
   macroSignal,
   sentiment,
   {
+    /**
+     * 거시 층의 가중치입니다. 기본 1은 지금까지와 같은 동작입니다.
+     *
+     * **이 층만 손잡이가 없었습니다.** 추세·MACD·감성에는 있는데 거시에만 없어서,
+     * 범위가 −7~+3.5로 가장 큰 입력이면서 끄거나 줄일 방법이 없었습니다.
+     *
+     * 2026-08-07 판정으로 두 가지가 확정됐습니다(`STRATEGY.md` ⑨⑩).
+     *   · 상수인 동안 이 층은 신호가 아니라 **노출 다이얼**이다 (Sharpe 부호일치 전부 ✗)
+     *   · 값이 움직이는 것은 **평균적으로 해롭다** (2008 한 구간만 우위, 3/4 ✗)
+     *
+     * 0으로 두면 층이 배분에 관여하지 않지만 **점수는 계속 계산·기록됩니다.**
+     * 지우지 않는 이유는 진단을 남기기 위해서입니다 — 나중에 폭락이 한 번 더
+     * 쌓이면 같은 질문을 다시 물을 수 있어야 합니다.
+     */
+    macroWeight = 1,
     sentimentWeight = 2,
     trend = null,
     trendWeight = 1,
@@ -87,7 +102,8 @@ export function combineMarketSignals(
         sentiment.sentiment_score * sentiment.confidence * sentimentWeight * freshness.multiplier,
       )
     : 0;
-  const baseScore = round(Number(macroSignal.score) + sentimentContribution);
+  const macroContribution = round(Number(macroSignal.score) * macroWeight);
+  const baseScore = round(macroContribution + sentimentContribution);
   // Faber 이동평균 추세는 하락장 방어를 위한 1급 타이밍 신호로, MACD보다 큰 가중치를 씁니다.
   const usableTrend = Boolean(trend?.available);
   const trendContribution = usableTrend
@@ -157,7 +173,10 @@ export function combineMarketSignals(
     // 레이어별 상태를 항상 함께 넘깁니다. 예전에는 신호가 없으면 필드가 null이 되고
     // 보고서가 그 줄을 통째로 생략해서, 꺼진 신호를 알아챌 방법이 없었습니다.
     layers: [
-      layerStatus("FRED", "거시(FRED)", null, true, Number(macroSignal.score), null),
+      // 가중치 0이면 "꺼진 신호"로 드러납니다. 점수는 계속 계산되지만 배분에
+      // 관여하지 않는다는 것이 보고서에 보여야 합니다.
+      layerStatus("FRED", "거시(FRED)", macroWeight, macroWeight > 0, macroContribution,
+        macroWeight > 0 ? null : "WEIGHT_ZERO"),
       // 신선도로 기여도가 0이 된 경우도 "꺼진 신호"로 드러냅니다.
       layerStatus(
         "NEWS", "뉴스 감성", sentimentWeight,
@@ -172,6 +191,7 @@ export function combineMarketSignals(
     // 실제로 적용된 가중치를 결과에 실어 보냅니다. 기여도만 기록하면 나중에
     // "가중치를 바꿨다면 어땠을까"를 되돌릴 수 없습니다(기여도 = 원점수 × 신뢰도 × 가중치).
     weights: {
+      macro: macroWeight,
       sentiment: sentimentWeight,
       trend: trendWeight,
       macd: macdWeight,
@@ -179,6 +199,9 @@ export function combineMarketSignals(
       minExposure,
     },
     macroScore: macroSignal.score,
+    // 가중치를 곱한 뒤 실제로 점수에 들어간 값입니다. 원점수만 기록하면
+    // 나중에 "가중치를 바꿨다면 어땠을까"를 되돌릴 수 없습니다.
+    macroContribution,
     baseScore,
     sentimentContribution,
     sentiment: sentiment ?? null,

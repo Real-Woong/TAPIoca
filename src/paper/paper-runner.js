@@ -126,6 +126,7 @@ async function run() {
       return null;
     });
   const marketSignal = combineMarketSignals(macroSignal, sentiment, {
+    macroWeight: readMacroWeight(process.env.MACRO_SCORE_WEIGHT),
     sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
     trend,
     trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
@@ -193,6 +194,21 @@ function readSentimentWeight(value) {
   const weight = Number(value);
   if (!Number.isFinite(weight) || weight < 0 || weight > 5) {
     throw new Error("SENTIMENT_SCORE_WEIGHT는 0~5 숫자여야 합니다.");
+  }
+  return weight;
+}
+
+/**
+ * 거시 층의 가중치입니다. 기본 1은 지금까지와 같은 동작입니다.
+ *
+ * 0으로 두면 이 층이 배분에 관여하지 않지만 점수는 계속 계산·기록됩니다.
+ * 판정 근거는 `STRATEGY.md` ⑨⑩입니다.
+ */
+function readMacroWeight(value) {
+  if (value === undefined || value === "") return 1;
+  const weight = Number(value);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 1) {
+    throw new Error("MACRO_SCORE_WEIGHT는 0~1 숫자여야 합니다.");
   }
   return weight;
 }

@@ -336,3 +336,36 @@ test("변동성 목표가 낮을수록 익스포저가 작아진다", () => {
   assert.ok(multiplierFor(0.15) < multiplierFor(0.2));
   assert.equal(multiplierFor(0.2), 0.8);
 });
+
+test("거시 가중치 0이면 배분에 관여하지 않지만 점수는 남는다", () => {
+  const combined = combineMarketSignals({ ...macro, score: -0.5 }, null, {
+    macroWeight: 0, trendWeight: 0, volTarget: 0,
+  });
+
+  // 점수에서 빠졌으므로 중립 배분입니다.
+  assert.equal(combined.score, 0);
+  assert.equal(combined.targetAllocation.VTI, 0.7);
+  // 그래도 원점수는 기록됩니다 — 지우지 않는 이유는 진단을 남기기 위해서입니다.
+  assert.equal(combined.macroScore, -0.5);
+  assert.equal(combined.macroContribution, 0);
+
+  // 보고서가 "꺼진 신호"로 드러내야 합니다.
+  const fred = combined.layers.find((layer) => layer.key === "FRED");
+  assert.equal(fred.available, false);
+  assert.equal(fred.weight, 0);
+});
+
+test("거시 가중치 1이 지금까지의 동작이다", () => {
+  const combined = combineMarketSignals({ ...macro, score: -0.5 }, null, {
+    trendWeight: 0, volTarget: 0,
+  });
+  assert.equal(combined.score, -0.5);
+  assert.equal(combined.macroContribution, -0.5);
+});
+
+test("거시 가중치를 줄이면 그만큼만 반영된다", () => {
+  const combined = combineMarketSignals({ ...macro, score: -1 }, null, {
+    macroWeight: 0.5, trendWeight: 0, volTarget: 0,
+  });
+  assert.equal(combined.score, -0.5);
+});
