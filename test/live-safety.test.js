@@ -121,8 +121,8 @@ test("초당 한도를 넘기면 다음 창까지 기다린다", async () => {
   const clock = fakeClock();
   const limiter = createRateLimiter({ now: clock.now, sleep: clock.sleep });
 
-  // 주문 한도는 6이므로 일곱 번째에서 기다립니다.
-  for (let index = 0; index < 6; index += 1) await limiter.acquire("order");
+  // 주문 한도는 10이므로 열한 번째에서 기다립니다.
+  for (let index = 0; index < 10; index += 1) await limiter.acquire("order");
   assert.equal(clock.elapsed(), 0, "한도 안에서는 기다리지 않는다");
 
   await limiter.acquire("order");
@@ -134,7 +134,7 @@ test("카테고리마다 한도를 따로 센다", async () => {
   const limiter = createRateLimiter({ now: clock.now, sleep: clock.sleep });
 
   // 계좌 목록은 초당 1회입니다. 주문 한도를 다 써도 영향을 주지 않습니다.
-  for (let index = 0; index < 6; index += 1) await limiter.acquire("order");
+  for (let index = 0; index < 10; index += 1) await limiter.acquire("order");
   await limiter.acquire("accounts");
   assert.equal(clock.elapsed(), 0);
 
@@ -184,16 +184,25 @@ test("Headers 객체로 와도 읽는다", () => {
   assert.equal(limiter.currentLimits().order, 4);
 });
 
-test("한국시간 09:00~09:10에는 주문 한도가 3으로 좁아진다", async () => {
+test("09:00~09:10에 좁아지는 것은 ORDER_INFO 하나뿐이다", async () => {
   // KST 09:05 = UTC 00:05
   const clock = fakeClock(new Date("2026-08-07T00:05:00Z"));
   assert.equal(isNarrowWindow(clock.now()), true);
 
   const limiter = createRateLimiter({ now: clock.now, sleep: clock.sleep });
-  for (let index = 0; index < 3; index += 1) await limiter.acquire("order");
+  // 매수가능금액 등(ORDER_INFO)은 6 -> 3으로 좁아집니다.
+  for (let index = 0; index < 3; index += 1) await limiter.acquire("orderable");
   assert.equal(clock.elapsed(), 0);
-  await limiter.acquire("order");
-  assert.ok(clock.elapsed() >= 1000, "좁은 창에서는 3회가 상한이다");
+  await limiter.acquire("orderable");
+  assert.ok(clock.elapsed() >= 1000, "좁은 창에서 ORDER_INFO는 3회가 상한이다");
+});
+
+test("주문(ORDER)은 피크에도 좁아지지 않는다 — 가이드에 10/10으로 적혀 있다", async () => {
+  const clock = fakeClock(new Date("2026-08-07T00:05:00Z"));
+  const limiter = createRateLimiter({ now: clock.now, sleep: clock.sleep });
+
+  for (let index = 0; index < 10; index += 1) await limiter.acquire("order");
+  assert.equal(clock.elapsed(), 0, "피크에도 10회까지 그대로다");
 });
 
 test("좁은 창은 우리 매매 시간과 겹치지 않는다", () => {

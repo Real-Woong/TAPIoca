@@ -11,17 +11,25 @@
  * 낡은 값이 됩니다.
  */
 
-/** 문서상 기본값입니다. 응답 헤더가 오면 그쪽으로 갱신됩니다. */
+/**
+ * 가이드의 Rate Limits 표를 그대로 옮긴 기본값입니다(2026-08-07).
+ * 응답 헤더 `X-RateLimit-Limit`이 오면 그쪽으로 갱신됩니다.
+ *
+ * 이름은 우리 쪽 호출 종류이고 괄호가 가이드의 그룹명입니다.
+ */
 export const DEFAULT_LIMITS = Object.freeze({
-  order: 6,
-  orderQuery: 5,
-  orderable: 6,
-  holdings: 5,
-  accounts: 1,
+  auth: 5,          // AUTH
+  order: 10,        // ORDER — 주문 생성·정정·취소
+  orderQuery: 5,    // ORDER_HISTORY — 주문 목록·상세
+  orderable: 6,     // ORDER_INFO — 매수가능금액·매도가능수량·수수료
+  holdings: 5,      // ASSET
+  accounts: 1,      // ACCOUNT
+  marketInfo: 3,    // MARKET_INFO — 환율·장 운영 시간
 });
 
 /**
- * 한국시간 09:00~09:10에는 주문·주문정보가 초당 3회로 좁아집니다.
+ * 한국시간 09:00~09:10에 좁아지는 것은 **`ORDER_INFO` 하나뿐**입니다(6 → 3).
+ * `ORDER`는 피크에도 10/s 그대로이고 `ORDER_HISTORY`에는 피크 항목이 없습니다.
  *
  * 참고로 **우리 매매 시간과는 겹치지 않습니다.** 미국 정규장은 한국시간으로
  * 밤 22:30~새벽 06:00 구간이고, 금액 주문은 정규장에만 되기 때문입니다.
@@ -29,7 +37,7 @@ export const DEFAULT_LIMITS = Object.freeze({
  * 틀리지 않기 위해서입니다.
  */
 export const NARROW_WINDOW = Object.freeze({
-  categories: ["order", "orderQuery"],
+  categories: ["orderable"],
   limitPerSecond: 3,
   startMinuteKst: 9 * 60,
   endMinuteKst: 9 * 60 + 10,

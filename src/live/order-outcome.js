@@ -25,10 +25,46 @@ export const OUTCOMES = Object.freeze({
   NEEDS_LOOKUP: "NEEDS_LOOKUP",
 });
 
-/** 조회로 결말을 지어야 하는 토스 오류 코드입니다. */
+/**
+ * 조회로 결말을 지어야 하는 토스 오류 코드입니다(가이드 2026-08-07).
+ *
+ * 전부 **"주문이 이미 존재한다"**는 뜻입니다. 오류처럼 생겼지만 실은 가장 확실한
+ * 정보이고, 그래서 재제출하면 안 됩니다.
+ */
 export const LOOKUP_REQUIRED_CODES = Object.freeze([
-  "request-in-progress",
-  "idempotency-key-conflict",
+  "request-in-progress",        // 409 동일 clientOrderId 처리 중
+  "idempotency-key-conflict",   // 422 같은 clientOrderId로 다른 내용
+  "already-filled",             // 409 이미 체결됨
+  "already-canceled",           // 409 이미 취소됨
+  "already-modified",           // 409 이미 정정됨
+  "already-rejected",           // 409 이미 거부됨
+  "already-processing",         // 409 같은 주문의 정정·취소 처리 중
+]);
+
+/**
+ * 주문이 **접수되지 않았음이 확실한** 코드입니다. 다시 내도 중복이 되지 않습니다.
+ *
+ * 다만 "다시 내도 안전하다"가 "지금 다시 내라"는 뜻은 아닙니다. 대부분 원인이
+ * 사라져야 성공하므로(잔고 부족, 장 시간 아님, 계좌 제한) 상위에서 다음 사이클로
+ * 미룹니다. 여기서 구분하는 이유는 **미결로 남겨 매매를 멈출 필요가 없다**는 것
+ * 하나뿐입니다.
+ */
+export const DEFINITELY_NOT_PLACED_CODES = Object.freeze([
+  "invalid-request",                     // 400 파라미터가 잘못됨
+  "account-header-required",             // 400 계좌 헤더 누락
+  "unsupported-symbol",                  // 400
+  "insufficient-buying-power",           // 422 매수 가능 금액 부족
+  "insufficient-sellable-quantity",      // 422 매도 가능 수량 부족
+  "order-hours-closed",                  // 422 주문 접수 시간 아님
+  "amount-order-outside-regular-hours",  // 422 금액 주문 시간 아님
+  "stock-restricted",                    // 422 거래 제한 종목
+  "order-type-not-allowed",              // 422
+  "opposite-pending-order-exists",       // 422 같은 종목 반대 방향 미체결 존재
+  "prerequisite-required",               // 422 약관·교육·위험고지 미충족
+  "account-restricted",                  // 422 계좌 상태가 주문을 허용하지 않음
+  "order-limit-exceeded",                // 422 주문 설정 한도 초과
+  "market-not-supported-for-stock",      // 422
+  "unsupported-content-type",            // 415
 ]);
 
 /**
@@ -48,9 +84,19 @@ export function classifyOutcome({ response = null, error = null } = {}) {
         outcome: OUTCOMES.NEEDS_LOOKUP,
         mayResubmit: false,
         code,
-        why: code === "request-in-progress"
-          ? "같은 주문이 처리 중입니다. 기다렸다 조회하십시오."
-          : "같은 아이디로 다른 내용이 이미 접수돼 있습니다. 조회로 확인하십시오.",
+        why: `이미 접수된 주문이 있습니다(${code}). 조회로 결말을 지으십시오.`,
+      };
+    }
+
+    // 접수되지 않았음이 확실한 코드들입니다. 미결로 남겨 매매를 멈출 이유가 없습니다.
+    // **인증 실패(401)도 여기 넣지 않습니다** — 엣지에서 막힌 것이 확실해 보여도,
+    // 틀렸을 때의 대가가 중복 매수라 확신에 기대지 않습니다.
+    if (DEFINITELY_NOT_PLACED_CODES.includes(code)) {
+      return {
+        outcome: OUTCOMES.REJECTED,
+        mayResubmit: true,
+        code,
+        why: `${error.message} (${code})`,
       };
     }
 

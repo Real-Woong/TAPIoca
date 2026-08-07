@@ -326,3 +326,35 @@ test("조회 자체가 실패하면 미결로 남긴다 — 모르는 채로 매
   // 다음 사이클도 멈춥니다. 그것이 맞는 동작입니다.
   assert.equal(planCycle({ decisions: DECISIONS, orders }).reason, HALT_REASONS.UNRESOLVED_ORDERS);
 });
+
+test("이미 존재한다는 뜻의 코드는 모두 재제출 금지다", () => {
+  // 가이드의 409 계열입니다. 오류처럼 생겼지만 "주문이 있다"는 확실한 정보입니다.
+  for (const code of [
+    "already-filled", "already-canceled", "already-rejected",
+    "already-modified", "already-processing",
+  ]) {
+    const outcome = classifyOutcome({ error: Object.assign(new Error("x"), { code }) });
+    assert.equal(outcome.mayResubmit, false, code);
+  }
+});
+
+test("접수되지 않았음이 확실한 코드는 미결로 남기지 않는다", () => {
+  // 미결로 두면 매매가 멈추는데, 이 코드들은 주문이 없다는 것이 확실하므로
+  // 멈출 이유가 없습니다. 다음 사이클에 원인이 사라지면 다시 시도됩니다.
+  for (const code of [
+    "insufficient-buying-power", "order-hours-closed",
+    "amount-order-outside-regular-hours", "prerequisite-required",
+    "opposite-pending-order-exists", "account-restricted",
+  ]) {
+    const outcome = classifyOutcome({ error: Object.assign(new Error("x"), { code }) });
+    assert.equal(outcome.outcome, OUTCOMES.REJECTED, code);
+  }
+});
+
+test("인증 실패는 확실해 보여도 재제출 가능으로 두지 않는다", () => {
+  // 엣지에서 막힌 것이 거의 확실하지만, 틀렸을 때의 대가가 중복 매수다.
+  const outcome = classifyOutcome({
+    error: Object.assign(new Error("만료"), { code: "expired-token" }),
+  });
+  assert.equal(outcome.outcome, OUTCOMES.NEEDS_LOOKUP);
+});
