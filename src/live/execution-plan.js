@@ -32,6 +32,7 @@ export const HALT_REASONS = Object.freeze({
   UNRESOLVED_ORDERS: "UNRESOLVED_ORDERS",
   RECONCILE_MISMATCH: "RECONCILE_MISMATCH",
   MARKET_CLOSED: "MARKET_CLOSED",
+  AMOUNT_ORDER_WINDOW_CLOSED: "AMOUNT_ORDER_WINDOW_CLOSED",
 });
 
 /**
@@ -41,6 +42,7 @@ export const HALT_REASONS = Object.freeze({
  * @param {object} input.reconciliation  `reconcile()` 결과
  * @param {boolean} input.emergencyStop  긴급 중지 플래그
  * @param {boolean} input.marketOpen
+ * @param {boolean} input.amountOrderWindowOpen 금액 주문 접수 시간인가(정규장 종료 1시간 전까지)
  */
 export function planCycle({
   decisions = [],
@@ -48,6 +50,7 @@ export function planCycle({
   reconciliation = { matched: true, differences: [] },
   emergencyStop = false,
   marketOpen = true,
+  amountOrderWindowOpen = true,
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
 }) {
   // ① 긴급 중지가 가장 앞입니다. 다른 어떤 판단보다 먼저 이깁니다.
@@ -82,6 +85,15 @@ export function planCycle({
 
   if (!marketOpen) {
     return halt(HALT_REASONS.MARKET_CLOSED, "정규장이 아닙니다.");
+  }
+
+  // 시드가 작아 금액 주문만 쓰므로, 정규장이어도 이 창이 닫혔으면 낼 수 없습니다.
+  // 내봐야 `amount-order-outside-regular-hours`로 거부되고 호출 한도만 씁니다.
+  if (!amountOrderWindowOpen) {
+    return halt(
+      HALT_REASONS.AMOUNT_ORDER_WINDOW_CLOSED,
+      "금액 주문 접수 시간이 지났습니다(정규장 종료 1시간 전까지). 다음 거래일로 미룹니다.",
+    );
   }
 
   if (decisions.length === 0) {
