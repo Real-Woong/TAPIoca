@@ -144,6 +144,31 @@ const COMPARISONS = {
       { name: "−1.5 (RISK_OFF 바닥)", options: { macroScore: -1.5 } },
     ],
   },
+  // 거시 층이 **때를 맞추는가**를 재는 유일한 비교입니다.
+  //
+  // `macro`가 답한 것은 "상수 편향의 대가"였고, 답은 **신호가 아니라 노출
+  // 다이얼**이었습니다(2026-08-07: Sharpe 평평, 부호일치 전부 ✗). 남은 질문은
+  // 이것입니다 — 실제 FRED 값은 20년 동안 움직였고, **그 움직임이 때를 맞췄는가.**
+  // 2008년에 Sahm이 발동해 폭락 직전에 방어했다면 그것은 진짜 신호입니다.
+  //
+  // **되살린 거시는 반드시 상수와 노출을 맞춰 비교해야 합니다.** 되살린 점수가
+  // 평균 −0.8이면 노출이 낮아져 낙폭이 주는 것은 당연하고, 그것만 보면 타이밍
+  // 가치를 잰 것이 아니라 주식을 덜 든 것을 잰 것입니다. 그래서 상수 여러 개를
+  // 같은 표에 두고, **vintage의 평균 노출과 가장 가까운 상수**와 비교합니다.
+  //
+  // 판정 — 되살린 점수가 애초에 안 움직이면(표준편차 0) 거기서 끝입니다.
+  // 상수인 층은 타이밍 가치를 가질 수 없습니다. 움직였다면 같은 평균 노출의
+  // 상수보다 MDD·CDaR가 **4/4로** 낮아야 타이밍 가치를 주장할 수 있습니다.
+  macrotiming: {
+    label: "거시 되살리기 대 상수 (이 층이 때를 맞추는가)",
+    variants: [
+      { name: "되살린 거시 (vintage)", macro: "vintage" },
+      { name: "상수 0", options: { macroScore: 0 } },
+      { name: "상수 −0.5", options: { macroScore: -0.5 } },
+      { name: "상수 −1.0", options: { macroScore: -1 } },
+      { name: "상수 −1.5", options: { macroScore: -1.5 } },
+    ],
+  },
   // 지금까지의 모든 비교는 **노출을 맞춰놓고 낙폭을 쟀습니다.** 이 비교만 방향이
   // 반대입니다 — 낙폭을 벤치마크 수준까지 풀어주고 그동안 수익이 얼마나 오르는지 봅니다.
   //
@@ -336,8 +361,8 @@ async function runFetch() {
  * **조용히 상수로 돌아가지 않고 오류를 냅니다.** 되살린 줄 알았는데 상수로
  * 돈 결과만큼 해로운 것이 없습니다.
  */
-async function buildMacroTimeline(datasets) {
-  if (options.macroSource !== "vintage") {
+async function buildMacroTimeline(datasets, { required = false } = {}) {
+  if (options.macroSource !== "vintage" && !required) {
     return { scores: null, description: `거시 상수 점수 ${options.macroScore}` };
   }
   if (options.source !== "cache") {
@@ -387,19 +412,27 @@ async function runComparison() {
   }
 
   const datasets = await buildDatasets();
-  const macro = await buildMacroTimeline(datasets);
+  // 변형 중 하나라도 vintage를 요구하면 되살립니다. 전역 --macro-source는
+  // 모든 변형에 적용되므로 globalScores로 따로 들고 갑니다.
+  const needsVintage = comparison.variants.some((variant) => variant.macro === "vintage");
+  const macro = await buildMacroTimeline(datasets, { required: needsVintage });
+  macro.globalScores = options.macroSource === "vintage" ? macro.scores : null;
   console.log(`\n■ ${comparison.label}`);
   console.log(
     `  데이터: ${datasets.description} | 종목 ${options.symbols.join(",")} | ${macro.description}`,
   );
 
+  // 변형이 `macro: "vintage"`를 달면 그 변형만 되살린 점수를 씁니다. 전역
+  // 스위치로 두면 vintage와 상수를 한 표에 놓을 수 없고, 그러면 **노출을 맞춘
+  // 비교**가 불가능합니다 — 되살린 거시가 평균 −0.8이면 노출이 낮아져 낙폭이
+  // 주는 것은 당연하고, 그것만으로는 타이밍 가치를 잰 것이 아닙니다.
   const runVariant = (variant, sets) => sets.map((dataset) =>
     runBacktest({
       closesBySymbol: dataset.closesBySymbol,
       dates: dataset.dates ?? undefined,
       policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
       macroScore: options.macroScore,
-      macroScores: macro.scores,
+      macroScores: variant.macro === "vintage" ? macro.scores : macro.globalScores,
       signalOptions: variant.signal ?? {},
       ...(variant.options ?? {}),
     }).metrics,
