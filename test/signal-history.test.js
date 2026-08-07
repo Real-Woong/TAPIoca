@@ -243,3 +243,20 @@ test("소스 지문은 살아 있던 소스만 이름순으로 모은다", () =>
   // 죽은 GDELT는 빠지고 나머지가 이름순으로 붙는다.
   assert.equal(series[0].sourceFingerprint, "BLUESKY+FED_RSS");
 });
+
+test("판정 표본은 스냅샷이 아니라 거래일 수다", () => {
+  // 스냅샷은 하루에 여러 개가 쌓인다. 2026-08-08에 "스냅샷 10건"을 문턱(10거래일)을
+  // 채운 것으로 읽는 일이 있었다 - 실제로는 2거래일이었다.
+  const twoDaysTenSnapshots = [];
+  for (const date of ["2026-08-06", "2026-08-07"]) {
+    for (let hour = 13; hour < 18; hour += 1) {
+      twoDaysTenSnapshots.push(event(`${date}T${hour}:40:00Z`, {
+        fetchedAt: `${date}T${hour}:30:00Z`, score: -0.545,
+      }));
+    }
+  }
+
+  const series = extractSentimentSeries(twoDaysTenSnapshots);
+  assert.equal(series.length, 10, "스냅샷은 10건");
+  assert.equal(summarizeSentimentSeries(toDailySeries(series)).count, 2, "판정 표본은 2거래일");
+});

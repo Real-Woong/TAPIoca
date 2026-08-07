@@ -23,9 +23,15 @@ if (asJson) {
   );
 } else {
   const rows = daily ? history.daily : history.series;
+  // **판정에 쓰는 수를 맨 앞에 둡니다.** 예전에는 "감성 스냅샷 N건"이 먼저 나와서
+  // 스냅샷 10건을 문턱(10거래일)을 채운 것으로 읽기 쉬웠습니다. 스냅샷은 하루에
+  // 여러 개가 쌓이므로 둘은 전혀 다른 수입니다.
+  const tradingDays = history.summary.count ?? 0;
   console.log(
-    `감성 스냅샷 ${history.series.length}건 ` +
-      `(이벤트 ${history.eventCount}건 중 원본 신호 ${history.withSignals}건)\n`,
+    `판정 표본: 거래일 ${tradingDays}/10일` +
+      `${tradingDays >= 10 ? "" : ` (${10 - tradingDays}일 더 필요)`}\n` +
+      `  스냅샷 ${history.series.length}건 · ` +
+      `이벤트 ${history.eventCount}건 중 원본 신호 ${history.withSignals}건\n`,
   );
   console.log("수집시각              거래일        원점수   신뢰도  기사수  기여도  통합점수");
   for (const row of rows) {
