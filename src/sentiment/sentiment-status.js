@@ -42,12 +42,30 @@ try {
   // 소스 구성이 바뀌면 이 층이 재는 대상 자체가 달라지기 때문입니다.
   const health = result.sourceHealth;
   if (Array.isArray(health) && health.length > 0) {
+    // 소스별로 묶어서 봅니다. 피드가 열여덟 줄로 늘어지면 "무엇이 죽었는가"가
+    // 오히려 안 보입니다. 실패한 것만 상세를 함께 적습니다.
     console.log("\n■ 소스 상태");
+    const grouped = new Map();
     for (const item of health) {
+      if (!grouped.has(item.source)) grouped.set(item.source, { ok: 0, failed: [], articles: 0 });
+      const bucket = grouped.get(item.source);
+      if (item.ok) {
+        bucket.ok += 1;
+        bucket.articles += item.articles ?? 0;
+      } else {
+        bucket.failed.push(item);
+      }
+    }
+    for (const [source, bucket] of grouped) {
+      const total = bucket.ok + bucket.failed.length;
+      const mark = bucket.failed.length === 0 ? "✔" : bucket.ok > 0 ? "△" : "✖";
       console.log(
-        `  ${item.ok ? "✔" : "✖"} ${String(item.source).padEnd(12)} ` +
-          (item.ok ? `${item.articles}건` : item.error),
+        `  ${mark} ${source.padEnd(12)} ${bucket.ok}/${total} 피드 · ${bucket.articles}건`,
       );
+      for (const failure of bucket.failed) {
+        console.log(`      ✖ ${failure.error}`);
+        if (failure.detail) console.log(`        ${String(failure.detail).slice(0, 80)}`);
+      }
     }
     const dead = health.filter((item) => !item.ok).map((item) => item.source);
     if (dead.length > 0) {

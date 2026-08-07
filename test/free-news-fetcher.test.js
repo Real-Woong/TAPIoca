@@ -165,3 +165,22 @@ test("소스별로 성패를 남긴다 — 죽은 것만 적으면 원래 없었
   assert.equal(fed.ok, true, "살아 있는 소스도 함께 남는다");
   assert.ok(fed.articles > 0);
 });
+
+test("GDELT에는 다른 소스보다 긴 시한을 준다", async () => {
+  // 2026-08-08: 전부 10초로 두었더니 GDELT만 계속 죽었다. 차단된 것이 아니라
+  // 원래 느렸다 - RSS와 Bluesky는 정적 파일에 가깝지만 GDELT의 doc API는
+  // 넓은 OR 질의를 매번 훑는다. 같은 잣대를 대면 느린 소스만 골라 죽인다.
+  const deadlines = [];
+  const fetchImpl = async (url, options) => {
+    // AbortSignal의 남은 시간을 직접 읽을 수 없으므로 호출 순서로 구분한다.
+    deadlines.push({ url: String(url), hasSignal: Boolean(options?.signal) });
+    return { ok: true, status: 200, async json() { return { articles: [] }; }, async text() { return "<rss></rss>"; } };
+  };
+
+  await fetchGdeltNews({ fetchImpl });
+  await fetchOpinionRss("https://example.com/feed", { fetchImpl });
+
+  // 둘 다 시한이 걸려 있어야 한다. 없으면 한 소스가 사이클 전체를 멈출 수 있다.
+  assert.equal(deadlines.length, 2);
+  assert.ok(deadlines.every((call) => call.hasSignal), "모든 외부 호출에 시한이 있다");
+});

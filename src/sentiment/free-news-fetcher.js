@@ -109,13 +109,26 @@ export async function fetchFreeMarketNews({
 }
 
 /**
- * 모든 외부 호출에 시한을 겁니다.
+ * 외부 호출의 시한입니다.
  *
  * 예전에는 아무 데도 타임아웃이 없었습니다. `Promise.allSettled`는 전부 끝날
  * 때까지 기다리므로, 한 소스가 응답을 안 주면 **사이클 전체가 그만큼 멈춥니다.**
- * 15분마다 도는 실행기에서 그것은 곧 그 사이클을 통째로 잃는 것입니다.
+ *
+ * **소스마다 다른 시한을 줍니다.** 2026-08-08에 전부 10초로 두었더니 GDELT만
+ * 계속 죽었습니다 — 차단된 것이 아니라 **원래 느렸습니다.** RSS와 Bluesky는
+ * 정적 파일에 가까워 1초 안에 오지만, GDELT의 doc API는 넓은 OR 질의를 매번
+ * 훑으므로 10~30초가 걸립니다. 같은 잣대를 대면 느린 소스만 골라 죽입니다.
+ *
+ * 요청은 병렬이라 사이클이 기다리는 시간은 **가장 느린 하나**뿐입니다.
+ * 15분 주기에서 30초는 감당할 수 있고, 그 대가로 이벤트에 반응하는 유일한
+ * 소스를 살립니다.
  */
-function timeout(ms = 10_000) {
+const TIMEOUTS = Object.freeze({
+  default: 10_000,
+  gdelt: 30_000,
+});
+
+function timeout(ms = TIMEOUTS.default) {
   return { signal: AbortSignal.timeout(ms) };
 }
 
@@ -148,7 +161,9 @@ export async function fetchGdeltNews({
   url.searchParams.set("sort", "datedesc");
   url.searchParams.set("timespan", timespan);
   url.searchParams.set("maxrecords", String(Math.min(250, Math.max(1, Number(maxRecords) || 75))));
-  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
+  const response = await fetchImpl(url, {
+    headers: requestHeaders(), ...timeout(TIMEOUTS.gdelt),
+  });
   if (!response.ok) throw new Error(`GDELT 요청 실패 (${response.status})`);
   const body = await response.json();
   return (Array.isArray(body?.articles) ? body.articles : []).flatMap((article) => {
