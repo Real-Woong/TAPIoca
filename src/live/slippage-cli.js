@@ -97,6 +97,15 @@ if (summary.count === 0) {
   console.log("  ※ 환전 비용은 아직 이 측정에 없습니다.");
 }
 
+/**
+ * 숫자를 표에 씁니다. **null은 0이 아니라 하이픈입니다.**
+ *
+ * `Number(null)`은 0이고 `Number.isFinite(0)`은 참이라, 그냥 넘기면 못 잰 값이
+ * 0.00으로 찍힙니다. 그러면 "쟀는데 0이었다"와 "못 쟀다"가 표에서 같아지고,
+ * 그 둘을 구분하려고 애써 null을 쓴 것이 무의미해집니다.
+ */
 function fmt(value, width) {
-  return (Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "-").padStart(width);
+  if (value === null || value === undefined || value === "") return "-".padStart(width);
+  const number = Number(value);
+  return (Number.isFinite(number) ? number.toFixed(2) : "-").padStart(width);
 }

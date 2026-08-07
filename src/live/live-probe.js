@@ -179,7 +179,13 @@ async function main() {
     quote = extractQuote(quoteRaw);
     line("주문 직전 호가", `매수 ${quote.bid} / 매도 ${quote.ask} / 중간 ${quote.mid}`);
   } catch (quoteError) {
+    // 토스 오류 응답에는 `code`와 `data.field`/`allowedValues`가 들어 있습니다.
+    // 그것을 버리면 무엇이 잘못됐는지 추측하게 됩니다.
     line("주문 직전 호가", `조회 실패: ${quoteError.message}`);
+    if (quoteError.code) line("", `코드: ${quoteError.code}`);
+    if (quoteError.details ?? quoteError.data) {
+      line("", `상세: ${JSON.stringify(quoteError.details ?? quoteError.data)}`);
+    }
   }
 
   // **기록이 제출보다 먼저입니다.** 운영 사이클과 같은 순서를 여기서도 지킵니다.

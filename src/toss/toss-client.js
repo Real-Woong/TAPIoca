@@ -143,9 +143,22 @@ export class TossInvestClient {
   async getOrderbook(symbol) {
     const normalized = String(symbol ?? "").trim();
     if (!normalized) throw new Error("호가를 조회할 종목이 필요합니다.");
-    const query = new URLSearchParams({ symbols: normalized });
-    const response = await this.#request(`/api/v1/orderbook?${query}`);
-    return response?.result ?? response;
+
+    // 파라미터 이름을 문서에서 확인하지 못했습니다. `symbols`로 보냈더니
+    // `invalid-request`가 났으므로(2026-08-07) 단수형을 먼저 시도하고, 실패하면
+    // 복수형으로 한 번 더 갑니다. **둘 다 실패하면 마지막 오류를 그대로 던져**
+    // 어느 필드가 문제인지 호출부가 볼 수 있게 합니다.
+    let lastError = null;
+    for (const parameter of ["symbol", "symbols"]) {
+      try {
+        const query = new URLSearchParams({ [parameter]: normalized });
+        const response = await this.#request(`/api/v1/orderbook?${query}`);
+        return response?.result ?? response;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 
   /** 미국 장 운영 정보입니다. 조기 폐장일 판단에 씁니다. */

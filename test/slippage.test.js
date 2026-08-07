@@ -104,3 +104,30 @@ test("못 잰 건은 세지 않는다", () => {
 test("측정이 하나도 없으면 빈 요약이다", () => {
   assert.equal(summarizeSlippage([]).count, 0);
 });
+
+test("못 잰 값은 표에서 0이 아니라 하이픈이어야 한다", async () => {
+  // 2026-08-07 실측에서 표가 못 잰 건을 0.00bp로 보여줬다. Number(null)이 0이고
+  // Number.isFinite(0)이 참이라 그대로 통과했기 때문이다. 그러면 "쟀는데 0"과
+  // "못 쟀다"가 표에서 같아지고, 둘을 구분하려고 null을 쓴 것이 무의미해진다.
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const nodePath = await import("node:path");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+
+  const dataDir = await mkdtemp(nodePath.join(tmpdir(), "slip-cli-"));
+  await writeFile(
+    nodePath.join(dataDir, "live-orders.jsonl"),
+    [
+      { type: "PLANNED", clientOrderId: "A", at: "2026-08-07T13:34:00Z", symbol: "SCHD", side: "BUY", requestedUsd: 2, quote: null },
+      { type: "FILL", clientOrderId: "A", filledUsd: 1.99, filledQuantity: 0.0594, filledPrice: 33.52, terminal: true },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n",
+  );
+
+  const { stdout } = await promisify(execFile)(
+    process.execPath, ["src/live/slippage-cli.js"], { env: { ...process.env, PAPER_DATA_DIR: dataDir } },
+  );
+
+  assert.doesNotMatch(stdout, /0\.00bp/, "못 잰 값이 0.00bp로 찍히면 안 된다");
+  assert.match(stdout, /측정 가능 0건/);
+});
