@@ -189,8 +189,27 @@ function readCsv(value) {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
 }
 
+/**
+ * 감성 층의 가중치입니다. **판정이 끝날 때까지 0입니다** (2026-08-08 결정).
+ *
+ * 거시(⑫)와 달리 이것은 **최종 결정이 아니라 보류**입니다. 판정은 10거래일
+ * 표본으로 8/20 전후에 하고, 그때 값을 정합니다.
+ *
+ * 0으로 두는 이유 둘:
+ *
+ * 1. **미검증 층이 매매를 바꾸고 있었다.** 신호인지 잡음인지 모르는 채로
+ *    노출을 약 6.6%p 깎고 있었다.
+ * 2. **백테스터는 감성을 아예 안 넣는다**(`backtest-engine.js`가 `null`을
+ *    넘긴다). 즉 우리가 잰 모든 숫자(MDD 29.9%, CAGR 5.99%, 노출 75.6%)는
+ *    감성이 없는 스택의 것이다. 감성을 얹은 채 돌리면 **측정한 적 없는 것을
+ *    돌리는 것**이 된다. 0으로 두면 실운영이 백테스트와 정확히 일치한다.
+ *
+ * **표본 수집에는 지장이 없다.** 원점수는 가중치와 무관하게 이벤트 로그에
+ * 남고(`market-signal.js`가 `sentiment`를 그대로 실어 보낸다), 판정은 그
+ * 원점수의 자기상관으로 한다.
+ */
 function readSentimentWeight(value) {
-  if (value === undefined || value === "") return 2;
+  if (value === undefined || value === "") return 0;
   const weight = Number(value);
   if (!Number.isFinite(weight) || weight < 0 || weight > 5) {
     throw new Error("SENTIMENT_SCORE_WEIGHT는 0~5 숫자여야 합니다.");

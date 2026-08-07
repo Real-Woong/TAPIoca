@@ -60,3 +60,19 @@ test("거시 가중치의 운영 기본값은 0이다", async () => {
   assert.ok(match, "readMacroWeight의 기본값을 찾지 못했다");
   assert.equal(match[1], "0", "거시 층은 배분에 관여하지 않는다(2026-08-08 결정)");
 });
+
+/**
+ * 감성 층 가중치의 운영 기본값입니다.
+ *
+ * 2026-08-08: 0. **거시와 달리 최종 결정이 아니라 판정 전까지의 보류**입니다.
+ * 10거래일 표본으로 8/20 전후에 판정하고 그때 값을 정합니다.
+ */
+test("감성 가중치의 운영 기본값은 판정 전까지 0이다", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile("src/paper/paper-runner.js", "utf8");
+  const match = /function readSentimentWeight\(value\) \{\s*\n\s*if \(value === undefined \|\| value === ""\) return (\d+)/
+    .exec(source);
+
+  assert.ok(match, "readSentimentWeight의 기본값을 찾지 못했다");
+  assert.equal(match[1], "0", "미검증 층은 매매를 바꾸지 않는다(2026-08-08, 판정 전까지)");
+});

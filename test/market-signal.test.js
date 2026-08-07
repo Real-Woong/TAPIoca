@@ -369,3 +369,21 @@ test("거시 가중치를 줄이면 그만큼만 반영된다", () => {
   });
   assert.equal(combined.score, -0.5);
 });
+
+test("가중치가 0이어도 감성 원점수는 그대로 실려 나간다", () => {
+  // 표본 수집이 여기에 달려 있습니다. 가중치를 0으로 두고도 판정을 할 수 있는
+  // 이유는 원점수가 이벤트 로그에 남기 때문이고, 그것이 깨지면 2주를 버립니다.
+  const combined = combineMarketSignals(macro, {
+    sentiment_score: -0.343,
+    confidence: 0.774,
+    summary_reason: "",
+    bullish_signals: [],
+    bearish_signals: [],
+  }, { sentimentWeight: 0, trendWeight: 0, volTarget: 0 });
+
+  assert.equal(combined.sentimentContribution, 0, "배분에는 관여하지 않는다");
+  assert.equal(combined.score, 0);
+  // 그래도 원점수는 남는다 — 이벤트 로그가 여기서 읽는다.
+  assert.equal(combined.sentiment.sentiment_score, -0.343);
+  assert.equal(combined.sentiment.confidence, 0.774);
+});
