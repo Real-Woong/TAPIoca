@@ -20,10 +20,10 @@ import { allocationForScore, regimeForScore } from "../src/sentiment/market-sign
  * 않는 것은 **이미 밴드를 넘어 세워진 포지션의 해체**입니다. 절벽은 배분 층에서
  * 사라진 게 아니라 체결 층으로 옮겨갔습니다.
  *
- * **주의: 이 파일은 현재 동작을 고정하는 재현 테스트입니다. 바라는 동작이 아닙니다.**
- * IWM 6%가 남는 것을 단언하는 것은 그게 옳아서가 아니라, 고쳤을 때 무엇이
- * 바뀌는지 눈에 보이게 하기 위해서입니다. 밴드를 고치면 이 단언들은 뒤집혀야
- * 합니다 — 조용히 통과하면 안 고쳐진 것입니다.
+ * **2026-08-07에 `TARGET_DRIFT_CAP = 2`를 기본값으로 켜서 고쳤습니다.**
+ * 아래 앞쪽 테스트들은 고치기 전 동작을 `TARGET_DRIFT_CAP: "off"`로 명시적으로
+ * 되살려 재현합니다. 지운 것이 아니라 남긴 것은, 무엇을 왜 고쳤는지가 고친
+ * 사실보다 오래 필요하기 때문입니다. 뒤쪽 테스트들이 기본값의 동작을 단언합니다.
  *
  * 이것은 통계가 아니라 코드의 결정론적 성질이므로 표본 크기와 무관하게 참입니다.
  * 그래서 백테스트가 아니라 테스트로 잽니다. 백테스터는 감성 층을 null로 넣으므로
@@ -110,12 +110,15 @@ const WARMUP = [25, 0];
 // IWM 목표가 0 → 6%가 되고, 결손 6%가 밴드 5%를 넘어 매수가 실행됩니다.
 const SPIKE = [3, 0.6];
 
-test("스파이크로 세운 포지션은 목표가 1/4로 내려가도 스스로 빠지지 않는다", () => {
-  const before = walk([WARMUP]);
+// 2026-08-07 이전의 동작입니다. 목표 대비 상한을 끄면 자산 대비 대칭 밴드만 남습니다.
+const BEFORE_FIX = { TARGET_DRIFT_CAP: "off" };
+
+test("[고치기 전] 스파이크로 세운 포지션은 목표가 1/4로 내려가도 스스로 빠지지 않는다", () => {
+  const before = walk([WARMUP], BEFORE_FIX);
   assert.equal(before.weightOf("IWM"), 0, "워밍업 구간에서는 IWM을 들지 않는다");
 
   // 2026-08-06 실제 통합 점수입니다. IWM 목표는 6% → 1.6%로 내려갑니다.
-  const after = walk([WARMUP, SPIKE, [40, 0.156]]);
+  const after = walk([WARMUP, SPIKE, [40, 0.156]], BEFORE_FIX);
 
   const target = allocationForScore(0.156).IWM;
   assert.equal(target, 0.016);
@@ -139,15 +142,15 @@ test("스파이크로 세운 포지션은 목표가 1/4로 내려가도 스스�
   );
 });
 
-test("되돌림 반응은 연속이 아니라 계단이다 — 점수 0.01 차이가 비중 6%p를 가른다", () => {
+test("[고치기 전] 되돌림 반응은 연속이 아니라 계단이다 — 점수 0.01 차이가 비중 6%p를 가른다", () => {
   // 배분 층은 점수에 대해 연속입니다: 목표는 0.90% → 1.00%로 0.1%p만 움직입니다.
   const lowTarget = allocationForScore(0.09).IWM;
   const highTarget = allocationForScore(0.0995).IWM;
   assert.ok(highTarget - lowTarget < 0.002, "목표 비중 차이는 0.2%p 미만이다");
 
   // 체결 층은 불연속입니다: 전량 매도와 전량 유지로 갈립니다.
-  const low = walk([WARMUP, SPIKE, [40, 0.09]]);
-  const high = walk([WARMUP, SPIKE, [40, 0.0995]]);
+  const low = walk([WARMUP, SPIKE, [40, 0.09]], BEFORE_FIX);
+  const high = walk([WARMUP, SPIKE, [40, 0.0995]], BEFORE_FIX);
 
   assert.equal(low.weightOf("IWM"), 0, "점수 0.09에서는 전량 정리된다");
   assert.ok(
@@ -160,17 +163,60 @@ test("되돌림 반응은 연속이 아니라 계단이다 — 점수 0.01 차�
   assert.equal(high.sellCount("IWM"), 0);
 });
 
-test("잔여물은 목표가 정확히 0이 될 때만 풀린다", () => {
+test("[고치기 전] 잔여물은 목표가 정확히 0이 될 때만 풀린다", () => {
   // 점수가 0 이하로 내려가야 IWM 목표가 0이 되고, 그제야 초과분이 밴드를 넘습니다.
-  const released = walk([WARMUP, SPIKE, [40, 0.156], [1, 0]]);
+  const released = walk([WARMUP, SPIKE, [40, 0.156], [1, 0]], BEFORE_FIX);
 
   assert.equal(released.weightOf("IWM"), 0);
   assert.equal(released.sellCount("IWM"), 1, "목표가 0이 된 첫 사이클에 한 번에 정리된다");
 
   // 즉 잠금이 풀리는 조건은 "신호가 약해짐"이 아니라 "신호가 부호를 바꿈"입니다.
   // 0과 0.156 사이 어디에 머물러도 6%는 그대로 남습니다.
-  const stillStuck = walk([WARMUP, SPIKE, [40, 0.156], [40, 0.11]]);
+  const stillStuck = walk([WARMUP, SPIKE, [40, 0.156], [40, 0.11]], BEFORE_FIX);
   assert.ok(Math.abs(stillStuck.weightOf("IWM") - 0.06) < 0.0005);
+  assert.equal(stillStuck.sellCount("IWM"), 0);
+});
+
+/**
+ * ── 고친 뒤: 기본값이 하는 일 ─────────────────────────────────────────────
+ *
+ * `TARGET_DRIFT_CAP = 2`가 기본값입니다. 아래 테스트들은 손잡이를 넘기지 않으므로
+ * 운영과 같은 설정을 밟습니다.
+ */
+
+test("[기본값] 되돌림이 오면 잔여물을 덜어내고 목표에 안착한다", () => {
+  const target = allocationForScore(0.156).IWM;
+  const after = walk([WARMUP, SPIKE, [40, 0.156]]);
+
+  assert.ok(
+    Math.abs(after.weightOf("IWM") - target) < 0.0008,
+    `IWM이 목표 ${target}에 안착해야 한다 — 실제 ${after.weightOf("IWM")}`,
+  );
+  assert.equal(after.sellCount("IWM"), 1, "되돌림 구간에 한 번 덜어낸다");
+});
+
+test("[기본값] 목표가 0으로 가는 경로도 그대로 동작한다", () => {
+  const released = walk([WARMUP, SPIKE, [40, 0.156], [1, 0]]);
+  assert.equal(released.weightOf("IWM"), 0);
+});
+
+test("[기본값] 발동 경계는 목표 2% 부근이다 — 그 위는 여전히 밴드에 갇힌다", () => {
+  // 문턱은 `초과분 ≥ 목표 × 배수`이지 `보유 ≥ 목표 × 배수`가 아닙니다.
+  // 배수 2에서 매도 조건은 (보유 − 목표) ≥ 2 × 목표, 즉 보유 ≥ 목표 × 3입니다.
+  // 보유가 6%로 고정된 이 경로에서는 목표가 2%를 넘는 순간 조건이 깨집니다.
+  //
+  // **이것은 develope-log/2026-08-07의 "교차점 = 밴드/(배수−1) = 5%"와 다릅니다.**
+  // 그 공식은 `보유 ≥ 목표 × 배수` 의미를 가정한 것이고, 코드는 초과분 기준입니다.
+  // 실제 교차점은 밴드 / 배수 = 2.5%이며, 이 경로의 실측 경계는 2% 부근입니다.
+  // 08-05 IWM은 목표가 1.6%로 되돌아와 간신히 이 안에 들어왔습니다.
+  const fixed = walk([WARMUP, SPIKE, [40, 0.156]]);
+  assert.ok(Math.abs(fixed.weightOf("IWM") - 0.016) < 0.0008, "목표 1.6%는 고쳐진다");
+
+  const stillStuck = walk([WARMUP, SPIKE, [40, 0.25]]);
+  assert.ok(
+    Math.abs(stillStuck.weightOf("IWM") - 0.06) < 0.0008,
+    `목표 2.5%는 아직 6%에 갇혀 있다 — 실제 ${stillStuck.weightOf("IWM")}`,
+  );
   assert.equal(stillStuck.sellCount("IWM"), 0);
 });
 
@@ -186,11 +232,12 @@ test("잔여물은 목표가 정확히 0이 될 때만 풀린다", () => {
  * 여기서 재는 것은 "잔여물이 빠지는가"와 "신호가 진동할 때 무엇을 하는가"입니다.
  * 15년 회전율 대가는 `npm run backtest -- --compare bandshape`가 잽니다.
  */
+// ⓐ·ⓑ는 ⓒ의 대안이므로 각각 단독으로 재야 합니다. ⓒ가 기본값이 된 뒤로는
+// 명시적으로 꺼주지 않으면 두 규칙이 겹쳐 무엇이 한 일인지 갈리지 않습니다.
 const CANDIDATES = {
-  "ⓐ 최소포지션": { MIN_POSITION_RATE: "0.05" },
-  "ⓑ 이탈밴드": { REBALANCE_EXIT_BAND_RATE: "0.02" },
-  // 배수 2인 이유는 §"큰 포지션의 밴드를 건드리지 않는다" 테스트에 있습니다.
-  // 교차점 = 밴드 / (배수 − 1) 이므로 2에서만 교차점이 밴드 5%와 일치합니다.
+  "ⓐ 최소포지션": { MIN_POSITION_RATE: "0.05", ...BEFORE_FIX },
+  "ⓑ 이탈밴드": { REBALANCE_EXIT_BAND_RATE: "0.02", ...BEFORE_FIX },
+  // 채택된 값입니다. 문턱은 초과분 기준이라 교차점은 밴드 / 배수 = 2.5%입니다.
   "ⓒ 목표대비": { TARGET_DRIFT_CAP: "2" },
 };
 
@@ -223,11 +270,11 @@ test("ⓐ는 감성이 진동할 때 잔여물 대신 회전율을 만든다", (
   const oscillation = [WARMUP];
   for (let i = 0; i < 5; i += 1) oscillation.push([5, 0.6], [5, 0.156]);
 
-  const current = walk(oscillation);
+  const current = walk(oscillation, BEFORE_FIX);
   const minPosition = walk(oscillation, CANDIDATES["ⓐ 최소포지션"]);
   const driftCap = walk(oscillation, CANDIDATES["ⓒ 목표대비"]);
 
-  // 지금은 진동을 아예 무시합니다 — 한 번 사고 끝. 잔여물의 대가가 이것입니다.
+  // 고치기 전에는 진동을 아예 무시했습니다 — 한 번 사고 끝. 잔여물의 대가입니다.
   assert.equal(current.buyCount("IWM"), 1);
   assert.equal(current.sellCount("IWM"), 0);
 
@@ -254,17 +301,20 @@ test("ⓒ는 큰 포지션의 밴드를 건드리지 않는다 — ⓑ와 갈리
   const absoluteBandUsd = bandRate * equityUsd;
   const driftCap = 2;
 
-  // ⓒ의 이탈 문턱 = min(자산×5%, 목표×(배수−1)).
+  // ⓒ의 이탈 문턱 = min(자산×5%, 목표×배수)입니다 — `paper-engine.js`의
+  // `exitBand()`를 그대로 옮긴 식이고, 비교 대상은 **보유액이 아니라 초과분**입니다.
   // 두 항이 같아지는 지점이 교차점이고, 그 아래 목표에서만 상대 규칙이 이깁니다.
-  //   목표 × (배수−1) = 자산 × 밴드  →  교차 비중 = 밴드 / (배수−1)
-  // 배수 2에서 교차점은 정확히 밴드와 같은 5%가 됩니다. 즉 **목표 전체가 밴드
-  // 안에 들어가는 종목만** 좁아집니다. 배수를 1.25로 두면 교차점이 20%로 올라가
-  // SCHD(19.5%)까지 끌려들어옵니다 — 손대지 않기로 한 곳입니다.
-  const crossoverWeight = bandRate / (driftCap - 1);
-  assert.equal(crossoverWeight, bandRate);
+  //   목표 × 배수 = 자산 × 밴드  →  교차 비중 = 밴드 / 배수
+  //
+  // **develope-log/2026-08-07은 이 식을 `밴드/(배수−1)`로 적어 교차점을 5%라고
+  // 했는데, 그것은 `보유 ≥ 목표×배수` 의미를 가정한 값이라 코드와 다릅니다.**
+  // 실제 교차점은 2.5%입니다. 결론(VTI·SCHD의 밴드는 안 건드린다)은 같지만
+  // 좁아지는 구간은 설계 의도의 절반입니다.
+  const crossoverWeight = bandRate / driftCap;
+  assert.equal(crossoverWeight, 0.025);
 
   const thresholdFor = (weight) =>
-    Math.max(1, Math.min(absoluteBandUsd, (driftCap - 1) * weight * equityUsd));
+    Math.max(1, Math.min(absoluteBandUsd, driftCap * weight * equityUsd));
 
   // VTI·SCHD는 자산 대비 밴드가 여전히 먼저 걸립니다.
   // 2026-08-07 `--compare band`에서 0.05로 확정한 값이 그대로 남습니다.
