@@ -72,6 +72,55 @@ export function toYearOverYear(observations) {
   return result;
 }
 
+/**
+ * 실업률에서 Sahm 경기침체 지표를 직접 계산합니다.
+ *
+ *   Sahm = (실업률 3개월 이동평균) − (직전 12개월 중 3개월 이동평균의 최저값)
+ *
+ * **왜 직접 계산하는가** — `SAHMREALTIME`은 Claudia Sahm이 규칙을 발표한 2019년에
+ * 만들어져 개정 이력이 그때부터만 있습니다(vintage 82개). 그래서 그 시리즈에
+ * 기대면 되살릴 수 있는 구간이 2019년 이후로 잘리고, **정작 확인하고 싶은
+ * 2008년이 통째로 빠집니다.**
+ *
+ * 규칙 자체는 실업률 하나만 있으면 계산되고, UNRATE는 vintage가 797개로 훨씬
+ * 깁니다. 그리고 이쪽이 원래 정의에 더 맞습니다 — `SAHMREALTIME`의 "real-time"이
+ * 뜻하는 것이 **개정 전 실업률로 계산한다**는 것이고, vintage로 하는 계산이
+ * 정확히 그것입니다.
+ *
+ * 관측은 날짜 내림차순(월간)이므로 0번이 최신입니다. 3개월 평균 13개가 필요하니
+ * 최소 15개 관측이 있어야 한 점이 나옵니다.
+ */
+export function computeSahm(unemploymentObservations) {
+  const observations = unemploymentObservations ?? [];
+  const movingAverage3 = [];
+  for (let index = 0; index + 2 < observations.length; index += 1) {
+    movingAverage3.push(
+      (observations[index].value + observations[index + 1].value + observations[index + 2].value) / 3,
+    );
+  }
+
+  const result = [];
+  for (let index = 0; index + 12 < movingAverage3.length; index += 1) {
+    const trailingLow = Math.min(...movingAverage3.slice(index + 1, index + 13));
+    result.push({
+      ...observations[index],
+      value: round2(movingAverage3[index] - trailingLow),
+    });
+  }
+  return result;
+}
+
+/**
+ * 2008-12-16부터 연준이 목표를 "범위"로 바꾸면서 시리즈가 갈렸습니다.
+ * 그 전 구간은 단일 목표(`DFEDTAR`)로 채워 이어 붙입니다. 겹치는 날짜가 없으므로
+ * 합친 뒤 내림차순으로 다시 정렬하면 하나의 연속된 시계열이 됩니다.
+ */
+function spliceFedTarget(modern, legacy) {
+  const seen = new Set(modern.map((item) => item.date));
+  return [...modern, ...legacy.filter((item) => !seen.has(item.date))]
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 /** `evaluateMacroRegime`이 기대하는 `{ series: { key: { observations } } }` 모양으로 만듭니다. */
 export function macroDataAsOf(vintages, asOfDate) {
   const series = {};
@@ -84,6 +133,32 @@ export function macroDataAsOf(vintages, asOfDate) {
       observations: item.transform === "pc1" ? toYearOverYear(known) : known,
     };
   }
+
+  // 2008년 이전을 되살리려면 두 곳을 메워야 합니다. 둘 다 지표가 그때 없었을
+  // 뿐이고, 그 시점에 알 수 있었던 정보만으로 채웁니다.
+  const legacy = series.fedLegacy?.observations ?? [];
+  if (legacy.length > 0) {
+    for (const key of ["fedUpper", "fedLower"]) {
+      if (series[key]) {
+        series[key] = {
+          ...series[key],
+          observations: spliceFedTarget(series[key].observations, legacy),
+        };
+      }
+    }
+  }
+
+  // Sahm은 항상 직접 계산합니다. 2019년을 경계로 출처가 바뀌면 그 지점에서
+  // 값의 성격이 달라져 국면 비교가 오염됩니다.
+  if (series.unemployment) {
+    series.sahm = {
+      ...(series.sahm ?? {}),
+      id: "SAHM_COMPUTED",
+      name: "Sahm 경기침체 지표(실업률 vintage에서 계산)",
+      observations: computeSahm(series.unemployment.observations),
+    };
+  }
+
   return { fetchedAt: toDateString(asOfDate), series };
 }
 
@@ -103,6 +178,43 @@ export function macroScoreTimeline(vintages, dates) {
       return null;
     }
   });
+}
+
+/**
+ * 직접 계산한 Sahm이 FRED의 `SAHMREALTIME`과 맞는지 대조합니다.
+ *
+ * 2019년 이후는 두 값이 다 있으므로 겹치는 구간에서 대조할 수 있습니다.
+ * **여기서 맞으면 같은 계산을 2008년까지 밀어 넣어도 된다는 근거가 됩니다.**
+ * 안 맞으면 계산이 틀린 것이고, 그 상태로 과거를 되살리면 조용히 틀린 결론이
+ * 나옵니다 — 대조 없이 넘어가면 안 되는 이유입니다.
+ *
+ * 두 값 모두 "그날 알 수 있었던 것"으로 맞춰 비교합니다. 최신 개정본끼리
+ * 비교하면 SAHMREALTIME은 개정 전 값으로 계산된 것이라 어긋납니다.
+ */
+export function compareSahmSources(vintages, asOfDates) {
+  const fredSeries = vintages.series?.sahm?.observations ?? [];
+  const unemployment = vintages.series?.unemployment?.observations ?? [];
+  const deviations = [];
+
+  for (const date of asOfDates) {
+    const fred = observationsAsOf(fredSeries, date)[0];
+    const computed = computeSahm(observationsAsOf(unemployment, date))[0];
+    if (!fred || !computed) continue;
+    // 같은 관측월끼리만 비교합니다. 발표 시점이 어긋나면 다른 달을 비교하게 됩니다.
+    if (fred.date !== computed.date) continue;
+    deviations.push({ date, observationDate: fred.date, fred: fred.value, computed: computed.value });
+  }
+
+  if (deviations.length === 0) return { count: 0 };
+  const gaps = deviations.map((item) => Math.abs(item.fred - item.computed));
+  const worst = deviations[gaps.indexOf(Math.max(...gaps))];
+  return {
+    count: deviations.length,
+    maxAbsDiff: round(Math.max(...gaps)),
+    meanAbsDiff: round(average(gaps)),
+    exactMatches: gaps.filter((gap) => gap < 0.005).length,
+    worst,
+  };
 }
 
 /** 되살린 점수가 실제로 움직이는지 보는 요약입니다. 안 움직이면 신호가 아니라 상수입니다. */
@@ -131,6 +243,11 @@ function average(values) {
 
 function round(value) {
   return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+}
+
+// SAHMREALTIME이 소수점 둘째 자리까지 발표되므로 대조할 수 있게 자릿수를 맞춥니다.
+function round2(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
 function toDate(value) {

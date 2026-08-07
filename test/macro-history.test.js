@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import { chunkVintageWindows } from "../src/backtest/macro-cache.js";
 import {
+  compareSahmSources,
+  computeSahm,
   macroDataAsOf,
   macroScoreTimeline,
   observationsAsOf,
@@ -144,6 +146,119 @@ test("transform이 붙은 시리즈만 변환하고 나머지는 원값을 유�
   const asOf = macroDataAsOf(vintages, "2026-12-31");
   assert.ok(Math.abs(asOf.series.corePce.observations[0].value - 12) < 1e-9);
   assert.equal(asOf.series.unemployment.observations[0].value, 6.2, "변환 없는 층은 그대로다");
+});
+
+/**
+ * ── 2008년을 되살리기 위해 메운 두 구멍 ────────────────────────────────────
+ *
+ * 여섯 지표 중 하나라도 비면 그날은 판정 불가입니다. 둘이 짧았습니다.
+ *  · SAHMREALTIME은 규칙이 발표된 2019년부터만 있습니다(vintage 82개)
+ *  · DFEDTARL/U는 연준이 목표 "범위"를 쓰기 시작한 2008-12부터만 있습니다
+ * 그래서 되살릴 수 있는 구간이 2019년 이후로 잘렸고 금융위기가 통째로 빠졌습니다.
+ */
+
+/** 실업률을 내림차순 월간 관측으로 만듭니다. values[0]이 최신입니다. */
+function unemploymentSeries(values, realtimeStart = "2000-01-01") {
+  return values.map((value, offset) => ({
+    date: `2008-${String(12 - offset).padStart(2, "0")}-01`,
+    value,
+    realtimeStart,
+  }));
+}
+
+test("Sahm을 실업률에서 직접 계산한다 — 3개월 평균 − 직전 12개월 최저", () => {
+  // 최근 3개월이 6.0으로 올라오고 그 전 12개월은 4.5에 붙박이인 경우입니다.
+  const series = unemploymentSeries([6, 6, 6, ...Array(12).fill(4.5)]);
+  const sahm = computeSahm(series);
+
+  // MA3(0) = 6.0, 직전 12개월 MA3의 최저 = 4.5 → 1.5
+  assert.equal(sahm[0].value, 1.5);
+  assert.equal(sahm[0].date, series[0].date, "관측일은 실업률의 것을 따른다");
+});
+
+test("실업률이 평평하면 Sahm은 0이다", () => {
+  assert.equal(computeSahm(unemploymentSeries(Array(15).fill(5)))[0].value, 0);
+});
+
+test("15개월치가 없으면 Sahm을 계산하지 않는다", () => {
+  // 3개월 평균 13개가 필요하므로 최소 15개 관측이 있어야 한 점이 나옵니다.
+  assert.deepEqual(computeSahm(unemploymentSeries(Array(14).fill(5))), []);
+  assert.equal(computeSahm(unemploymentSeries(Array(15).fill(5))).length, 1);
+});
+
+test("Sahm은 SAHMREALTIME이 있어도 항상 계산값을 쓴다", () => {
+  // 2019년을 경계로 출처가 바뀌면 그 지점에서 값의 성격이 달라져 국면 비교가
+  // 오염됩니다. 그래서 겹치는 구간에서도 계산값으로 통일합니다.
+  const vintages = {
+    series: {
+      unemployment: { observations: unemploymentSeries([6, 6, 6, ...Array(12).fill(4.5)]) },
+      sahm: { observations: [{ date: "2008-12-01", value: 99, realtimeStart: "2000-01-01" }] },
+    },
+  };
+
+  const asOf = macroDataAsOf(vintages, "2026-01-01");
+  assert.equal(asOf.series.sahm.observations[0].value, 1.5, "FRED 값 99가 아니라 계산값이다");
+  assert.equal(asOf.series.sahm.id, "SAHM_COMPUTED");
+});
+
+test("2008-12 이전 기준금리는 단일 목표(DFEDTAR)로 이어 붙인다", () => {
+  const vintages = {
+    series: {
+      fedUpper: {
+        observations: [{ date: "2008-12-16", value: 0.25, realtimeStart: "2008-12-16" }],
+      },
+      fedLower: {
+        observations: [{ date: "2008-12-16", value: 0, realtimeStart: "2008-12-16" }],
+      },
+      fedLegacy: {
+        observations: [
+          { date: "2008-10-08", value: 1.5, realtimeStart: "2008-10-08" },
+          { date: "2007-09-18", value: 4.75, realtimeStart: "2007-09-18" },
+        ],
+      },
+    },
+  };
+
+  const asOf = macroDataAsOf(vintages, "2009-01-01");
+  const dates = asOf.series.fedUpper.observations.map((item) => item.date);
+  // 내림차순으로 이어져야 valueOnOrBefore가 90일 전 값을 제대로 찾습니다.
+  assert.deepEqual(dates, ["2008-12-16", "2008-10-08", "2007-09-18"]);
+  // 2007년 9월의 4.75%가 살아 있어야 2008년 인하 사이클이 점수에 잡힙니다.
+  assert.equal(asOf.series.fedUpper.observations.at(-1).value, 4.75);
+});
+
+test("2008-12 이전만 조회하면 단일 목표만 남는다", () => {
+  const vintages = {
+    series: {
+      fedUpper: {
+        observations: [{ date: "2008-12-16", value: 0.25, realtimeStart: "2008-12-16" }],
+      },
+      fedLegacy: {
+        observations: [{ date: "2007-09-18", value: 4.75, realtimeStart: "2007-09-18" }],
+      },
+    },
+  };
+
+  const asOf = macroDataAsOf(vintages, "2008-06-01");
+  assert.deepEqual(
+    asOf.series.fedUpper.observations.map((item) => item.value),
+    [4.75],
+    "아직 발표되지 않은 범위 목표는 안 들어온다",
+  );
+});
+
+test("Sahm 계산과 FRED 값을 겹치는 구간에서 대조할 수 있다", () => {
+  const vintages = {
+    series: {
+      unemployment: { observations: unemploymentSeries([6, 6, 6, ...Array(12).fill(4.5)]) },
+      sahm: { observations: [{ date: "2008-12-01", value: 1.5, realtimeStart: "2000-01-01" }] },
+    },
+  };
+
+  const check = compareSahmSources(vintages, ["2026-01-01"]);
+  assert.equal(check.count, 1);
+  assert.equal(check.maxAbsDiff, 0, "계산이 맞으면 차이가 0이다");
+  assert.equal(check.exactMatches, 1);
 });
 
 /**

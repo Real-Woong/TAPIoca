@@ -25,6 +25,25 @@ import { FRED_SERIES, fetchFredSeries, fetchFredVintageDates } from "../FRED_dat
  *    개정된 미래 값이 섞이지 않습니다.
  */
 
+/**
+ * 백테스트에서만 추가로 받는 시리즈입니다. 운영은 `FRED_SERIES`만 씁니다.
+ *
+ * **연준은 2008-12-16부터 목표를 "범위"(상단/하단)로 발표합니다.** 그 전에는
+ * 단일 목표금리 하나였고 그것이 `DFEDTAR`입니다. `DFEDTARL/U`만 받으면 2008년
+ * 이전이 통째로 비어 금융위기 구간을 되살릴 수 없습니다.
+ *
+ * 점수 계산에 쓰이는 것은 90일 금리 변화 하나뿐이라(`evaluateMacroRegime`),
+ * 두 시리즈를 시간축으로 이어 붙여도 의미가 깨지지 않습니다. 오히려 2008년
+ * 인하 사이클이 그대로 살아납니다.
+ */
+export const BACKTEST_EXTRA_SERIES = Object.freeze({
+  fedLegacy: {
+    id: "DFEDTAR",
+    name: "연준 기준금리 목표(2008-12 이전 단일 목표)",
+    units: "lin",
+  },
+});
+
 const CACHE_FILE = "macro-vintages.json";
 
 // FRED가 "가장 이른 realtime"으로 쓰는 날짜입니다.
@@ -69,7 +88,8 @@ export async function fetchAndCacheMacroVintages({
 
   const series = {};
   const failures = [];
-  for (const [key, config] of Object.entries(FRED_SERIES)) {
+  const wanted = { ...FRED_SERIES, ...BACKTEST_EXTRA_SERIES };
+  for (const [key, config] of Object.entries(wanted)) {
     try {
       // pc1 같은 변환은 개정 이력과 같이 못 받으므로 원지수로 받고 변환은
       // 되살릴 때 합니다. 무엇을 해야 하는지는 transform으로 남깁니다.
@@ -116,7 +136,7 @@ export async function fetchAndCacheMacroVintages({
     }
   }
 
-  if (Object.keys(series).length !== Object.keys(FRED_SERIES).length) {
+  if (Object.keys(series).length !== Object.keys(wanted).length) {
     throw new Error(`거시 개정 이력을 다 받지 못했습니다 — ${failures.join(" | ")}`);
   }
 

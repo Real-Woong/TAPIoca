@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadTradingPolicy } from "../paper/trading-policy.js";
 import { runBacktest } from "./backtest-engine.js";
 import { fetchAndCacheMacroVintages, loadMacroVintages } from "./macro-cache.js";
-import { macroScoreTimeline, summarizeMacroTimeline } from "./macro-history.js";
+import { compareSahmSources, macroScoreTimeline, summarizeMacroTimeline } from "./macro-history.js";
 import { fetchAndCacheCloses, loadCachedCloses } from "./price-cache.js";
 import { buildScenario, SCENARIOS } from "./scenarios.js";
 
@@ -320,10 +320,41 @@ async function runFetchMacro() {
     );
     void key;
   }
+  // 직접 계산한 Sahm이 FRED 값과 맞는지 겹치는 구간에서 대조합니다.
+  // 여기서 맞아야 같은 계산을 2008년까지 밀어 넣을 근거가 생깁니다.
+  const check = compareSahmSources({ series }, monthlyDates("2019-07-01"));
+  if (check.count === 0) {
+    console.log("\n  경고: Sahm 대조를 할 수 있는 겹치는 구간이 없습니다.");
+  } else {
+    console.log(
+      `\n  Sahm 계산 대조 (${check.count}개월, SAHMREALTIME이 존재하는 구간): ` +
+        `최대 차이 ${check.maxAbsDiff} · 평균 ${check.meanAbsDiff} · ` +
+        `소수 둘째자리까지 일치 ${check.exactMatches}/${check.count}`,
+    );
+    if (check.maxAbsDiff > 0.05) {
+      console.log(
+        `  경고: 차이가 큽니다. 가장 어긋난 달 ${check.worst.observationDate} — ` +
+          `FRED ${check.worst.fred} 대 계산 ${check.worst.computed}. ` +
+          "계산이 틀렸다면 2008년 되살리기도 함께 틀립니다.",
+      );
+    }
+  }
+
   console.log(
     "\n이제 `--macro-source vintage`로 거시 층을 그 시점 값으로 되살려 돌릴 수 있습니다.\n" +
       "  주의: 일봉 캐시에 날짜가 있어야 합니다. 예전 캐시라면 `--fetch`를 다시 실행하십시오.",
   );
+}
+
+/** 대조용 월말 날짜 목록입니다. 시작일부터 오늘까지 한 달 간격으로 훑습니다. */
+function monthlyDates(startDate, now = new Date()) {
+  const dates = [];
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  while (cursor <= now) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return dates;
 }
 
 async function runFetch() {
