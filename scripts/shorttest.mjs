@@ -31,6 +31,7 @@ const LABELS = {
   "macro-regime.test.js": "거시·레짐",
   "macro-history.test.js": "거시 되살리기(vintage)",
   "order-lifecycle.test.js": "실주문 안전장치",
+  "live-safety.test.js": "긴급중지·호출제한",
   "macro-snapshot.test.js": "거시캐시",
   "market-sentiment.test.js": "감성결합",
   "sentiment-analyzer.test.js": "감성분석",
