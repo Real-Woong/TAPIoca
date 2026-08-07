@@ -122,6 +122,46 @@ export class TossInvestClient {
     return response?.result ?? response;
   }
 
+  /**
+   * 유효한 액세스 토큰을 돌려줍니다. 만료가 가까우면 알아서 재발급합니다.
+   *
+   * 실주문 어댑터(`src/live/toss-broker.js`)가 이것을 물어 씁니다. 어댑터가
+   * 토큰 문자열을 들고 있으면 만료에 걸리므로, **매 호출마다 여기에 물어보게**
+   * 해서 갱신 관리를 한 곳에만 둡니다.
+   */
+  async getAccessToken() {
+    return this.#getValidToken();
+  }
+
+  /** 미국 장 운영 정보입니다. 조기 폐장일 판단에 씁니다. */
+  async getUsMarketCalendar() {
+    const response = await this.#request("/api/v1/market-calendar/US");
+    return response?.result ?? response;
+  }
+
+  /** 매매 수수료입니다. 백테스트의 10bp 가정을 주문 전에 대조할 수 있습니다. */
+  async getCommissions(accountSeq, { symbol } = {}) {
+    const query = new URLSearchParams();
+    if (symbol) query.set("symbol", symbol);
+    const suffix = query.size ? `?${query}` : "";
+    const response = await this.#request(`/api/v1/commissions${suffix}`, {
+      headers: { "X-Tossinvest-Account": String(accountSeq) },
+    });
+    return response?.result ?? response;
+  }
+
+  /** 매수 가능 금액입니다. 낼 수 있는 주문인지 미리 봅니다. */
+  async getBuyingPower(accountSeq, { symbol, currency } = {}) {
+    const query = new URLSearchParams();
+    if (symbol) query.set("symbol", symbol);
+    if (currency) query.set("currency", currency);
+    const suffix = query.size ? `?${query}` : "";
+    const response = await this.#request(`/api/v1/buying-power${suffix}`, {
+      headers: { "X-Tossinvest-Account": String(accountSeq) },
+    });
+    return response?.result ?? response;
+  }
+
   async getPortfolio({ symbol } = {}) {
     // 계좌 목록을 먼저 받은 뒤 각 accountSeq를 헤더에 넣어 보유 종목을 조회합니다.
     const accounts = await this.getAccounts();
