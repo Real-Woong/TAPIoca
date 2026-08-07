@@ -17,6 +17,7 @@ const files = readdirSync(testDir)
 // 파일명 → 읽기 좋은 테마 라벨
 const LABELS = {
   "paper-engine.test.js": "매매엔진(리밸런싱·비용·벤치마크)",
+  "rebalance-band-ratchet.test.js": "밴드 래칫(스파이크 잔여물)",
   "backtest-engine.test.js": "백테스터",
   "trading-policy.test.js": "매매정책",
   "market-signal.test.js": "신호결합(추세·변동성)",

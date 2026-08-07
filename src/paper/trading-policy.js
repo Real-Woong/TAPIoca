@@ -14,6 +14,24 @@ const DEFAULTS = Object.freeze({
   // 매도에만 걸려 있던 밴드를 매수에도 대칭으로 적용합니다. 예전에는 매수가 결손
   // $1에서 트리거돼, 15분마다 매수와 리밸런싱 매도가 서로를 되돌렸습니다.
   rebalanceBandRate: 0.05,
+  // ── 밴드의 방향 비대칭을 고치는 세 손잡이입니다. 셋 다 기본값이 "끔"이라
+  // 아무것도 지정하지 않으면 위 대칭 밴드가 그대로 동작합니다.
+  //
+  // 밴드는 크기가 대칭인데 효과는 대칭이 아닙니다. 진입은 목표 전체가 결손이라
+  // 밴드를 넘지만, 되돌아올 때는 목표가 내려간 만큼만 초과분이라 밴드에 못 미칩니다.
+  // 그래서 신호가 한 번 튀어 세운 포지션이 신호가 되돌아와도 남습니다.
+  // 재현: test/rebalance-band-ratchet.test.js
+  //
+  // ⓑ 매도 쪽 밴드만 좁힙니다. null이면 매수와 같은 값을 씁니다.
+  rebalanceExitBandRate: null,
+  // ⓒ 보유액이 목표의 이 배수를 넘으면 덜어냅니다. 자산 대비 밴드와 함께
+  //    걸리며 둘 중 좁은 쪽이 이깁니다. 큰 포지션에서는 자산 대비 밴드가,
+  //    작은 포지션에서는 이 비율이 먼저 걸립니다. null이면 끕니다.
+  targetDriftCap: null,
+  // ⓐ 목표 비중이 이 값보다 작으면 아예 0으로 봅니다. 밴드보다 작은 목표는
+  //    어차피 밴드 안이라 도달할 수도 유지할 수도 없으므로, 들지 않기로 정합니다.
+  //    null이면 끕니다.
+  minPositionRate: null,
   // 레짐 확정에 필요한 거래일 수입니다. 예전 기본값은 4사이클(=1시간)이었는데,
   // 월간 FRED 데이터로 만든 레짐에 1시간 확정은 사실상 무방비였습니다.
   // 이제는 하루 단위로 세고, 사이클 수는 세션 길이에서 환산합니다.
@@ -50,6 +68,7 @@ export function loadTradingPolicy(env = process.env) {
   if (minOrderUsd > maxOrderUsd) {
     throw new Error("MIN_ORDER_USD는 MAX_ORDER_USD보다 클 수 없습니다.");
   }
+  const rebalanceBandRate = readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate);
 
   return Object.freeze({
     // true를 명시한 경우에만 LIVE로 해석하지만, 현재 실행기는 LIVE 자체를 거부합니다.
@@ -63,7 +82,11 @@ export function loadTradingPolicy(env = process.env) {
     maxDailyBuyUsd: readPositive(env.MAX_DAILY_BUY_USD, DEFAULTS.maxDailyBuyUsd),
     maxTotalLossUsd: readPositive(env.MAX_TOTAL_LOSS_USD, DEFAULTS.maxTotalLossUsd),
     maxDailyLossUsd: readPositive(env.MAX_DAILY_LOSS_USD, DEFAULTS.maxDailyLossUsd),
-    rebalanceBandRate: readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate),
+    rebalanceBandRate,
+    // 지정하지 않으면 매수 밴드와 같은 값이라 대칭 밴드가 그대로 재현됩니다.
+    rebalanceExitBandRate: readRate(env.REBALANCE_EXIT_BAND_RATE, rebalanceBandRate),
+    targetDriftCap: readOptional(env.TARGET_DRIFT_CAP, DEFAULTS.targetDriftCap, readPositive),
+    minPositionRate: readOptional(env.MIN_POSITION_RATE, DEFAULTS.minPositionRate, readRate),
     // 사이클 수를 직접 지정하면 그것이 이깁니다(테스트와 일봉 백테스트가 씁니다).
     // 지정하지 않으면 거래일 수를 세션당 사이클 수로 환산합니다.
     regimeConfirmCycles: env.REGIME_CONFIRM_CYCLES

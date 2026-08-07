@@ -252,8 +252,6 @@ function recordRebalance(state, regime, dateKey) {
 function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSignal }) {
   const allocation = macroSignal.targetAllocation ?? {};
   const summary = summarizePaperState(state, priceMap);
-  // 자산 대비 밴드보다 큰 초과분만 정리해 소액 잔챙이 매매를 막습니다.
-  const band = tradeBand(policy, summary.equityUsd);
   let sold = 0;
 
   for (const symbol of state.watchlist) {
@@ -265,8 +263,11 @@ function runRebalanceSells({ state, priceMap, policy, now, decisions, macroSigna
 
     const price = market.lastPrice;
     const currentValue = position.quantity * price;
-    const targetValue = summary.equityUsd * validWeight(allocation[symbol]);
-    if (roundUsd(currentValue - targetValue) < band) continue;
+    const targetValue = targetValueUsd(policy, validWeight(allocation[symbol]), summary.equityUsd);
+    // 초과분이 밴드보다 클 때만 정리해 소액 잔챙이 매매를 막습니다.
+    if (roundUsd(currentValue - targetValue) < exitBand(policy, summary.equityUsd, targetValue)) {
+      continue;
+    }
 
     // 초과분만큼만 부분 매도하되, 남는 평가액이 최소 주문보다 작으면 전량 정리합니다.
     // 목표 비중이 0인 종목은 전량 매도됩니다.
@@ -335,6 +336,36 @@ function tradeBand(policy, equityUsd) {
   return Math.max(policy.minOrderUsd, (Number(policy.rebalanceBandRate) || 0) * equityUsd);
 }
 
+/**
+ * 매도 쪽 밴드입니다. 기본값은 매수와 같아 대칭 밴드가 그대로 동작합니다.
+ *
+ * 매수와 나눠놓은 이유는 밴드의 효과가 방향에 따라 다르기 때문입니다. 진입은
+ * 목표 전체가 결손이라 밴드를 넘지만, 되돌아올 때는 목표가 내려간 만큼만
+ * 초과분이라 밴드에 못 미칩니다. 매수 밴드를 좁히면 잔챙이 매매가 돌아오므로,
+ * 고칠 곳은 매도 쪽뿐입니다.
+ */
+function exitBand(policy, equityUsd, targetValueUsd) {
+  const absoluteUsd = (Number(policy.rebalanceExitBandRate) || 0) * equityUsd;
+  // 자산 대비 밴드 하나로는 크기가 다른 포지션을 같이 다룰 수 없습니다. 자산의
+  // 5%는 70% 포지션에는 7% 이탈이지만 1.6% 포지션에는 312% 이탈입니다.
+  // 목표 대비 상한을 함께 걸면 작은 포지션에서만 이쪽이 먼저 걸립니다.
+  const driftUsd = policy.targetDriftCap === null
+    ? Infinity
+    : Number(policy.targetDriftCap) * targetValueUsd;
+  return Math.max(policy.minOrderUsd, Math.min(absoluteUsd, driftUsd));
+}
+
+/**
+ * 목표 비중을 금액으로 바꾸되, 밴드보다 작은 목표는 0으로 봅니다.
+ * 밴드 안에 통째로 들어가는 목표는 도달할 수도 유지할 수도 없으므로,
+ * "조금 들고 있기"가 실제로는 "튀었을 때 들어가서 안 나오기"가 됩니다.
+ */
+function targetValueUsd(policy, weight, equityUsd) {
+  const floor = policy.minPositionRate;
+  if (floor !== null && weight > 0 && weight < floor) return 0;
+  return equityUsd * weight;
+}
+
 // FRED 목표 비중을 기준으로 가장 덜 채워진 ETF부터 일일 한도 안에서 매수합니다.
 function runMacroTargetBuys({
   state,
@@ -384,7 +415,9 @@ function runMacroTargetBuys({
 
         const position = state.positions[symbol];
         const currentValue = position ? position.quantity * market.lastPrice : 0;
-        const targetValue = summary.equityUsd * weight;
+        // 매도와 같은 목표를 씁니다. 매수만 작은 목표를 인정하면 산 다음 날
+        // 팔 수 없는 포지션이 다시 생깁니다.
+        const targetValue = targetValueUsd(policy, weight, summary.equityUsd);
         const deficitUsd = targetValue - currentValue;
 
         return {
