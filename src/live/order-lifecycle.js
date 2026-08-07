@@ -138,8 +138,12 @@ export function realizedFills(orders) {
  *
  * 어긋나면 매매를 멈춥니다. 어긋난 채로 리밸런싱하면 잘못된 보유를 기준으로
  * 목표 비중을 계산해 오차를 키웁니다.
+ *
+ * **수량으로 비교하는 것이 정확합니다.** 평가액은 어느 시점 가격을 쓰느냐에
+ * 따라 달라져 없는 불일치를 만듭니다. 단위가 바뀌면 `tolerance`도 함께 바꿔야
+ * 합니다 — 수량 0.05는 VTI 기준 15달러라 사실상 검사를 끄는 값입니다.
  */
-export function reconcile(ledgerPositions, brokerPositions, { toleranceUsd = 0.05 } = {}) {
+export function reconcile(ledgerPositions, brokerPositions, { tolerance = 0.05 } = {}) {
   const symbols = new Set([
     ...Object.keys(ledgerPositions ?? {}),
     ...Object.keys(brokerPositions ?? {}),
@@ -150,7 +154,7 @@ export function reconcile(ledgerPositions, brokerPositions, { toleranceUsd = 0.0
     const ledger = Number(ledgerPositions?.[symbol] ?? 0);
     const broker = Number(brokerPositions?.[symbol] ?? 0);
     const gap = broker - ledger;
-    if (Math.abs(gap) > toleranceUsd) {
+    if (Math.abs(gap) > tolerance) {
       differences.push({ symbol, ledgerUsd: round2(ledger), brokerUsd: round2(broker), gapUsd: round2(gap) });
     }
   }

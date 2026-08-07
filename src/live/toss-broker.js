@@ -55,7 +55,10 @@ export class TossOrderError extends Error {
 }
 
 export function createTossBroker({
-  accessToken,
+  // **정적 토큰이 아니라 함수를 받습니다.** 토큰은 만료되는데 우리는 15분마다
+  // 몇 달을 도므로, 고정된 문자열을 들고 있으면 반드시 만료에 걸립니다.
+  // 기존 `toss-client.js`가 이미 갱신을 관리하므로 그 쪽을 그대로 물립니다.
+  getAccessToken,
   accountSeq,
   baseUrl = DEFAULT_BASE_URL,
   fetchImpl = fetch,
@@ -64,16 +67,20 @@ export function createTossBroker({
   lookupBrokerOrderId = async () => null,
   now = () => new Date(),
 } = {}) {
-  if (!accessToken) throw new Error("accessToken이 필요합니다.");
+  if (typeof getAccessToken !== "function") {
+    throw new Error("getAccessToken(토큰을 돌려주는 함수)이 필요합니다.");
+  }
   if (!accountSeq) throw new Error("accountSeq가 필요합니다.");
 
   async function request(category, path, { method = "GET", body } = {}) {
     await rateLimiter.acquire(category);
+    // 매 호출마다 물어봅니다. 클라이언트가 만료 전에 갱신해 돌려줍니다.
+    const token = await getAccessToken();
 
     const response = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        authorization: `Bearer ${token}`,
         "x-tossinvest-account": String(accountSeq),
         "content-type": "application/json",
         accept: "application/json",
@@ -146,12 +153,19 @@ export function createTossBroker({
       return (result?.orders ?? []).map(normalizeTossOrder);
     },
 
+    /**
+     * 종목별 **보유 수량**을 냅니다. 평가액이 아닙니다.
+     *
+     * 대사를 수량으로 하는 편이 정확합니다. 평가액은 어느 시점 가격을 쓰느냐에
+     * 따라 달라져, 실제로는 맞는데 어긋난 것처럼 보이는 경우를 만듭니다.
+     * 수량은 그런 여지가 없습니다.
+     */
     async getPositions() {
       const result = await request("holdings", "/api/v1/holdings");
       const positions = {};
-      for (const item of result?.holdings ?? result ?? []) {
+      for (const item of result?.items ?? []) {
         if (!item?.symbol) continue;
-        positions[item.symbol] = Number(item.evaluationAmount ?? item.amount ?? 0);
+        positions[item.symbol] = Number(item.quantity ?? 0);
       }
       return positions;
     },

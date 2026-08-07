@@ -31,7 +31,7 @@ function fakeFetch(responses) {
 }
 
 const broker = (fetchImpl, extra = {}) => createTossBroker({
-  accessToken: "T", accountSeq: "123", fetchImpl,
+  getAccessToken: async () => "T", accountSeq: "123", fetchImpl,
   rateLimiter: createRateLimiter({ sleep: async () => {} }),
   ...extra,
 });
@@ -226,4 +226,34 @@ test("창이 닫히기 직전에는 안 된다고 답한다 — 경계에서 안
 test("계획 시각을 모르면 재전송하지 않는다", () => {
   assert.equal(canReplaySafely(null), false);
   assert.equal(canReplaySafely("이상한값"), false);
+});
+
+test("토큰은 매 호출마다 물어본다 — 정적 문자열은 반드시 만료에 걸린다", async () => {
+  let issued = 0;
+  const impl = fakeFetch([{ status: 200, body: { result: { orders: [] } } }]);
+  const b = createTossBroker({
+    accountSeq: "1", fetchImpl: impl,
+    rateLimiter: createRateLimiter({ sleep: async () => {} }),
+    getAccessToken: async () => { issued += 1; return `T-${issued}`; },
+  });
+
+  await b.listOpenOrders();
+  assert.equal(impl.calls[0].headers.authorization, "Bearer T-1");
+  assert.equal(issued, 1, "호출할 때 받아 온다");
+});
+
+test("토큰 제공 함수가 없으면 만들지 못한다", () => {
+  assert.throws(() => createTossBroker({ accountSeq: "1" }), /getAccessToken/);
+});
+
+test("보유는 수량으로 낸다 — 평가액은 가격 시점에 따라 흔들린다", async () => {
+  const impl = fakeFetch([{
+    status: 200,
+    body: { result: { items: [
+      { symbol: "VTI", quantity: "0.146" },
+      { symbol: "SCHD", quantity: "0.482" },
+    ] } },
+  }]);
+
+  assert.deepEqual(await broker(impl).getPositions(), { VTI: 0.146, SCHD: 0.482 });
 });
