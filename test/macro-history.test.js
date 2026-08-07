@@ -247,6 +247,42 @@ test("2008-12 이전만 조회하면 단일 목표만 남는다", () => {
   );
 });
 
+test("개정되지 않는 시리즈는 관측일을 공개일로 본다", () => {
+  // FRED의 vintage 보관 시작일과 정보 공개일은 다릅니다. T10Y2Y의 vintage는
+  // 2014년부터지만 2007년의 금리차는 그날 공개돼 있었고 수정되지 않았습니다.
+  // realtimeStart에 묶으면 2014년 이전이 통째로 "모르는 값"이 됩니다.
+  const vintages = {
+    series: {
+      yieldCurve: {
+        observations: [
+          { date: "2014-01-27", value: 2.4, realtimeStart: "2014-01-27" },
+          // 보관 이전 구간이라 realtimeStart가 없습니다.
+          { date: "2007-06-15", value: -0.1 },
+        ],
+      },
+    },
+  };
+
+  const asOf2007 = macroDataAsOf(vintages, "2007-07-01").series.yieldCurve.observations;
+  assert.equal(asOf2007.length, 1, "2007년에도 그날의 금리차를 안다");
+  assert.equal(asOf2007[0].value, -0.1);
+
+  // 미래 값은 여전히 안 보입니다. 관측일이 공개일이므로 그 뒤 것만 막힙니다.
+  assert.equal(
+    macroDataAsOf(vintages, "2007-06-14").series.yieldCurve.observations.length,
+    0,
+  );
+});
+
+test("개정되는 시리즈에는 그 규칙을 적용하지 않는다", () => {
+  // 실업률은 발표 지연과 개정이 모두 있으므로 vintage가 반드시 필요합니다.
+  // 여기에 "관측일 = 공개일"을 쓰면 그것이 진짜 look-ahead입니다.
+  const vintages = { series: { unemployment: { observations: UNEMPLOYMENT } } };
+  const asOf = macroDataAsOf(vintages, "2008-09-15").series.unemployment.observations;
+  assert.equal(asOf.length, 1, "9월치는 10월에 발표되므로 아직 안 보인다");
+  assert.equal(asOf[0].date, "2008-08-01");
+});
+
 test("Sahm 계산과 FRED 값을 겹치는 구간에서 대조할 수 있다", () => {
   const vintages = {
     series: {

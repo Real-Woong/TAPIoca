@@ -26,19 +26,27 @@ import { evaluateMacroRegime } from "../FRED_data/macro-regime.js";
  * 같은 날짜에 여러 개정본이 있으면 **그중 가장 최근에 알려진 것 하나**만 남아야
  * 합니다. 둘 중 하나라도 어긋나면 조용히 틀린 값을 계산합니다.
  */
-export function observationsAsOf(observations, asOfDate) {
+export function observationsAsOf(observations, asOfDate, { revisionFree = false } = {}) {
   const asOf = toDateString(asOfDate);
   const latestByDate = new Map();
 
   for (const observation of observations ?? []) {
-    // realtimeStart가 없으면 vintage 없이 받은 데이터입니다. 그때가 언제
-    // 알려졌는지 알 수 없으므로 되살리기에 쓸 수 없습니다.
-    const knownAt = observation.realtimeStart;
+    // 개정되지 않는 시리즈는 관측일이 곧 공개일입니다. `realtimeStart`를 쓰면
+    // **FRED가 보관을 시작한 날**에 묶여 그 이전이 통째로 "모르는 값"이 됩니다.
+    // 2026-08-07 실측: T10Y2Y의 vintage는 3094개(≈12.3년)뿐이라 2014-01-27
+    // 이전이 전부 비었습니다. 2007년의 10년-2년 금리차는 그날 공개돼 있었고
+    // 이후 수정되지 않았으므로, 그것을 "몰랐다"고 보는 것이 오히려 틀립니다.
+    const knownAt = revisionFree
+      ? observation.date
+      : observation.realtimeStart;
+    // 개정되는 시리즈에서 realtimeStart가 없으면 언제 알려졌는지 알 수 없으므로
+    // 되살리기에 쓸 수 없습니다.
     if (!knownAt || knownAt > asOf) continue;
 
     const previous = latestByDate.get(observation.date);
     // 같은 관측일의 개정본이 여럿이면 as-of 이전에 알려진 것 중 가장 나중 것을 씁니다.
-    if (!previous || knownAt > previous.realtimeStart) {
+    // 개정되지 않는 시리즈는 같은 관측일이 하나뿐이므로 첫 것을 그대로 둡니다.
+    if (!previous || (!revisionFree && knownAt > previous.realtimeStart)) {
       latestByDate.set(observation.date, observation);
     }
   }
@@ -71,6 +79,22 @@ export function toYearOverYear(observations) {
   }
   return result;
 }
+
+/**
+ * 개정되지 않는 시리즈입니다. 이들은 관측일이 곧 공개일입니다.
+ *
+ *  · `yieldCurve`(T10Y2Y) — 그날 국채 금리로 계산해 그날 공개되고 수정되지 않습니다.
+ *  · `fedUpper`/`fedLower`/`fedLegacy` — 연준이 발표하는 행정 목표금리입니다.
+ *    발표 즉시 효력이 생기고 나중에 고쳐지지 않습니다.
+ *
+ * 반대로 `unemployment`·`corePce`는 발표 뒤 계속 개정되므로 반드시 vintage를
+ * 써야 합니다. 그쪽에 이 규칙을 적용하면 그것이 진짜 look-ahead입니다.
+ *
+ * **이 구분이 필요한 이유는 FRED의 보관 시작일이 정보 공개일과 다르기
+ * 때문입니다.** T10Y2Y의 vintage는 2014년부터인데, 그렇다고 2007년의 금리차를
+ * 그때 몰랐던 것은 아닙니다.
+ */
+const REVISION_FREE_SERIES = new Set(["yieldCurve", "fedUpper", "fedLower", "fedLegacy"]);
 
 /**
  * 실업률에서 Sahm 경기침체 지표를 직접 계산합니다.
@@ -127,7 +151,9 @@ export function macroDataAsOf(vintages, asOfDate) {
   for (const [key, item] of Object.entries(vintages.series ?? {})) {
     // 순서가 중요합니다. **먼저 그날 알 수 있었던 것만 남기고, 그 다음에
     // 변환합니다.** 뒤집으면 개정된 미래 값이 분모로 들어옵니다.
-    const known = observationsAsOf(item.observations, asOfDate);
+    const known = observationsAsOf(item.observations, asOfDate, {
+      revisionFree: REVISION_FREE_SERIES.has(key),
+    });
     series[key] = {
       ...item,
       observations: item.transform === "pc1" ? toYearOverYear(known) : known,
