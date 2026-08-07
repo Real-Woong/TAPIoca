@@ -169,6 +169,10 @@ export function eventsFromLookup(clientOrderId, brokerOrder, { at = new Date().t
       filledQuantity: Number(brokerOrder.filledQuantity) || 0,
       filledPrice: brokerOrder.filledPrice ?? null,
       fees: brokerOrder.fees ?? null,
+      // **브로커가 전량 체결이라고 말했는지**를 그대로 실어 보냅니다. 금액
+      // 주문은 수량 단위 때문에 항상 요청액보다 조금 적게 체결되므로, 잔액으로
+      // 추정하면 영원히 부분체결로 남습니다(= 영구 정지).
+      terminal: brokerOrder.status === "FILLED",
     });
   }
 

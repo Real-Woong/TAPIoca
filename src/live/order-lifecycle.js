@@ -78,8 +78,22 @@ export function buildOrders(events) {
         order.brokerOrderId = event.brokerOrderId ?? order.brokerOrderId;
         order.filledUsd += Number(event.filledUsd) || 0;
         order.filledQuantity += Number(event.filledQuantity) || 0;
-        // 요청액을 사실상 다 채웠으면 완결로 봅니다. 센트 미만 잔량은 체결
-        // 단위 때문에 남는 것이지 미체결이 아닙니다.
+
+        // **브로커가 끝났다고 하면 끝난 것입니다.** 우리 산수보다 브로커가
+        // 진실입니다.
+        //
+        // 금액 주문은 주식 수량 단위 때문에 **항상 요청액보다 조금 적게**
+        // 체결됩니다(2026-08-07 실측: $2.00 요청 → $1.99 체결). 그 잔액을
+        // 미체결로 읽으면 주문이 영원히 PARTIAL로 남고, PARTIAL은 미결이므로
+        // **에이전트가 영구 정지합니다.** 실제로 이번 주문은 잔액이 정확히
+        // $0.01이라 간신히 통과했습니다.
+        if (event.terminal === true) {
+          order.state = ORDER_STATES.FILLED;
+          break;
+        }
+
+        // 브로커 상태를 모르는 경우에만 금액으로 추정합니다. 센트 미만 잔량은
+        // 체결 단위 때문에 남는 것이지 미체결이 아닙니다.
         const remaining = (Number(order.requestedUsd) || 0) - order.filledUsd;
         order.state = remaining > 0.01 ? ORDER_STATES.PARTIAL : ORDER_STATES.FILLED;
         break;

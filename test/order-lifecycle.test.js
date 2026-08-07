@@ -358,3 +358,35 @@ test("인증 실패는 확실해 보여도 재제출 가능으로 두지 않는�
   });
   assert.equal(outcome.outcome, OUTCOMES.NEEDS_LOOKUP);
 });
+
+test("브로커가 전량 체결이라고 하면 잔액이 남아도 끝난 것이다", () => {
+  // 2026-08-07 실측: $2.00 요청에 $1.99 체결. 금액 주문은 수량 단위 때문에
+  // 항상 조금 적게 체결된다. 잔액으로 추정하면 영원히 PARTIAL이 되고,
+  // PARTIAL은 미결이므로 에이전트가 영구 정지한다.
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 2 },
+    { type: "FILL", clientOrderId: "A", filledUsd: 1.94, filledQuantity: 0.0579, terminal: true },
+  ]);
+  assert.equal(orders.get("A").state, ORDER_STATES.FILLED, "6센트가 남아도 끝난 것이다");
+  assert.deepEqual(unresolvedOrders(orders), [], "미결로 남지 않는다");
+});
+
+test("브로커 상태를 모를 때만 금액으로 추정한다", () => {
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 10 },
+    { type: "FILL", clientOrderId: "A", filledUsd: 4, filledQuantity: 0.12 },
+  ]);
+  assert.equal(orders.get("A").state, ORDER_STATES.PARTIAL, "정말 절반만 체결된 경우");
+});
+
+test("조회 결과가 전량 체결이면 terminal을 실어 보낸다", () => {
+  const [, fill] = eventsFromLookup("A", {
+    brokerOrderId: "OID", status: "FILLED", filledUsd: 1.99, filledQuantity: 0.05965,
+  });
+  assert.equal(fill.terminal, true);
+
+  const [, partial] = eventsFromLookup("B", {
+    brokerOrderId: "OID", status: "PARTIAL", filledUsd: 1, filledQuantity: 0.03,
+  });
+  assert.equal(partial.terminal, false);
+});
