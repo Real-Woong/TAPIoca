@@ -28,12 +28,7 @@ export async function loadMarketSentiment({
     fetchImpl,
   });
   const normalizedOpinionWeight = readOpinionWeight(opinionWeight);
-  const officialArticles = snapshot.articles.filter((article) =>
-    article.provider === "FED_RSS" || article.provider === "GDELT",
-  );
-  const opinionArticles = snapshot.articles.filter((article) =>
-    article.provider === "BLUESKY" || article.provider === "OPINION_RSS",
-  );
+  const { officialArticles, opinionArticles } = splitByLayer(snapshot.articles);
   const analysisOptions = {
     provider,
     model: ollamaModel,
@@ -71,6 +66,47 @@ export async function loadMarketSentiment({
     // 소스가 빠지면 값이 구조적으로 느려집니다) 판정 전에 보여야 합니다.
     sourceHealth: snapshot.sourceHealth ?? null,
   };
+}
+
+/**
+ * 소스를 두 층으로 나눕니다.
+ *
+ *   공식  기관 발표와 보도. 가중치의 대부분을 먹습니다(기본 0.7).
+ *   의견  개인·블로그. 나머지(기본 0.3)입니다.
+ *
+ * **분류에 없는 소스는 조용히 버려집니다.** 예전에는 목록을 인라인으로 두 번
+ * 적어놨는데, 새 소스를 넣고 여기 안 적으면 받아놓고 안 쓰게 됩니다. 그래서
+ * 한 곳에 모으고 **분류 안 된 것이 나오면 예외를 던집니다** — 조용히 버리는
+ * 것보다 시끄럽게 멈추는 편이 낫습니다.
+ */
+export const LAYER_BY_PROVIDER = Object.freeze({
+  FED_RSS: "official",
+  // 질의 검색은 둘 다 보도 기반이라 공식 층입니다.
+  GDELT: "official",
+  GOOGLE_NEWS: "official",
+  BLUESKY: "opinion",
+  OPINION_RSS: "opinion",
+});
+
+export function splitByLayer(articles) {
+  const officialArticles = [];
+  const opinionArticles = [];
+  const unknown = new Set();
+
+  for (const article of articles ?? []) {
+    const layer = LAYER_BY_PROVIDER[article.provider];
+    if (layer === "official") officialArticles.push(article);
+    else if (layer === "opinion") opinionArticles.push(article);
+    else unknown.add(article.provider ?? "(없음)");
+  }
+
+  if (unknown.size > 0) {
+    throw new Error(
+      `분류되지 않은 뉴스 소스가 있습니다: ${[...unknown].join(", ")}. `
+      + "LAYER_BY_PROVIDER에 추가하십시오 — 분류가 없으면 그 기사는 분석에서 빠집니다.",
+    );
+  }
+  return { officialArticles, opinionArticles };
 }
 
 /** NEWS_CACHE_MINUTES를 밀리초로 바꿉니다. 잘못된 값이면 기본값을 쓰도록 undefined를 냅니다. */

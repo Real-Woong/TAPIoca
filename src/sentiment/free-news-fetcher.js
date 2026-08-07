@@ -60,6 +60,8 @@ export async function fetchFreeMarketNews({
       source: "GDELT", detail: query,
       run: () => fetchGdeltNews({ query, maxRecords: normalizedMaxRecords, timespan, fetchImpl }),
     }]),
+    // 질의 검색을 둘로 둡니다. 하나가 막혀도 사건에 반응하는 경로가 남습니다.
+    { source: "GOOGLE_NEWS", detail: query, run: () => fetchGoogleNews(query, { fetchImpl }) },
     ...unique(blueskyAuthors).map((actor) => ({
       source: "BLUESKY", detail: actor, run: () => fetchBlueskyAuthorFeed(actor, { fetchImpl }),
     })),
@@ -218,6 +220,35 @@ export async function fetchGdeltNews({
       provider: "GDELT",
       metrics: {},
     }];
+  });
+}
+
+/**
+ * 질의로 뉴스를 검색합니다. **GDELT가 하던 역할의 대체입니다.**
+ *
+ * 나머지 소스는 전부 "누가 말했나"로 고정돼 있습니다 — 연준 피드 2개, 지정한
+ * 계정 10개, 블로그 5개. **질의로 찾는 소스는 하나뿐이었고 그것이 GDELT였습니다.**
+ * 그래서 그것이 빠지자 감성이 사건에 반응하지 못하고 구조적으로 느려졌습니다.
+ *
+ * Google News RSS는 키가 없고, 질의를 받고, 응답이 RSS라 기존 파서에 그대로
+ * 물립니다. **GDELT를 빼지 않고 함께 둡니다** — 제한이 풀려 돌아오면 둘 다
+ * 쓰면 되고, 한쪽이 막혀도 질의 검색이 완전히 사라지지 않습니다.
+ *
+ * 여기도 IP 제한이 있습니다. GDELT보다 관대하지만 무한하지 않으므로, 실패하면
+ * 같은 물러서기가 걸립니다.
+ */
+export async function fetchGoogleNews(query, { fetchImpl = fetch } = {}) {
+  const url = new URL("https://news.google.com/rss/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("hl", "en-US");
+  url.searchParams.set("gl", "US");
+  url.searchParams.set("ceid", "US:en");
+
+  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
+  if (!response.ok) throw new Error(`Google News 요청 실패 (${response.status})`);
+  return parseRss(await response.text(), String(url), {
+    provider: "GOOGLE_NEWS",
+    domain: "news.google.com",
   });
 }
 

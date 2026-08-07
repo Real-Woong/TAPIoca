@@ -112,7 +112,9 @@ test("Fed와 GDELT를 합쳐 캐시하며 일부 소스 장애를 격리한다",
     assert.deepEqual(first.sourceCounts, { FED_RSS: 1, GDELT: 1 });
     assert.match(first.warning, /503/);
     assert.equal(second.source, "CACHE");
-    assert.equal(calls, 3);
+    // Fed 피드 2 + GDELT 1 + Google News 1. 질의 검색을 둘로 둔 뒤 하나 늘었습니다
+    // (2026-08-08). 두 번째 호출은 캐시라 요청이 안 나갑니다.
+    assert.equal(calls, 4);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }

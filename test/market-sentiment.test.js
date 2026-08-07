@@ -4,7 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { combineSentimentLayers, loadMarketSentiment } from "../src/sentiment/market-sentiment.js";
+import {
+  combineSentimentLayers,
+  loadMarketSentiment,
+  splitByLayer,
+} from "../src/sentiment/market-sentiment.js";
 
 const official = {
   sentiment_score: 0.4,
@@ -79,4 +83,22 @@ test("cacheMinutes를 주면 그 값으로 뉴스 캐시 수명을 정한다", a
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test("새 소스를 분류에 안 넣으면 조용히 버려지지 않고 멈춘다", () => {
+  // 2026-08-08: GOOGLE_NEWS를 붙이면서 분류 목록에 안 넣으면 100건을 받아놓고
+  // 분석에서 통째로 빠진다. 조용히 버리는 것보다 시끄럽게 멈추는 편이 낫다.
+  assert.throws(
+    () => splitByLayer([{ provider: "UNKNOWN_SOURCE", text: "x" }]),
+    /분류되지 않은 뉴스 소스/,
+  );
+});
+
+test("질의 검색 소스는 둘 다 공식 층이다", () => {
+  const { officialArticles, opinionArticles } = splitByLayer([
+    { provider: "FED_RSS" }, { provider: "GDELT" }, { provider: "GOOGLE_NEWS" },
+    { provider: "BLUESKY" }, { provider: "OPINION_RSS" },
+  ]);
+  assert.equal(officialArticles.length, 3);
+  assert.equal(opinionArticles.length, 2);
 });
