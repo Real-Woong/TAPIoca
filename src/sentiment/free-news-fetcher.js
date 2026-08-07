@@ -43,19 +43,40 @@ export async function fetchFreeMarketNews({
     return { ...cached, source: "CACHE", stale: false };
   }
 
-  const requests = [
-    ...fedFeeds.map((url) => fetchFedRss(url, { fetchImpl })),
-    fetchGdeltNews({ query, maxRecords: normalizedMaxRecords, timespan, fetchImpl }),
-    ...unique(blueskyAuthors).map((actor) => fetchBlueskyAuthorFeed(actor, { fetchImpl })),
-    ...unique(opinionFeeds).map((url) => fetchOpinionRss(url, { fetchImpl })),
+  // 어느 소스가 죽었는지 알려면 요청에 이름을 붙여야 합니다. 예전에는 실패
+  // 메시지만 이어 붙여서, GDELT가 빠진 것을 `sourceCounts`에 없다는 사실로만
+  // 눈치챌 수 있었습니다.
+  const tasks = [
+    ...fedFeeds.map((url) => ({
+      source: "FED_RSS", detail: url, run: () => fetchFedRss(url, { fetchImpl }),
+    })),
+    {
+      source: "GDELT", detail: query,
+      run: () => fetchGdeltNews({ query, maxRecords: normalizedMaxRecords, timespan, fetchImpl }),
+    },
+    ...unique(blueskyAuthors).map((actor) => ({
+      source: "BLUESKY", detail: actor, run: () => fetchBlueskyAuthorFeed(actor, { fetchImpl }),
+    })),
+    ...unique(opinionFeeds).map((url) => ({
+      source: "OPINION_RSS", detail: url, run: () => fetchOpinionRss(url, { fetchImpl }),
+    })),
   ];
-  const settled = await Promise.allSettled(requests);
+
+  const settled = await Promise.allSettled(tasks.map((task) => task.run()));
   const articles = dedupeArticles(
     settled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
   );
-  const failures = settled
-    .filter((result) => result.status === "rejected")
-    .map((result) => result.reason?.message ?? String(result.reason));
+
+  // 소스별 성패를 그대로 남깁니다. 합쳐 놓으면 "무엇이 죽었는가"를 못 봅니다.
+  const sourceHealth = tasks.map((task, index) => {
+    const result = settled[index];
+    return result.status === "fulfilled"
+      ? { source: task.source, detail: task.detail, ok: true, articles: result.value.length }
+      : { source: task.source, detail: task.detail, ok: false, error: describeError(result.reason) };
+  });
+  const failures = sourceHealth
+    .filter((item) => !item.ok)
+    .map((item) => `${item.source}: ${item.error}`);
 
   if (articles.length === 0) {
     if (cached?.cacheKey === cacheKey) {
@@ -77,11 +98,41 @@ export async function fetchFreeMarketNews({
     articles,
     resultCount: articles.length,
     sourceCounts,
+    // 성공한 소스도 함께 남깁니다. 죽은 것만 적으면 "원래 없었는지 죽은 것인지"를
+    // 나중에 가릴 수 없습니다.
+    sourceHealth,
     warning: failures.length ? failures.join("; ") : undefined,
   };
   await mkdir(dataDir, { recursive: true });
   await writeCache(cachePath, snapshot);
   return { ...snapshot, source: "KEYLESS_NEWS", stale: false };
+}
+
+/**
+ * 모든 외부 호출에 시한을 겁니다.
+ *
+ * 예전에는 아무 데도 타임아웃이 없었습니다. `Promise.allSettled`는 전부 끝날
+ * 때까지 기다리므로, 한 소스가 응답을 안 주면 **사이클 전체가 그만큼 멈춥니다.**
+ * 15분마다 도는 실행기에서 그것은 곧 그 사이클을 통째로 잃는 것입니다.
+ */
+function timeout(ms = 10_000) {
+  return { signal: AbortSignal.timeout(ms) };
+}
+
+/**
+ * 오류를 사람이 고칠 수 있는 문장으로 바꿉니다.
+ *
+ * Node의 fetch는 네트워크 단계 실패를 전부 `TypeError: fetch failed`로 감싸고
+ * **진짜 이유를 `cause`에 넣습니다.** 메시지만 남기면 DNS 실패인지 연결 거부인지
+ * 인증서 문제인지 알 수 없습니다. 실제로 2026-08-07에 GDELT가 그 상태였고,
+ * "fetch failed" 여섯 글자만 남아 원인을 못 좁혔습니다.
+ */
+function describeError(error) {
+  const message = error?.message ?? String(error);
+  const cause = error?.cause;
+  if (!cause) return message;
+  const causeText = cause.code ?? cause.message ?? String(cause);
+  return causeText && causeText !== message ? `${message} (${causeText})` : message;
 }
 
 export async function fetchGdeltNews({
@@ -97,7 +148,7 @@ export async function fetchGdeltNews({
   url.searchParams.set("sort", "datedesc");
   url.searchParams.set("timespan", timespan);
   url.searchParams.set("maxrecords", String(Math.min(250, Math.max(1, Number(maxRecords) || 75))));
-  const response = await fetchImpl(url, { headers: requestHeaders() });
+  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
   if (!response.ok) throw new Error(`GDELT 요청 실패 (${response.status})`);
   const body = await response.json();
   return (Array.isArray(body?.articles) ? body.articles : []).flatMap((article) => {
@@ -118,7 +169,7 @@ export async function fetchGdeltNews({
 }
 
 export async function fetchFedRss(url, { fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(url, { headers: requestHeaders() });
+  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
   if (!response.ok) throw new Error(`Fed RSS 요청 실패 (${response.status})`);
   return parseRss(await response.text(), url, {
     provider: "FED_RSS",
@@ -127,7 +178,7 @@ export async function fetchFedRss(url, { fetchImpl = fetch } = {}) {
 }
 
 export async function fetchOpinionRss(url, { fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(url, { headers: requestHeaders() });
+  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
   if (!response.ok) throw new Error(`전문가 RSS 요청 실패 (${response.status}): ${url}`);
   return parseRss(await response.text(), url, {
     provider: "OPINION_RSS",
@@ -142,7 +193,7 @@ export async function fetchBlueskyAuthorFeed(actor, { limit = 30, fetchImpl = fe
   url.searchParams.set("actor", normalizedActor);
   url.searchParams.set("filter", "posts_no_replies");
   url.searchParams.set("limit", String(Math.min(100, Math.max(1, Number(limit) || 30))));
-  const response = await fetchImpl(url, { headers: requestHeaders() });
+  const response = await fetchImpl(url, { headers: requestHeaders(), ...timeout() });
   if (!response.ok) throw new Error(`Bluesky 요청 실패 (${response.status}): ${normalizedActor}`);
   const body = await response.json();
   return (Array.isArray(body?.feed) ? body.feed : []).flatMap((entry) => {

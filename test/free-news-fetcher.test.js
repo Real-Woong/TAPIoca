@@ -124,3 +124,44 @@ function jsonResponse(body) {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("소스별로 성패를 남긴다 — 죽은 것만 적으면 원래 없었는지 가릴 수 없다", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const nodePath = await import("node:path");
+
+  const dataDir = await mkdtemp(nodePath.join(tmpdir(), "news-health-"));
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    // GDELT만 네트워크 단계에서 죽는 상황입니다(2026-08-07 실제 경로).
+    if (href.includes("gdeltproject")) {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } });
+    }
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return "<rss><channel><item><title>Fed holds rates</title>"
+          + "<link>https://federalreserve.gov/a</link></item></channel></rss>";
+      },
+      async json() { return { feed: [] }; },
+    };
+  };
+
+  const snapshot = await fetchFreeMarketNews({
+    dataDir, fetchImpl,
+    fedFeeds: ["https://federalreserve.gov/feed"],
+    blueskyAuthors: [],
+    opinionFeeds: [],
+  });
+
+  const gdelt = snapshot.sourceHealth.find((item) => item.source === "GDELT");
+  assert.equal(gdelt.ok, false);
+  // Node는 네트워크 실패를 전부 "fetch failed"로 감싸고 진짜 이유를 cause에 넣는다.
+  // 메시지만 남기면 DNS 실패인지 연결 거부인지 알 수 없다.
+  assert.match(gdelt.error, /ENOTFOUND/);
+
+  const fed = snapshot.sourceHealth.find((item) => item.source === "FED_RSS");
+  assert.equal(fed.ok, true, "살아 있는 소스도 함께 남는다");
+  assert.ok(fed.articles > 0);
+});

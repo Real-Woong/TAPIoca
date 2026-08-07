@@ -66,6 +66,10 @@ export async function loadMarketSentiment({
     source: snapshot.source,
     stale: snapshot.stale,
     warning: snapshot.warning,
+    // 어느 소스가 살아 있고 어느 소스가 죽었는지 그대로 올려 보냅니다.
+    // 죽은 소스가 있으면 이 층의 성격 자체가 달라지므로(예: 이벤트에 반응하는
+    // 소스가 빠지면 값이 구조적으로 느려집니다) 판정 전에 보여야 합니다.
+    sourceHealth: snapshot.sourceHealth ?? null,
   };
 }
 
