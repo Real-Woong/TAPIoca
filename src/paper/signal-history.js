@@ -63,6 +63,19 @@ export function toDailySeries(series) {
  * 매일 새로 뽑는 난수와 구분되지 않는다는 뜻이고, 그런 값에 가중치를 주는 것은
  * 배분을 흔들어 거래비용만 쓰는 일입니다.
  */
+/**
+ * 값이 사실상 멈췄다고 볼 문턱입니다.
+ *
+ * 감성 원점수는 −1~+1 범위이므로 0.01은 전체 폭의 0.5%입니다. 그보다 덜
+ * 움직이면 "안정적"이 아니라 **고장**으로 봅니다.
+ *
+ * **이 관문이 자기상관보다 앞서야 합니다.** 멈춘 값은 자기상관이 1에 가까운데,
+ * 사전 규칙은 0.3 이상을 "값이 이어짐 → 가중치 유지"로 읽습니다. 그대로 두면
+ * **고장을 신호로 읽고 정반대 결론**을 냅니다. 거시 층에서 "구간이 대부분 정확히
+ * 0이면 규칙이 발동하지 않은 것"이라고 한 것과 같은 함정입니다.
+ */
+export const STUCK_STDEV_THRESHOLD = 0.01;
+
 export function summarizeSentimentSeries(series) {
   const scores = series.map((row) => Number(row.score)).filter(Number.isFinite);
   if (scores.length === 0) {
@@ -72,9 +85,14 @@ export function summarizeSentimentSeries(series) {
   const stdev = Math.sqrt(average(scores.map((score) => (score - mean) ** 2)));
   const changes = scores.slice(1).map((score, index) => Math.abs(score - scores[index]));
 
+  const distinctValues = new Set(scores.map((score) => Math.round(score * 1000))).size;
+
   return {
     count: scores.length,
     firstDate: series[0].tradingDate,
+    // **값이 움직이는가.** 자기상관보다 먼저 보는 관문입니다.
+    distinctValues,
+    stuck: stdev < STUCK_STDEV_THRESHOLD,
     lastDate: series[series.length - 1].tradingDate,
     tradingDays: new Set(series.map((row) => row.tradingDate)).size,
     mean: round(mean),

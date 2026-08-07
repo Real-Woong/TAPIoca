@@ -52,12 +52,26 @@ if (asJson) {
     console.log(`(참고) 스냅샷 단위 자기상관: ${snapshotSummary.autocorrelation} — 판정에 쓰지 않습니다.`);
   }
 
+  // **자기상관보다 먼저 보는 관문입니다.** 멈춘 값은 자기상관이 1에 가까워
+  // "값이 이어진다"로 읽히는데, 그것은 고장을 신호로 읽는 것입니다.
+  if (summary.stuck) {
+    console.log(
+      `\n⚠️  값이 멈춰 있습니다 — 표준편차 ${summary.stdev}, 서로 다른 값 ` +
+        `${summary.distinctValues}개 / ${summary.count}일.\n` +
+        "   이 상태로는 자기상관을 판정에 쓸 수 없습니다. 멈춘 값은 자기상관이\n" +
+        "   1에 가까워 '정보를 담고 있다'는 정반대 결론으로 읽힙니다.\n" +
+        "   먼저 수집이 살아 있는지 보십시오: npm run sentiment:status");
+  }
+
   if (summary.autocorrelation === null) {
     console.log(
       `1차 자기상관(일별): 표본 부족 (${summary.count}/10거래일) — 최소 10거래일은 모여야 계산합니다.`,
     );
   } else {
     console.log(`1차 자기상관(일별): ${summary.autocorrelation}`);
+    if (summary.stuck) {
+      console.log("→ **판정 보류.** 값이 멈춰 있어 이 숫자는 지속성이 아니라 고장을 잽니다.");
+    } else {
     // 판정 기준을 코드에 박아 두면 나중에 눈대중으로 해석이 흔들리지 않습니다.
     console.log(
       summary.autocorrelation >= 0.3
@@ -65,7 +79,8 @@ if (asJson) {
         : summary.autocorrelation <= 0.1
           ? "→ 매일 새로 뽑히는 값과 구분되지 않습니다. 가중치 축소나 평활을 검토하세요."
           : "→ 판단하기 애매합니다. 표본을 더 모으세요.",
-    );
+      );
+    }
   }
   console.log("\n전체 원본: data/paper-events.jsonl · 백테스트용 내보내기: --json --daily");
 }

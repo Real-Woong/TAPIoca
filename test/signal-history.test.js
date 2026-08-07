@@ -164,3 +164,40 @@ test("기록이 없으면 빈 요약을 낸다", () => {
   assert.equal(summary.count, 0);
   assert.equal(summary.autocorrelation, null);
 });
+
+test("값이 멈추면 자기상관보다 먼저 그것을 알린다", () => {
+  // 2026-08-07 실측: 기사 수가 24시간 동안 359로 붙박이였고 점수도 -0.545에서
+  // 멈췄다. 멈춘 값은 자기상관이 1에 가까워 "값이 이어진다 -> 정보를 담고 있다"로
+  // 읽히는데, 그것은 **고장을 신호로 읽는 것**이다.
+  const frozen = Array.from({ length: 12 }, (_, index) => ({
+    tradingDate: `2026-09-${String(index + 1).padStart(2, "0")}`,
+    score: -0.545,
+  }));
+
+  const summary = summarizeSentimentSeries(frozen);
+  assert.equal(summary.stuck, true);
+  assert.equal(summary.distinctValues, 1);
+  // 자기상관 자체는 stdev가 0이라 안 나오지만, 아주 조금만 움직여도 1에 가깝게
+  // 나온다는 것이 함정이다.
+});
+
+test("아주 조금만 움직여도 멈춘 것으로 본다 — 자기상관은 1에 가깝게 나온다", () => {
+  const almostFrozen = Array.from({ length: 12 }, (_, index) => ({
+    tradingDate: `2026-09-${String(index + 1).padStart(2, "0")}`,
+    score: -0.545 + (index % 2) * 0.001,
+  }));
+
+  const summary = summarizeSentimentSeries(almostFrozen);
+  assert.equal(summary.stuck, true, `표준편차 ${summary.stdev}`);
+  // 이 관문이 없으면 아래 숫자가 "정보를 담고 있다"로 읽힌다.
+  assert.ok(summary.autocorrelation !== null);
+});
+
+test("정상적으로 움직이는 값은 멈춘 것으로 보지 않는다", () => {
+  const moving = [0.3, -0.2, 0.5, -0.4, 0.1, 0.6, -0.3, 0.2, -0.5, 0.4, 0.0, -0.1]
+    .map((score, index) => ({
+      tradingDate: `2026-09-${String(index + 1).padStart(2, "0")}`, score,
+    }));
+
+  assert.equal(summarizeSentimentSeries(moving).stuck, false);
+});
