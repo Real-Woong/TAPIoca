@@ -48,6 +48,13 @@ function buildSignalSnapshot(marketSignal) {
           confidence: sentiment.confidence ?? null,
           articleCount: sentiment.articleCount ?? null,
           sourceCounts: sentiment.sourceCounts ?? null,
+          // **어느 소스가 살아 있었는지**를 스냅샷마다 남깁니다.
+          //
+          // 수집 도중에 죽은 소스가 살아나면 그 전후는 **다른 구성의 감성**입니다.
+          // 둘을 한 표본으로 평균 내면 자기상관이 아무것도 재지 않는 값이 됩니다.
+          // 나중에 갈라 보려면 그때의 구성이 남아 있어야 하고, 지나가면 복원할
+          // 방법이 없습니다.
+          sourceHealth: sentiment.sourceHealth ?? null,
           provider: sentiment.provider ?? null,
           fetchedAt: sentiment.fetchedAt ?? null,
           analyzedAt: sentiment.analyzedAt ?? null,

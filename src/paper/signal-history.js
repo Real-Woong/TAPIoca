@@ -35,6 +35,9 @@ export function extractSentimentSeries(events) {
       confidence: sentiment.confidence,
       articleCount: sentiment.articleCount,
       sourceCounts: sentiment.sourceCounts ?? null,
+      // 살아 있던 소스를 이름순으로 이어 붙인 지문입니다. 이 값이 바뀌는
+      // 지점이 곧 표본을 갈라야 하는 지점입니다.
+      sourceFingerprint: fingerprintSources(sentiment.sourceHealth),
       ageHours: event.signals.sentimentFreshness?.ageHours ?? null,
       multiplier: event.signals.sentimentFreshness?.multiplier ?? null,
       contribution: event.contributions?.sentiment ?? null,
@@ -46,6 +49,19 @@ export function extractSentimentSeries(events) {
     });
   }
   return [...bySnapshot.values()].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
+}
+
+/**
+ * 살아 있던 소스만 모아 지문을 만듭니다.
+ *
+ * 소스 구성이 바뀌면 그 전후는 **다른 것을 잰 표본**입니다. 지문이 같은 구간만
+ * 묶어야 자기상관이 의미를 가집니다.
+ */
+function fingerprintSources(sourceHealth) {
+  if (!Array.isArray(sourceHealth) || sourceHealth.length === 0) return null;
+  return [...new Set(sourceHealth.filter((item) => item.ok).map((item) => item.source))]
+    .sort()
+    .join("+");
 }
 
 /** 하루에 여러 스냅샷이 있으면 마지막 것만 남겨 일봉 백테스트에 맞춥니다. */
@@ -86,8 +102,15 @@ export function summarizeSentimentSeries(series) {
   const changes = scores.slice(1).map((score, index) => Math.abs(score - scores[index]));
 
   const distinctValues = new Set(scores.map((score) => Math.round(score * 1000))).size;
+  // 표본 안에서 소스 구성이 바뀌었는지 봅니다. 바뀌었다면 그 표본은 두 가지를
+  // 섞어 잰 것이라 자기상관을 그대로 쓸 수 없습니다.
+  const fingerprints = [...new Set(
+    series.map((row) => row.sourceFingerprint).filter(Boolean),
+  )];
 
   return {
+    sourceFingerprints: fingerprints,
+    mixedSources: fingerprints.length > 1,
     count: scores.length,
     firstDate: series[0].tradingDate,
     // **값이 움직이는가.** 자기상관보다 먼저 보는 관문입니다.

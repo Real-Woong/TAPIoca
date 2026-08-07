@@ -201,3 +201,45 @@ test("정상적으로 움직이는 값은 멈춘 것으로 보지 않는다", ()
 
   assert.equal(summarizeSentimentSeries(moving).stuck, false);
 });
+
+test("소스 구성이 표본 안에서 바뀌면 그것을 알린다", () => {
+  // 수집 도중 GDELT가 살아나면 그 전후는 다른 구성의 감성이다. 둘을 한 표본으로
+  // 평균 내면 자기상관이 아무것도 재지 않는 값이 된다.
+  const mixed = [
+    { tradingDate: "2026-09-01", score: 0.2, sourceFingerprint: "BLUESKY+FED_RSS" },
+    { tradingDate: "2026-09-02", score: -0.1, sourceFingerprint: "BLUESKY+FED_RSS" },
+    { tradingDate: "2026-09-03", score: 0.4, sourceFingerprint: "BLUESKY+FED_RSS+GDELT" },
+  ];
+
+  const summary = summarizeSentimentSeries(mixed);
+  assert.equal(summary.mixedSources, true);
+  assert.deepEqual(summary.sourceFingerprints, ["BLUESKY+FED_RSS", "BLUESKY+FED_RSS+GDELT"]);
+});
+
+test("구성이 그대로면 섞였다고 하지 않는다", () => {
+  const stable = [
+    { tradingDate: "2026-09-01", score: 0.2, sourceFingerprint: "BLUESKY+FED_RSS" },
+    { tradingDate: "2026-09-02", score: -0.1, sourceFingerprint: "BLUESKY+FED_RSS" },
+  ];
+  assert.equal(summarizeSentimentSeries(stable).mixedSources, false);
+});
+
+test("소스 지문은 살아 있던 소스만 이름순으로 모은다", () => {
+  const series = extractSentimentSeries([{
+    at: "2026-09-01T14:00:00Z",
+    signals: {
+      sentiment: {
+        score: 0.1, confidence: 0.6, articleCount: 100,
+        fetchedAt: "2026-09-01T13:00:00Z",
+        sourceHealth: [
+          { source: "FED_RSS", ok: true },
+          { source: "GDELT", ok: false, error: "fetch failed (ENOTFOUND)" },
+          { source: "BLUESKY", ok: true },
+        ],
+      },
+    },
+  }]);
+
+  // 죽은 GDELT는 빠지고 나머지가 이름순으로 붙는다.
+  assert.equal(series[0].sourceFingerprint, "BLUESKY+FED_RSS");
+});

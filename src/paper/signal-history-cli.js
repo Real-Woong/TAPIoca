@@ -52,6 +52,18 @@ if (asJson) {
     console.log(`(참고) 스냅샷 단위 자기상관: ${snapshotSummary.autocorrelation} — 판정에 쓰지 않습니다.`);
   }
 
+  // 소스 구성이 표본 안에서 바뀌면 그 전후는 다른 것을 잰 것입니다.
+  if (summary.sourceFingerprints?.length > 0) {
+    console.log(`소스 구성: ${summary.sourceFingerprints.join("  →  ")}`);
+  }
+  if (summary.mixedSources) {
+    console.log(
+      "\n⚠️  표본 안에서 소스 구성이 바뀌었습니다.\n" +
+        "   그 전후는 **다른 것을 잰 표본**이라 한 자기상관으로 묶으면 안 됩니다.\n" +
+        "   구성이 같은 구간끼리 나눠 보십시오: npm run paper:signals -- --json --daily",
+    );
+  }
+
   // **자기상관보다 먼저 보는 관문입니다.** 멈춘 값은 자기상관이 1에 가까워
   // "값이 이어진다"로 읽히는데, 그것은 고장을 신호로 읽는 것입니다.
   if (summary.stuck) {
