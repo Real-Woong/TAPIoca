@@ -397,13 +397,32 @@ async function buildMacroTimeline(datasets, { required = false } = {}) {
     throw new Error("개정 이력으로 되살린 거시 점수가 하나도 없습니다.");
   }
 
+  const coverage = summary.count / scores.length;
   console.log(
-    `\n  거시 되살리기: 관측 ${summary.count}일 (판정 불가 ${summary.unknown}일) | ` +
+    `\n  거시 되살리기: 관측 ${summary.count}일 / ${scores.length}일 ` +
+      `(적용률 ${(coverage * 100).toFixed(1)}%) | ` +
       `점수 ${summary.min}~${summary.max} 평균 ${summary.mean} 표준편차 ${summary.stdev} | ` +
       `값이 바뀐 날 ${summary.changeDays}일`,
   );
   if (summary.stdev === 0) {
     console.log("  경고: 되살린 점수가 상수입니다. 이 층은 표본 내내 움직이지 않았습니다.");
+  }
+
+  // 적용률이 낮으면 "되살린 거시"가 아니라 **상수와의 혼합**입니다. 그 줄을
+  // 되살리기로 읽으면 안 되므로 조용히 통과시키지 않습니다.
+  //
+  // 2026-08-07에 실제로 겪었습니다 — 적용률 34.8%로 돌려놓고 표를 읽었는데,
+  // 최대 낙폭 구간이 통째로 판정 불가 구간 안에 있어 MDD가 상수 0과 소수점까지
+  // 같았습니다. 결과가 "차이 없음"처럼 보였지만 실제로는 **재지 못한 것**입니다.
+  if (coverage < 0.9) {
+    throw new Error(
+      `되살린 거시의 적용률이 ${(coverage * 100).toFixed(1)}%입니다(90% 미만). ` +
+        `나머지 ${summary.unknown}일은 상수 ${options.macroScore}로 떨어지므로 ` +
+        "이 표는 되살리기가 아니라 혼합입니다.\n" +
+        "  원인은 지표의 개정 이력이 표본보다 짧은 것입니다. " +
+        "`--days`나 `--symbols`로 표본을 되살릴 수 있는 구간으로 줄이거나, " +
+        "짧은 지표를 대체할 계산을 넣어야 합니다.",
+    );
   }
 
   return { scores, description: `거시 되살리기(vintage) 평균 ${summary.mean}` };
@@ -422,7 +441,8 @@ async function runComparison() {
   // 모든 변형에 적용되므로 globalScores로 따로 들고 갑니다.
   const needsVintage = comparison.variants.some((variant) => variant.macro === "vintage");
   const macro = await buildMacroTimeline(datasets, { required: needsVintage });
-  macro.globalScores = options.macroSource === "vintage" ? macro.scores : null;
+  // 점수를 데이터셋에 실어야 구간 분할이 날짜와 함께 잘라 줍니다.
+  for (const dataset of datasets.sets) dataset.macroScores = macro.scores;
   console.log(`\n■ ${comparison.label}`);
   console.log(
     `  데이터: ${datasets.description} | 종목 ${options.symbols.join(",")} | ${macro.description}`,
@@ -438,7 +458,11 @@ async function runComparison() {
       dates: dataset.dates ?? undefined,
       policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
       macroScore: options.macroScore,
-      macroScores: variant.macro === "vintage" ? macro.scores : macro.globalScores,
+      // 구간 분할이 날짜와 함께 잘라 넘기므로 dataset에서 읽습니다.
+      // 바깥 macro.scores를 그대로 쓰면 구간에서 정렬이 어긋납니다.
+      macroScores: variant.macro === "vintage" || options.macroSource === "vintage"
+        ? dataset.macroScores ?? null
+        : null,
       signalOptions: variant.signal ?? {},
       ...(variant.options ?? {}),
     }).metrics,
@@ -525,11 +549,24 @@ function splitIntoBlocks(sets, count) {
   for (let index = 0; index < count; index += 1) {
     const sliced = sets.map((dataset) => {
       const closesBySymbol = {};
+      let size = 0;
       for (const [symbol, closes] of Object.entries(dataset.closesBySymbol)) {
-        const size = Math.floor(closes.length / count);
+        size = Math.floor(closes.length / count);
         closesBySymbol[symbol] = closes.slice(index * size, (index + 1) * size);
       }
-      return { ...dataset, closesBySymbol };
+      // 날짜와 거시 점수도 **같은 자리에서** 잘라야 합니다. 종가만 자르고
+      // 나머지를 전체 길이로 두면 구간 인덱스가 엉뚱한 날을 가리킵니다.
+      // 2026-08-07에 실제로 그랬습니다 — 되살린 거시가 뒤쪽 1738일에만 있는데
+      // 구간 길이가 1250이라 모든 구간이 null로 떨어져 상수와 같아졌고,
+      // 구간 차이가 정확히 0으로 찍혀 "차이가 없다"처럼 보였습니다.
+      const slice = (array) =>
+        Array.isArray(array) ? array.slice(index * size, (index + 1) * size) : array;
+      return {
+        ...dataset,
+        closesBySymbol,
+        dates: slice(dataset.dates),
+        macroScores: slice(dataset.macroScores),
+      };
     });
     const usable = Math.min(
       ...sliced.flatMap((dataset) =>
