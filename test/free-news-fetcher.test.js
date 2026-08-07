@@ -184,3 +184,48 @@ test("GDELT에는 다른 소스보다 긴 시한을 준다", async () => {
   assert.equal(deadlines.length, 2);
   assert.ok(deadlines.every((call) => call.hasSignal), "모든 외부 호출에 시한이 있다");
 });
+
+test("GDELT가 거절하면 한동안 요청 자체를 보내지 않는다", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const nodePath = await import("node:path");
+  const dataDir = await mkdtemp(nodePath.join(tmpdir(), "gdelt-cooldown-"));
+
+  let gdeltCalls = 0;
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    if (href.includes("gdeltproject")) {
+      gdeltCalls += 1;
+      return { ok: false, status: 429, async json() { return {}; }, async text() { return ""; } };
+    }
+    return {
+      ok: true, status: 200,
+      async text() {
+        return "<rss><channel><item><title>Fed holds</title>"
+          + "<link>https://federalreserve.gov/a</link></item></channel></rss>";
+      },
+      async json() { return { feed: [] }; },
+    };
+  };
+
+  const options = {
+    dataDir, fetchImpl,
+    fedFeeds: ["https://federalreserve.gov/feed"],
+    blueskyAuthors: [], opinionFeeds: [],
+    maxAgeMs: 0, // 캐시를 신선하게 보지 않아 매번 새로 받습니다.
+  };
+
+  const first = await fetchFreeMarketNews({ ...options, now: new Date("2026-08-08T00:00:00Z") });
+  assert.equal(gdeltCalls, 1);
+  assert.ok(first.gdeltCooldownUntil, "실패하면 쉬는 시각을 적어 둔다");
+
+  // 한 시간 뒤 — 아직 쉬는 중이므로 요청을 보내지 않습니다.
+  const second = await fetchFreeMarketNews({ ...options, now: new Date("2026-08-08T01:00:00Z") });
+  assert.equal(gdeltCalls, 1, "쉬는 중에는 두드리지 않는다 — 제한을 더 깊게 만든다");
+  const resting = second.sourceHealth.find((item) => item.source === "GDELT");
+  assert.equal(resting.skipped, true, "실패가 아니라 '안 갔다'로 남는다");
+
+  // 여섯 시간 뒤 — 다시 시도합니다.
+  await fetchFreeMarketNews({ ...options, now: new Date("2026-08-08T06:30:00Z") });
+  assert.equal(gdeltCalls, 2);
+});

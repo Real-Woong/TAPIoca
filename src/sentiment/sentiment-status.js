@@ -52,15 +52,21 @@ try {
       if (item.ok) {
         bucket.ok += 1;
         bucket.articles += item.articles ?? 0;
+      } else if (item.skipped) {
+        // "거절당했다"와 "안 갔다"는 다른 사실입니다. 실패로 세지 않습니다.
+        bucket.skipped = item;
       } else {
         bucket.failed.push(item);
       }
     }
     for (const [source, bucket] of grouped) {
       const total = bucket.ok + bucket.failed.length;
-      const mark = bucket.failed.length === 0 ? "✔" : bucket.ok > 0 ? "△" : "✖";
+      const mark = bucket.skipped ? "⏸"
+        : bucket.failed.length === 0 ? "✔"
+          : bucket.ok > 0 ? "△" : "✖";
       console.log(
-        `  ${mark} ${source.padEnd(12)} ${bucket.ok}/${total} 피드 · ${bucket.articles}건`,
+        `  ${mark} ${source.padEnd(12)} ` +
+          (bucket.skipped ? bucket.skipped.error : `${bucket.ok}/${total} 피드 · ${bucket.articles}건`),
       );
       for (const failure of bucket.failed) {
         console.log(`      ✖ ${failure.error}`);

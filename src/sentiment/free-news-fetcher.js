@@ -46,14 +46,20 @@ export async function fetchFreeMarketNews({
   // 어느 소스가 죽었는지 알려면 요청에 이름을 붙여야 합니다. 예전에는 실패
   // 메시지만 이어 붙여서, GDELT가 빠진 것을 `sourceCounts`에 없다는 사실로만
   // 눈치챌 수 있었습니다.
+  // 물러서는 중이면 요청을 아예 만들지 않습니다. 실패로 세지도 않습니다 —
+  // "거절당했다"와 "안 갔다"는 다른 사실입니다.
+  const gdeltCooldownUntil = cached?.gdeltCooldownUntil ?? null;
+  const gdeltResting = gdeltCooldownUntil !== null
+    && now.getTime() < new Date(gdeltCooldownUntil).getTime();
+
   const tasks = [
     ...fedFeeds.map((url) => ({
       source: "FED_RSS", detail: url, run: () => fetchFedRss(url, { fetchImpl }),
     })),
-    {
+    ...(gdeltResting ? [] : [{
       source: "GDELT", detail: query,
       run: () => fetchGdeltNews({ query, maxRecords: normalizedMaxRecords, timespan, fetchImpl }),
-    },
+    }]),
     ...unique(blueskyAuthors).map((actor) => ({
       source: "BLUESKY", detail: actor, run: () => fetchBlueskyAuthorFeed(actor, { fetchImpl }),
     })),
@@ -74,9 +80,24 @@ export async function fetchFreeMarketNews({
       ? { source: task.source, detail: task.detail, ok: true, articles: result.value.length }
       : { source: task.source, detail: task.detail, ok: false, error: describeError(result.reason) };
   });
+  if (gdeltResting) {
+    sourceHealth.push({
+      source: "GDELT", detail: query, ok: false, skipped: true,
+      error: `요청 제한으로 쉬는 중 (${gdeltCooldownUntil}까지)`,
+    });
+  }
+
   const failures = sourceHealth
-    .filter((item) => !item.ok)
+    .filter((item) => !item.ok && !item.skipped)
     .map((item) => `${item.source}: ${item.error}`);
+
+  // GDELT가 실제로 실패했으면 그 시각을 적어 둡니다. 성공하면 지웁니다.
+  const gdeltResult = sourceHealth.find((item) => item.source === "GDELT" && !item.skipped);
+  const nextCooldown = gdeltResult && !gdeltResult.ok
+    ? new Date(now.getTime() + GDELT_COOLDOWN_MS).toISOString()
+    : gdeltResult?.ok
+      ? null
+      : gdeltCooldownUntil;
 
   if (articles.length === 0) {
     if (cached?.cacheKey === cacheKey) {
@@ -101,6 +122,8 @@ export async function fetchFreeMarketNews({
     // 성공한 소스도 함께 남깁니다. 죽은 것만 적으면 "원래 없었는지 죽은 것인지"를
     // 나중에 가릴 수 없습니다.
     sourceHealth,
+    // 다음에 GDELT를 언제 다시 볼지. 캐시를 다시 써도 살아남아야 합니다.
+    gdeltCooldownUntil: nextCooldown,
     warning: failures.length ? failures.join("; ") : undefined,
   };
   await mkdir(dataDir, { recursive: true });
@@ -125,8 +148,23 @@ export async function fetchFreeMarketNews({
  */
 const TIMEOUTS = Object.freeze({
   default: 10_000,
-  gdelt: 30_000,
+  // 429가 51초 만에 오는 것을 확인했습니다(2026-08-08). 그걸 다 기다릴 이유는
+  // 없습니다 — 아래 물러서기가 있으니 한 번 실패하면 한동안 안 갑니다.
+  gdelt: 20_000,
 });
+
+/**
+ * GDELT가 거절하면 한동안 가지 않습니다.
+ *
+ * **2026-08-08 확인: 429다.** 차단도 질의 무게도 아니고 요청 제한이다. 단순
+ * 질의도 429가 났고, 그 응답이 오는 데 51초가 걸렸다. 우리 시한(30초)이 그 전에
+ * 끊어서 지금까지 `timeout`만 보였고 429는 한 번도 못 봤다.
+ *
+ * 물러서지 않으면 캐시가 만료될 때마다 **20초를 버리고 아무것도 못 받으면서,
+ * 거절하는 서비스를 계속 두드려 제한을 더 깊게 만든다.** 그래서 한 번 실패하면
+ * 그 시각을 적어 두고 그동안은 요청 자체를 보내지 않는다.
+ */
+const GDELT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function timeout(ms = TIMEOUTS.default) {
   return { signal: AbortSignal.timeout(ms) };
