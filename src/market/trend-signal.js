@@ -233,10 +233,19 @@ export async function fetchDailyCloses(symbol, config, fetchImpl, apiKey) {
   const errors = [];
   for (const source of dailySources(apiKey)) {
     try {
-      const closes = await source.fetch(symbol, config, fetchImpl);
+      const bars = await source.fetch(symbol, config, fetchImpl);
       // 어느 소스가 실제로 응답했는지 남깁니다. 폴백으로 버티는 중인지
       // 주 소스가 살아 있는지 구분해야 다음 장애를 미리 알 수 있습니다.
-      if (closes.length > 0) return { closes, source: source.name };
+      //
+      // `dates`는 덧붙인 것이고 `closes`는 예전 그대로입니다. 추세·MACD는
+      // 날짜를 안 읽으므로 운영 경로의 동작이 바뀌지 않습니다.
+      if (bars.length > 0) {
+        return {
+          closes: bars.map((bar) => bar.close),
+          dates: bars.every((bar) => bar.date) ? bars.map((bar) => bar.date) : null,
+          source: source.name,
+        };
+      }
       errors.push(`${source.name}: 종가 없음`);
     } catch (error) {
       errors.push(`${source.name}: ${error.message}`);
@@ -277,11 +286,18 @@ async function fetchTwelveDataCloses(symbol, config, fetchImpl, apiKey) {
     });
   const response = await fetchImpl(url, { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
-  return parseTwelveDataCloses(await response.text()).slice(-config.maxSamples);
+  return parseTwelveDataBars(await response.text()).slice(-config.maxSamples);
 }
 
-/** Twelve Data time_series 응답에서 종가를 오래된 순으로 뽑습니다. */
-export function parseTwelveDataCloses(body) {
+/**
+ * Twelve Data time_series 응답에서 **날짜와 종가**를 오래된 순으로 뽑습니다.
+ *
+ * 추세·MACD는 날짜가 필요 없어 오랫동안 종가만 뽑아 왔습니다. 그러나 거시
+ * 지표를 과거 시점에 맞추려면 **각 종가가 실제로 며칠인지** 알아야 합니다.
+ * 그것이 없으면 백테스터는 가짜 달력(`defaultDates`)을 쓰고, 월간 FRED 값을
+ * 엉뚱한 날에 붙이게 됩니다.
+ */
+export function parseTwelveDataBars(body) {
   let payload;
   try {
     payload = typeof body === "string" ? JSON.parse(body) : body;
@@ -296,9 +312,14 @@ export function parseTwelveDataCloses(body) {
   if (!Array.isArray(values)) throw new Error("응답에 values 배열이 없습니다.");
   // 응답은 최신순이므로 뒤집어 오래된 순으로 만듭니다.
   return values
-    .map((row) => Number(row?.close))
-    .filter((close) => Number.isFinite(close) && close > 0)
+    .map((row) => ({ date: isoDate(row?.datetime), close: Number(row?.close) }))
+    .filter((bar) => Number.isFinite(bar.close) && bar.close > 0)
     .reverse();
+}
+
+/** Twelve Data time_series 응답에서 종가를 오래된 순으로 뽑습니다. */
+export function parseTwelveDataCloses(body) {
+  return parseTwelveDataBars(body).map((bar) => bar.close);
 }
 
 async function fetchYahooCloses(symbol, config, fetchImpl) {
@@ -311,7 +332,7 @@ async function fetchYahooCloses(symbol, config, fetchImpl) {
   });
   if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
   const body = await response.text();
-  return parseYahooCloses(body).slice(-config.maxSamples);
+  return parseYahooBars(body).slice(-config.maxSamples);
 }
 
 async function fetchStooqCloses(symbol, config, fetchImpl) {
@@ -322,13 +343,13 @@ async function fetchStooqCloses(symbol, config, fetchImpl) {
   });
   if (!response.ok) throw new Error(`응답 오류 ${response.status}`);
   const csv = await response.text();
-  const closes = parseStooqCloses(csv).slice(-config.maxSamples);
-  if (closes.length === 0) throw new Error(`CSV에 종가가 없습니다 (${describeBody(csv)})`);
-  return closes;
+  const bars = parseStooqBars(csv).slice(-config.maxSamples);
+  if (bars.length === 0) throw new Error(`CSV에 종가가 없습니다 (${describeBody(csv)})`);
+  return bars;
 }
 
-/** Yahoo Finance chart 응답에서 일봉 종가만 뽑습니다. 휴장일의 null은 건너뜁니다. */
-export function parseYahooCloses(body) {
+/** Yahoo Finance chart 응답에서 날짜와 종가를 뽑습니다. 휴장일의 null은 건너뜁니다. */
+export function parseYahooBars(body) {
   let payload;
   try {
     payload = typeof body === "string" ? JSON.parse(body) : body;
@@ -337,9 +358,24 @@ export function parseYahooCloses(body) {
   }
   const message = payload?.chart?.error?.description;
   if (message) throw new Error(message);
-  const closes = payload?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+  const result = payload?.chart?.result?.[0];
+  const closes = result?.indicators?.quote?.[0]?.close;
   if (!Array.isArray(closes)) throw new Error("응답에 종가 배열이 없습니다.");
-  return closes.map(Number).filter((close) => Number.isFinite(close) && close > 0);
+  // timestamp는 초 단위 epoch입니다. 없으면 날짜 없이 종가만 남깁니다.
+  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  return closes
+    .map((close, index) => ({
+      date: Number.isFinite(Number(timestamps[index]))
+        ? new Date(Number(timestamps[index]) * 1000).toISOString().slice(0, 10)
+        : null,
+      close: Number(close),
+    }))
+    .filter((bar) => Number.isFinite(bar.close) && bar.close > 0);
+}
+
+/** Yahoo Finance chart 응답에서 일봉 종가만 뽑습니다. 휴장일의 null은 건너뜁니다. */
+export function parseYahooCloses(body) {
+  return parseYahooBars(body).map((bar) => bar.close);
 }
 
 /** 차단·한도 초과 응답을 로그에서 알아볼 수 있도록 본문 앞부분을 짧게 요약합니다. */
@@ -354,18 +390,34 @@ function hasUsableCloses(symbols) {
 }
 
 /** Stooq CSV(Date,Open,High,Low,Close,Volume)에서 종가 열만 추출합니다. */
-export function parseStooqCloses(csv) {
+export function parseStooqBars(csv) {
   const lines = String(csv).trim().split(/\r?\n/);
   if (lines.length < 2) return [];
   const header = lines[0].split(",");
   const closeIndex = header.findIndex((name) => name.trim().toLowerCase() === "close");
   const index = closeIndex >= 0 ? closeIndex : 4;
-  const closes = [];
+  const dateColumn = header.findIndex((name) => name.trim().toLowerCase() === "date");
+  const dateIndex = dateColumn >= 0 ? dateColumn : 0;
+  const bars = [];
   for (const line of lines.slice(1)) {
-    const close = Number(line.split(",")[index]);
-    if (Number.isFinite(close) && close > 0) closes.push(close);
+    const columns = line.split(",");
+    const close = Number(columns[index]);
+    if (Number.isFinite(close) && close > 0) {
+      bars.push({ date: isoDate(columns[dateIndex]), close });
+    }
   }
-  return closes;
+  return bars;
+}
+
+export function parseStooqCloses(csv) {
+  return parseStooqBars(csv).map((bar) => bar.close);
+}
+
+/** "2026-08-07" 또는 "2026-08-07 09:30:00" 을 날짜 문자열로 통일합니다. */
+function isoDate(value) {
+  if (!value) return null;
+  const text = String(value).trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
 }
 
 function ageHours(isoString, now) {

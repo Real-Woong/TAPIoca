@@ -25,12 +25,22 @@ export async function loadCachedCloses({ dataDir, symbols }) {
   }
 
   const closesBySymbol = {};
+  const datesBySymbol = {};
   for (const symbol of symbols) {
     const closes = cache?.symbols?.[symbol];
     if (!Array.isArray(closes) || closes.length === 0) return null;
     closesBySymbol[symbol] = closes;
+    const dates = cache?.dates?.[symbol];
+    if (Array.isArray(dates) && dates.length === closes.length) datesBySymbol[symbol] = dates;
   }
-  return { closesBySymbol, fetchedAt: cache.fetchedAt, sources: cache.sources ?? {} };
+  return {
+    closesBySymbol,
+    // 날짜는 나중에 덧붙인 것이라 예전 캐시에는 없습니다. 없으면 그냥 비어 있고,
+    // 거시 되살리기만 못 씁니다 — 나머지 비교는 날짜를 안 읽으므로 그대로 돕니다.
+    datesBySymbol,
+    fetchedAt: cache.fetchedAt,
+    sources: cache.sources ?? {},
+  };
 }
 
 /**
@@ -49,13 +59,18 @@ export async function fetchAndCacheCloses({
   const config = { ...DEFAULT_TREND_OPTIONS, maxSamples };
   const existing = await loadCachedCloses({ dataDir, symbols }).catch(() => null);
   const closesBySymbol = { ...(existing?.closesBySymbol ?? {}) };
+  const datesBySymbol = { ...(existing?.datesBySymbol ?? {}) };
   const sources = { ...(existing?.sources ?? {}) };
   const failures = [];
 
   for (const symbol of symbols) {
     try {
-      const { closes, source } = await fetchDailyCloses(symbol, config, fetchImpl, apiKey);
+      const { closes, dates, source } = await fetchDailyCloses(symbol, config, fetchImpl, apiKey);
       closesBySymbol[symbol] = closes;
+      // 소스가 날짜를 안 주면 지웁니다. 예전 종가에 붙어 있던 날짜를 남겨두면
+      // 길이는 맞는데 내용이 어긋난 배열이 되어 조용히 틀립니다.
+      if (dates) datesBySymbol[symbol] = dates;
+      else delete datesBySymbol[symbol];
       sources[symbol] = source;
     } catch (error) {
       failures.push(`${symbol}: ${error.message}`);
@@ -70,12 +85,15 @@ export async function fetchAndCacheCloses({
   const cachePath = path.join(dataDir, CACHE_FILE);
   const temporaryPath = `${cachePath}.tmp`;
   const snapshot = {
-    version: 1,
+    version: 2,
     fetchedAt: now.toISOString(),
     sources,
     symbols: closesBySymbol,
+    // 종가와 같은 길이의 날짜 배열입니다. 거시 지표를 그 시점 값으로 되살릴 때
+    // 씁니다. 소스가 날짜를 안 주면 그 종목은 여기 없습니다.
+    dates: datesBySymbol,
   };
   await writeFile(temporaryPath, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
   await rename(temporaryPath, cachePath);
-  return { closesBySymbol, sources, failures };
+  return { closesBySymbol, datesBySymbol, sources, failures };
 }

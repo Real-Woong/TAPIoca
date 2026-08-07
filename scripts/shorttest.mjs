@@ -29,6 +29,7 @@ const LABELS = {
   "daily-report.test.js": "일일리포트",
   "macd-signal.test.js": "MACD",
   "macro-regime.test.js": "거시·레짐",
+  "macro-history.test.js": "거시 되살리기(vintage)",
   "macro-snapshot.test.js": "거시캐시",
   "market-sentiment.test.js": "감성결합",
   "sentiment-analyzer.test.js": "감성분석",

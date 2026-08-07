@@ -101,6 +101,16 @@ export async function fetchFredSeries({
   units = "lin",
   limit = 180,
   fetchImpl = fetch,
+  // 개정 이력(vintage)을 받을 때 씁니다. 기본은 지정하지 않음 = 최신 개정본만
+  // 받는 지금까지의 동작입니다.
+  //
+  // **거시 지표를 과거로 되돌려 백테스트하려면 이 값이 반드시 필요합니다.**
+  // FRED가 기본으로 주는 것은 **개정된** 값이라, 2008년 실업률을 지금 조회하면
+  // 그때는 아무도 몰랐던 확정치가 옵니다. 그대로 쓰면 look-ahead입니다.
+  // realtime 범위를 넓게 주면 관측마다 `realtimeStart`가 함께 오고, 그것이
+  // "이 값이 세상에 알려진 날"입니다. 그 날짜로 걸러야 그 시점의 판단이 됩니다.
+  realtimeStart,
+  realtimeEnd,
 }) {
   if (!apiKey) throw new Error("FRED_API_KEY가 필요합니다.");
   if (!seriesId) throw new Error("FRED seriesId가 필요합니다.");
@@ -114,6 +124,8 @@ export async function fetchFredSeries({
   url.searchParams.set("sort_order", "desc");
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("units", units);
+  if (realtimeStart) url.searchParams.set("realtime_start", realtimeStart);
+  if (realtimeEnd) url.searchParams.set("realtime_end", realtimeEnd);
 
   const response = await fetchImpl(url, {
     headers: {
@@ -146,6 +158,10 @@ export async function fetchFredSeries({
     .map((item) => ({
       date: item.date,
       value: Number(item.value),
+      // realtime 범위를 요청했을 때만 붙습니다. 지금까지의 호출은 이 필드가 없고
+      // 소비자도 안 읽으므로 동작이 바뀌지 않습니다.
+      ...(item.realtime_start ? { realtimeStart: item.realtime_start } : {}),
+      ...(item.realtime_end ? { realtimeEnd: item.realtime_end } : {}),
     }))
     // 날짜가 없거나 숫자 변환에 실패한 관측값을 마지막으로 제거합니다.
     .filter((item) => item.date && Number.isFinite(item.value));

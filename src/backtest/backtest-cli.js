@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { loadTradingPolicy } from "../paper/trading-policy.js";
 import { runBacktest } from "./backtest-engine.js";
+import { fetchAndCacheMacroVintages, loadMacroVintages } from "./macro-cache.js";
+import { macroScoreTimeline, summarizeMacroTimeline } from "./macro-history.js";
 import { fetchAndCacheCloses, loadCachedCloses } from "./price-cache.js";
 import { buildScenario, SCENARIOS } from "./scenarios.js";
 
@@ -17,7 +19,10 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --compare stop    손절 문턱: 고정 비율 대 변동성 배수
  *   npm run backtest -- --blocks 5        표본을 5등분해 지표가 얼마나 흔들리는지
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
+ *   npm run backtest -- --compare macro   거시 상수 편향의 대가
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
+ *   npm run backtest -- --fetch-macro     FRED 개정 이력(vintage)을 받아 캐시에 저장
+ *   npm run backtest -- --macro-source vintage  거시 층을 그 시점 값으로 되살려 실행
  *   npm run backtest -- --source cache    캐시된 실데이터로 실행
  *
  * 비교 종류: exit, macd, band, cost, strategy, vol, source, stop, stopcost, trend
@@ -115,6 +120,28 @@ const COMPARISONS = {
       { name: "비용 0", env: { TRADE_COST_RATE: "0" } },
       { name: "현재 10bp", env: { TRADE_COST_RATE: "0.001" } },
       { name: "30bp", env: { TRADE_COST_RATE: "0.003" } },
+    ],
+  },
+  // FRED 거시 층은 점수 하나로만 배분에 들어갑니다(`allocationForScore`). 그리고
+  // 그 점수의 범위는 −7 ~ +3.5로 추세(±1)·감성(±2)보다 큽니다. **범위 기준으로
+  // 가장 큰 입력인데 가중치 손잡이가 없고 검증된 적이 없습니다.**
+  //
+  // 점수는 주식 비중으로 이렇게 번역됩니다 — 0에서 주식 90%, −1.5에서 60%.
+  // 즉 **점수 1당 주식 20%p**입니다. 실운영에서 −0.5가 유지되므로 이 층은 지금
+  // 주식 노출을 상시 10%p 깎고 있습니다.
+  //
+  // 이 비교가 재는 것은 **그 상시 편향의 대가**입니다. 값이 안 움직이는 동안
+  // 거시 층은 신호가 아니라 파라미터이고, 파라미터라면 값을 해야 합니다.
+  // 층이 실제로 **때를 맞추는지**는 이 비교가 답하지 않습니다 — `--macro-source
+  // vintage`가 그쪽입니다.
+  macro: {
+    label: "거시 상수 편향 (점수 1당 주식 20%p, 실운영은 −0.5)",
+    variants: [
+      { name: "+0.5 (완화 편향)", options: { macroScore: 0.5 } },
+      { name: "0 (백테스트 기본)", options: { macroScore: 0 } },
+      { name: "−0.5 (실운영 값)", options: { macroScore: -0.5 } },
+      { name: "−1.0", options: { macroScore: -1 } },
+      { name: "−1.5 (RISK_OFF 바닥)", options: { macroScore: -1.5 } },
     ],
   },
   // 지금까지의 모든 비교는 **노출을 맞춰놓고 낙폭을 쟀습니다.** 이 비교만 방향이
@@ -233,12 +260,39 @@ const options = parseArgs(process.argv.slice(2));
 try {
   if (options.fetch) {
     await runFetch();
+  } else if (options.fetchMacro) {
+    await runFetchMacro();
   } else {
     await runComparison();
   }
 } catch (error) {
   console.error(`오류: ${error.message}`);
   process.exitCode = 1;
+}
+
+/**
+ * FRED 개정 이력을 받아 캐시에 저장합니다.
+ *
+ * 일봉과 따로 받는 이유는 갱신 주기가 다르기 때문입니다. 한 번 받아두면
+ * 지표가 새로 발표될 때까지 다시 받을 일이 없습니다.
+ */
+async function runFetchMacro() {
+  const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
+  const apiKey = process.env.FRED_API_KEY;
+  if (!apiKey) throw new Error("FRED_API_KEY가 필요합니다(.env).");
+
+  console.log(`거시 개정 이력 수집 → ${dataDir}`);
+  const { series } = await fetchAndCacheMacroVintages({ dataDir, apiKey });
+  for (const [key, item] of Object.entries(series)) {
+    console.log(
+      `  ${item.id}: 관측 ${item.observations.length}개 (개정본 포함) — ${item.name}`,
+    );
+    void key;
+  }
+  console.log(
+    "\n이제 `--macro-source vintage`로 거시 층을 그 시점 값으로 되살려 돌릴 수 있습니다.\n" +
+      "  주의: 일봉 캐시에 날짜가 있어야 합니다. 예전 캐시라면 `--fetch`를 다시 실행하십시오.",
+  );
 }
 
 async function runFetch() {
@@ -274,6 +328,56 @@ async function runFetch() {
   }
 }
 
+/**
+ * 거시 층을 상수로 둘지, 그 시점 값으로 되살릴지 정합니다.
+ *
+ * 되살리기는 조건이 셋입니다 — 개정 이력 캐시, 일봉의 실제 날짜, 그리고
+ * 데이터셋이 하나일 것(합성 경로에는 실제 달력이 없습니다). 하나라도 없으면
+ * **조용히 상수로 돌아가지 않고 오류를 냅니다.** 되살린 줄 알았는데 상수로
+ * 돈 결과만큼 해로운 것이 없습니다.
+ */
+async function buildMacroTimeline(datasets) {
+  if (options.macroSource !== "vintage") {
+    return { scores: null, description: `거시 상수 점수 ${options.macroScore}` };
+  }
+  if (options.source !== "cache") {
+    throw new Error("--macro-source vintage는 --source cache와 함께 써야 합니다.");
+  }
+
+  const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
+  const vintages = await loadMacroVintages({ dataDir });
+  if (!vintages) {
+    throw new Error(
+      "거시 개정 이력 캐시가 없습니다. 먼저 `npm run backtest -- --fetch-macro`를 실행하십시오.",
+    );
+  }
+
+  const dates = datasets.sets[0]?.dates;
+  if (!dates) {
+    throw new Error(
+      "일봉 캐시에 날짜가 없습니다. 날짜는 나중에 추가된 항목이므로 " +
+        "`npm run backtest -- --fetch`로 캐시를 다시 받아야 합니다.",
+    );
+  }
+
+  const scores = macroScoreTimeline(vintages, dates);
+  const summary = summarizeMacroTimeline(scores);
+  if (!summary.count) {
+    throw new Error("개정 이력으로 되살린 거시 점수가 하나도 없습니다.");
+  }
+
+  console.log(
+    `\n  거시 되살리기: 관측 ${summary.count}일 (판정 불가 ${summary.unknown}일) | ` +
+      `점수 ${summary.min}~${summary.max} 평균 ${summary.mean} 표준편차 ${summary.stdev} | ` +
+      `값이 바뀐 날 ${summary.changeDays}일`,
+  );
+  if (summary.stdev === 0) {
+    console.log("  경고: 되살린 점수가 상수입니다. 이 층은 표본 내내 움직이지 않았습니다.");
+  }
+
+  return { scores, description: `거시 되살리기(vintage) 평균 ${summary.mean}` };
+}
+
 async function runComparison() {
   const comparison = COMPARISONS[options.compare];
   if (!comparison) {
@@ -283,17 +387,19 @@ async function runComparison() {
   }
 
   const datasets = await buildDatasets();
+  const macro = await buildMacroTimeline(datasets);
   console.log(`\n■ ${comparison.label}`);
   console.log(
-    `  데이터: ${datasets.description} | 종목 ${options.symbols.join(",")} | ` +
-      `거시 상수 점수 ${options.macroScore}`,
+    `  데이터: ${datasets.description} | 종목 ${options.symbols.join(",")} | ${macro.description}`,
   );
 
   const runVariant = (variant, sets) => sets.map((dataset) =>
     runBacktest({
       closesBySymbol: dataset.closesBySymbol,
+      dates: dataset.dates ?? undefined,
       policy: loadTradingPolicy({ ...BASE_ENV, ...(variant.env ?? {}) }),
       macroScore: options.macroScore,
+      macroScores: macro.scores,
       signalOptions: variant.signal ?? {},
       ...(variant.options ?? {}),
     }).metrics,
@@ -414,10 +520,21 @@ async function buildDatasets() {
     const days = Math.min(...Object.values(cached.closesBySymbol).map((closes) => closes.length));
     // 상장일이 달라 길이가 다르면 짧은 쪽에 맞춰 최신 구간만 씁니다.
     // 얼마나 잘렸는지 보이지 않으면 평가 구간을 오해하게 됩니다.
+    // 종목마다 상장일이 달라 길이가 다르므로 엔진과 같은 규칙으로 뒤에서 자릅니다.
+    // 날짜는 아무 종목에서나 가져오면 안 됩니다 — 가장 짧은 종목의 것을 써야
+    // 잘린 뒤의 인덱스와 날짜가 같은 날을 가리킵니다.
+    const shortest = Object.entries(cached.closesBySymbol)
+      .sort((a, b) => a[1].length - b[1].length)[0][0];
+    const shortestDates = cached.datesBySymbol?.[shortest] ?? null;
     return {
       description:
         `실데이터 캐시 ${days}일 (${lengths} → 최신 ${days}일로 정렬, 수집 ${cached.fetchedAt})`,
-      sets: [{ closesBySymbol: cached.closesBySymbol }],
+      sets: [{
+        closesBySymbol: cached.closesBySymbol,
+        dates: shortestDates
+          ? shortestDates.slice(-days).map((date) => new Date(`${date}T21:00:00Z`))
+          : null,
+      }],
     };
   }
 
@@ -479,6 +596,7 @@ function parseArgs(argv) {
     seeds: 3,
     days: 1500,
     macroScore: 0,
+    macroSource: "constant",
     blocks: 1,
     fetch: false,
   };
@@ -487,6 +605,8 @@ function parseArgs(argv) {
     const value = argv[index + 1];
     switch (flag) {
       case "--fetch": parsed.fetch = true; break;
+      case "--fetch-macro": parsed.fetchMacro = true; break;
+      case "--macro-source": parsed.macroSource = value; index += 1; break;
       case "--compare": parsed.compare = value; index += 1; break;
       case "--source": parsed.source = value; index += 1; break;
       case "--symbols": parsed.symbols = splitCsv(value); index += 1; break;

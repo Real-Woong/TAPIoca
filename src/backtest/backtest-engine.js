@@ -12,7 +12,8 @@ import { createPaperState, runPaperCycle, summarizePaperState } from "../paper/p
  * 백테스트가 통과해도 아무것도 보장하지 못합니다.
  *
  * 재현 불가능한 입력의 처리:
- * - FRED 거시 점수는 과거 시점 값을 그대로 되살리기 어려우므로 상수(macroScore)로 둡니다.
+ * - FRED 거시 점수는 기본적으로 상수(macroScore)입니다. 개정 이력을 받아오면
+ *   `macroScores`로 날짜별 값을 넣어 그 층이 때를 맞추는지도 잴 수 있습니다.
  * - 뉴스 감성은 과거 스냅샷이 존재하지 않으므로 아예 제외합니다(null).
  * 따라서 이 백테스터가 재는 것은 **가격 기반 레이어와 체결 규칙**이며,
  * 거시·감성 레이어의 예측력은 여기서 검증되지 않습니다.
@@ -27,6 +28,11 @@ export function runBacktest({
   fundedUsd = 67.05,
   // 거시 레이어를 상수로 고정합니다. 0이면 가격 레이어만으로 판단합니다.
   macroScore = 0,
+  // 날짜별 거시 점수를 주면 상수 대신 이것을 씁니다(길이는 timeline과 같아야
+  // 합니다). `macro-history.js`가 FRED 개정 이력에서 만들어 냅니다.
+  // null 항목은 "그날은 알 수 없었다"는 뜻이고, 그때는 macroScore로 되돌립니다 —
+  // 0을 쓰면 "모른다"와 "중립"이 같은 값이 되어 구분할 수 없습니다.
+  macroScores = null,
   signalOptions = {},
   // 200일선이 준비될 때까지는 매매하지 않고 지나갑니다.
   warmupDays = DEFAULT_TREND_OPTIONS.maPeriod,
@@ -78,9 +84,10 @@ export function runBacktest({
   for (let index = warmupDays; index < length; index += 1) {
     const now = timeline[index];
     const history = sliceHistory(aligned, index, maxSamples);
+    const dayMacroScore = macroScores?.[index] ?? macroScore;
     const combined = staticAllocation
       ? staticSignal(staticAllocation)
-      : combineMarketSignals(constantMacro(macroScore), null, {
+      : combineMarketSignals(constantMacro(dayMacroScore), null, {
           ...signalOptions,
           trend: buildTrendSignal(history, {}, now),
           macd: buildDailyMacdSignal(history, {}, now),
