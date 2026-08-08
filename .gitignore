@@ -7,8 +7,27 @@
 # 디렉터리째 무시합니다.
 data/
 
+# 자격증명 파일 일체. 이름을 짐작해 만든 방어선이라 실제로 쓰지 않는 패턴도
+# 들어 있습니다 — 하나 새어나가는 비용이 패턴 몇 줄보다 훨씬 큽니다.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+**/credentials*.json
+**/secrets*.json
+**/*service-account*.json
+
+# 도구별 로컬 설정. 이 기계에서만 맞는 값이라 공유하면 안 됩니다.
+# (지금까지는 전역 ~/.config/git/ignore가 막고 있었는데, 그것은 이 기계에만
+#  있으므로 다른 곳에서 클론하면 뚫립니다.)
+.claude/settings.local.json
+.codex/*.local.*
+
 node_modules/
 coverage/
+*.log
+npm-debug.log*
 .DS_Store
 trading_report_inTelegram/
 
