@@ -160,6 +160,8 @@ npm run paper:run -- --force
 
 Oracle에서 15분마다 자동 실행하려면 `deploy/`의 systemd 서비스와 타이머를
 사용합니다. 서비스는 `data/`만 쓸 수 있고 `.env`는 읽기 전용으로 사용합니다.
+배포 절차는 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)에 있습니다 — 서버에는 코드만
+보내고 `.env`·`data/`는 절대 덮어쓰지 않습니다.
 
 ## 7. 실주문 (사람이 직접 실행)
 
