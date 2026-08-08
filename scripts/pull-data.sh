@@ -57,6 +57,17 @@ esac
     export TOSS_SERVER=ubuntu@<서버주소>
 "
 
+case "$TOSS_SERVER" in
+  *CHANGE-ME*) die \
+"TOSS_SERVER 가 아직 예시값입니다: $TOSS_SERVER
+
+  ~/.zshrc 에서 CHANGE-ME 를 실제 서버 주소로 바꾸고 다시 여십시오:
+
+    export TOSS_SERVER=\"ubuntu@<서버주소>\"
+    source ~/.zshrc
+" ;;
+esac
+
 command -v rsync >/dev/null || die "rsync 가 필요합니다."
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -64,22 +75,52 @@ DEST="$DEST_ROOT/$STAMP"
 
 DRY=()
 if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "-n" ]; then
-  DRY=(--dry-run)
+  DRY=(--dry-run -v)
   echo "[모의 실행 — 아무것도 저장하지 않습니다]"
 fi
 
 mkdir -p "$DEST"
 
-# -a 권한·시각 보존, -z 압축. --delete 는 쓰지 않습니다. 매번 빈 폴더로
-# 받으므로 지울 것이 애초에 없고, 습관으로 남으면 언젠가 사고가 납니다.
-rsync -az ${DRY[@]+"${DRY[@]}"} --info=stats1 \
-  "$TOSS_SERVER:$REMOTE_DIR/data/" "$DEST/" \
-  || die "받기 실패. 서버 주소와 SSH 접속을 확인하세요: $TOSS_SERVER"
+# 어디서 죽든 **빈 스냅샷 폴더는 남기지 않습니다.** 정리를 실패 경로마다 적으면
+# 한 곳은 반드시 빠지고, 빈 폴더가 백업 목록에 쌓여 있으면 세어 놓은 개수가
+# 거짓말을 합니다. 내용이 있으면 건드리지 않습니다.
+cleanup() {
+  rm -f "$DEST_ROOT"/.rsync-err.$$ 2>/dev/null || true
+  [ -d "$DEST" ] && rmdir "$DEST" 2>/dev/null || true
+}
+trap cleanup EXIT
 
-if [ ${#DRY[@]} -gt 0 ]; then
-  rmdir "$DEST" 2>/dev/null || true
-  exit 0
+# -a 권한·시각 보존, -z 압축. 통계 플래그는 넣지 않습니다 — macOS 기본 rsync는
+# 2.6.9(openrsync)라 --info=stats1 을 모릅니다. 요약은 아래에서 직접 찍습니다.
+#
+# --delete 는 쓰지 않습니다. 매번 빈 폴더로 받으므로 지울 것이 애초에 없고,
+# 습관으로 남으면 언젠가 사고가 납니다.
+# TMPDIR 대신 백업 폴더 옆에 둡니다. 쓸 수 있는 곳이라는 것을 이미 알고 있고,
+# 환경마다 다른 TMPDIR 사정에 걸리지 않습니다.
+err="$DEST_ROOT/.rsync-err.$$"
+# `if ! cmd` 안에서는 $? 가 부정 결과(0)라 종료코드를 못 잡습니다. 따로 받습니다.
+set +e
+rsync -az ${DRY[@]+"${DRY[@]}"} \
+  "$TOSS_SERVER:$REMOTE_DIR/data/" "$DEST/" 2>"$err"
+code=$?
+set -e
+
+if [ "$code" -ne 0 ]; then
+  cat "$err" >&2
+  # 원인을 뭉개지 않습니다. "접속 확인하세요"가 옵션 오류를 가리면 엉뚱한
+  # 곳을 몇 번이고 다시 보게 됩니다.
+  if grep -q 'unrecognized option\|unknown option' "$err"; then
+    die "이 rsync 가 모르는 옵션을 씁니다. 위 usage 를 보고 스크립트를 고치세요."
+  fi
+  die "받기 실패 (rsync 종료코드 $code): $TOSS_SERVER:$REMOTE_DIR/data/
+
+  먼저 이것이 되는지 보세요:
+    ssh $TOSS_SERVER 'ls $REMOTE_DIR/data/'"
 fi
+
+# `[ ... ] && exit 0` 로 쓰면 안 됩니다 — 조건이 거짓일 때 && 가 1을 내고
+# set -e 가 그것을 실패로 보아 여기서 조용히 끝나 버립니다.
+if [ ${#DRY[@]} -gt 0 ]; then exit 0; fi
 
 # 받은 것이 쓸 만한지 확인합니다. 빈 폴더를 백업이라고 부르면 안 됩니다.
 missing=()
