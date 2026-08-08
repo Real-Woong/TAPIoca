@@ -593,7 +593,7 @@ Passed:     348
 Failed:     0
 ```
 
-As of 2026-08-08 (commit `b1fdcde`, the last commit to touch source). Re-run with:
+Verified on the Ubuntu production host, 2026-08-08. Re-run with:
 
 ```text
 npm test
