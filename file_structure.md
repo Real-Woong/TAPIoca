@@ -228,7 +228,7 @@ of guessing is a duplicate purchase with real money.
     measures real execution cost
 - `position-baseline.js`
   - The account already held unrelated assets when live trading began
-    (2026-08-07: [가림] valuation). Reconciling against an empty ledger would
+    (confirmed 2026-08-07). Reconciling against an empty ledger would
     halt permanently, so reconciliation target is
     **baseline + what we filled**, not the whole account
 - `slippage.js` / `slippage-cli.js`
