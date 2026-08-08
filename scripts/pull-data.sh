@@ -28,8 +28,16 @@ KEEP="${TOSS_BACKUP_KEEP:-30}"
 ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 DEST_ROOT="$ROOT/backups/data"
 
-# 원장이 반드시 있어야 하는 파일들. 없으면 받은 것이 쓸모없습니다.
-REQUIRED=(live-orders.jsonl live-position-baseline.json paper-state.json)
+# 없으면 받은 것이 쓸모없는 파일. PAPER 가 한 사이클이라도 돌았다면 있습니다.
+REQUIRED=(paper-state.json)
+
+# 있으면 좋지만 **없는 것이 정상일 수 있는** 파일들. 없다고 사고가 아니므로
+# 빨간 경고로 찍지 않습니다 — 진짜 경고가 묻히면 아무도 안 봅니다.
+#   live-orders.jsonl              실주문을 한 번도 안 냈으면 없습니다
+#   live-position-baseline.json    live-cycle.js 가 돌아야 생깁니다.
+#                                  지금까지 실주문은 전부 수동 live:probe 였고
+#                                  probe 는 기준선을 만들지 않습니다
+OPTIONAL=(live-orders.jsonl live-position-baseline.json)
 
 die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 ok()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -125,21 +133,60 @@ if [ ${#DRY[@]} -gt 0 ]; then exit 0; fi
 # 받은 것이 쓸 만한지 확인합니다. 빈 폴더를 백업이라고 부르면 안 됩니다.
 missing=()
 for f in "${REQUIRED[@]}"; do
-  [ -s "$DEST/$f" ] || missing+=("$f")
+  if [ ! -s "$DEST/$f" ]; then missing+=("$f"); fi
 done
 if [ ${#missing[@]} -gt 0 ]; then
-  printf '\033[33m경고: 다음 파일이 없거나 비어 있습니다 — %s\033[0m\n' "${missing[*]}"
-  echo "      서버에서 아직 만들어지지 않았을 수 있습니다. 스냅샷은 남겨 둡니다."
+  printf '\033[33m경고: 반드시 있어야 할 파일이 없습니다 — %s\033[0m\n' "${missing[*]}"
+  echo "      서버에서 PAPER 가 한 번도 안 돌았는지 확인하세요. 스냅샷은 남겨 둡니다."
 fi
 
 ln -sfn "$DEST" "$DEST_ROOT/latest"
 
 ok "✓ $STAMP 로 받았습니다"
 printf '  %s\n' "$DEST"
-[ -s "$DEST/live-orders.jsonl" ] &&
-  printf '  실주문 원장: %s 건\n' "$(wc -l < "$DEST/live-orders.jsonl" | tr -d ' ')"
-[ -s "$DEST/paper-events.jsonl" ] &&
+
+# `[ ... ] && printf` 로 쓰면 파일이 없을 때 && 가 1을 내고 set -e 가 여기서
+# 스크립트를 끝냅니다 — 뒤의 정리까지 통째로 건너뜁니다. if 로 씁니다.
+if [ -s "$DEST/live-orders.jsonl" ]; then
+  events=$(wc -l < "$DEST/live-orders.jsonl" | tr -d ' ')
+  # 원장은 주문이 아니라 **이벤트**를 한 줄씩 쌓습니다(PLANNED→SUBMITTED→FILL).
+  # 줄 수를 주문 수로 읽으면 실제보다 몇 배로 세게 됩니다.
+  orders=""
+  if command -v node >/dev/null 2>&1; then
+    orders=$(node -e '
+      const fs = require("fs");
+      const seen = new Set();
+      for (const line of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try { const o = JSON.parse(line); if (o.clientOrderId) seen.add(o.clientOrderId); }
+        catch (_) {}
+      }
+      process.stdout.write(String(seen.size));
+    ' "$DEST/live-orders.jsonl" 2>/dev/null) || orders=""
+  fi
+  if [ -n "$orders" ]; then
+    printf '  실주문: %s 건 (원장 이벤트 %s 줄)\n' "$orders" "$events"
+  else
+    printf '  실주문 원장: %s 줄\n' "$events"
+  fi
+fi
+
+if [ -s "$DEST/paper-events.jsonl" ]; then
   printf '  PAPER 사이클: %s 건\n' "$(wc -l < "$DEST/paper-events.jsonl" | tr -d ' ')"
+fi
+
+# 없는 것이 정상일 수 있는 파일은 마지막에 조용히 알립니다.
+for f in "${OPTIONAL[@]}"; do
+  if [ ! -s "$DEST/$f" ]; then
+    case "$f" in
+      live-position-baseline.json)
+        printf '  · %s 없음 — live-cycle 이 아직 안 돌았으면 정상입니다\n' "$f" ;;
+      live-orders.jsonl)
+        printf '  · %s 없음 — 실주문을 아직 안 냈으면 정상입니다\n' "$f" ;;
+      *) printf '  · %s 없음\n' "$f" ;;
+    esac
+  fi
+done
 
 # 오래된 스냅샷 정리. 최신 KEEP개만 남깁니다.
 # mapfile 은 bash 4+ 라 macOS 기본 bash(3.2)에서 안 돕니다. 이름이 타임스탬프라
