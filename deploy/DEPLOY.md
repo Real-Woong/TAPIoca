@@ -109,12 +109,58 @@ ssh "$REMOTE" "journalctl -u toss-ai-paper -n 50 --no-pager"
 
 ## data/ 백업 — 반대 방향
 
-`data/`는 **서버에만 있습니다.** git이 무시하므로 저장소가 지켜주지 않고,
-보유 기준선을 잃으면 대사가 깨져 실행기가 영구 정지합니다. 로컬에서:
+`data/`는 **서버에만 있습니다.** git이 무시하므로 저장소가 지켜주지 않습니다.
+
+### 무엇을 지켜야 하는가
+
+`data/`는 7.4MB인데 **그중 96%가 다시 받으면 되는 캐시**입니다.
+
+| 되살릴 수 없음 | 크기 | | 되살릴 수 있음 | 되살리는 법 |
+|---|---:|---|---|---|
+| `paper-events.jsonl` | 258KB | | `macro-vintages.json` (6.3MB) | `backtest:fetch-macro` |
+| `paper-state.json` | 28KB | | `backtest-closes.json` | `backtest:fetch` |
+| `live-orders.jsonl` | 3KB | | `free-news-cache` 등 캐시 | 다음 사이클이 생성 |
+| `live-position-baseline.json` | 199B | | | |
+
+지켜야 할 것은 **290KB**뿐이고, 압축하면 **약 20KB**입니다.
+
+### 층 둘로 나눠 둡니다
+
+```text
+서버   매일 16:30 ET   되살릴 수 없는 것만 tar.gz → /home/ubuntu/toss-backups/
+로컬   매주 토 11:00   그 tar.gz 들만 rsync → backups/snapshots/
+```
+
+서버 스냅샷은 **앱 폴더 밖**에 둡니다. 배포는 앱 폴더를 건드리므로, 백업이 그
+안에 있으면 언젠가 배포 사고가 백업까지 지웁니다. **같이 죽는 백업은 백업이
+아닙니다.**
+
+설치:
 
 ```bash
-pull-data            # 서버 data/ 를 타임스탬프 스냅샷으로 받는다
-pull-data --list     # 쌓인 스냅샷 목록
+ssh "$REMOTE" "sudo cp $DEST/deploy/toss-ai-backup.{service,timer} /etc/systemd/system/ \
+  && sudo systemctl daemon-reload \
+  && sudo systemctl enable --now toss-ai-backup.timer"
+
+ssh "$REMOTE" "bash $DEST/scripts/snapshot-data.sh"     # 한 번 손으로 확인
+```
+
+로컬은 launchd가 토요일 11:00에 `pull-snapshots`를 부릅니다.
+
+```bash
+launchctl list | grep tapioca                            # 등록 확인
+tail ~/Library/Logs/tapioca/pull-snapshots.log           # 지난 실행 결과
+pull-snapshots                                           # 손으로 지금 받기
+pull-snapshots --list                                    # 쌓인 것 보기
+```
+
+### 통째로 받기 (가끔, 손으로)
+
+캐시까지 전부 필요할 때만 씁니다.
+
+```bash
+pull-data            # 서버 data/ 전체를 타임스탬프 폴더로
+pull-data --list
 pull-data -n         # 모의 실행
 ```
 
@@ -124,9 +170,18 @@ pull-data -n         # 모의 실행
 export TOSS_SERVER="ubuntu@<서버주소>"
 ```
 
-**반대 방향은 없습니다.** 로컬 사본을 서버로 밀면 그 순간 실주문 원장과 기준선이
-옛 상태로 덮이고 되돌릴 수 없으므로, 그 명령을 아예 만들지 않았습니다. 서버의
-`data/`를 되살려야 하는 상황이 오면 그때 사람이 판단해서 손으로 옮깁니다.
+### 반대 방향은 없습니다
+
+로컬 사본을 서버로 밀면 그 순간 실주문 원장과 기준선이 옛 상태로 덮이고
+되돌릴 수 없으므로, **그 명령을 아예 만들지 않았습니다.** 서버 `data/`를
+되살려야 하는 상황이 오면 그때 사람이 판단해서 손으로 옮깁니다.
+
+되살릴 때는 tar를 풀어 필요한 파일만 골라 넣습니다.
+
+```bash
+tar -xzf toss-data-20260808-203000.tar.gz -C /tmp/restore
+cat /tmp/restore/MANIFEST.json      # 언제·무엇이 담겼는지 먼저 본다
+```
 
 ## 급할 때
 

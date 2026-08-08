@@ -29,7 +29,9 @@
     "portfolio": "node --env-file=.env src/portfolio/cli.js",
     "test": "node scripts/shorttest.mjs",
     "test:verbose": "node --test",
-    "pull-data": "bash scripts/pull-data.sh"
+    "pull-data": "bash scripts/pull-data.sh",
+    "pull-snapshots": "bash scripts/pull-snapshots.sh",
+    "snapshot-data": "bash scripts/snapshot-data.sh"
   },
   "engines": {
     "node": ">=20.12"

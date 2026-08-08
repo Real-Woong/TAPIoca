@@ -46,8 +46,14 @@ toss-ai-agent/
 │   └── toss-invest-open-api-guide.md   # 브로커 API 원문 (판단 근거)
 ├── package.json
 ├── scripts/
-│   └── shorttest.mjs               # 요약 출력 테스트 러너 (npm test)
+│   ├── shorttest.mjs               # 요약 출력 테스트 러너 (npm test)
+│   ├── snapshot-data.sh            # 서버: 되살릴 수 없는 파일만 tar.gz
+│   ├── pull-snapshots.sh           # 로컬: 그 tar.gz 만 받아옴 (토요일 launchd)
+│   └── pull-data.sh                # 로컬: data/ 통째로 (가끔, 손으로)
 ├── deploy/
+│   ├── DEPLOY.md                   # 배포·백업 절차
+│   ├── toss-ai-backup.service
+│   ├── toss-ai-backup.timer
 │   ├── toss-ai-paper.service
 │   ├── toss-ai-paper.timer
 │   ├── toss-ai-report.service
@@ -523,6 +529,17 @@ daily-report.js
 - Frequency: approximately every 15 minutes
 - Service type: one-shot; runtime user: `ubuntu`
 - Writable application path: `data/` only
+
+### Backup timer
+
+- Service: `toss-ai-backup.service`, Timer: `toss-ai-backup.timer`
+- Schedule: 16:30 `America/New_York`, **every day** (not just weekdays — a
+  weekend incident must still find Friday's snapshot)
+- Snapshots only the irreplaceable files (~20KB gzipped) to
+  `/home/ubuntu/toss-backups`, **outside the app directory** so a bad deploy
+  cannot take the backups with it
+- Writes nowhere else: `ReadWritePaths` covers the backup directory only, so the
+  backup job cannot damage `data/`
 
 ### Telegram report timer
 
