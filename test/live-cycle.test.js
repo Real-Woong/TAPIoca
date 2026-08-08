@@ -10,7 +10,13 @@ import { createFakeBroker } from "../src/live/fake-broker.js";
 import { runLiveCycle } from "../src/live/live-cycle.js";
 import { ORDER_STATES } from "../src/live/order-lifecycle.js";
 import { readOrderEvents } from "../src/live/order-store.js";
-import { expectedPositions, readBaseline, restrictToManaged, saveBaseline } from "../src/live/position-baseline.js";
+import {
+  baselineFromCurrent,
+  expectedPositions,
+  readBaseline,
+  restrictToManaged,
+  saveBaseline,
+} from "../src/live/position-baseline.js";
 import { getUsRegularSessionStatus } from "../src/market/us-market-session.js";
 
 /** 기준선을 깔아 둔 임시 디렉터리입니다. 실거래는 기준선 없이 시작할 수 없습니다. */
@@ -171,6 +177,46 @@ test("기대 보유는 기준선에 우리 체결을 더한 값이다", () => {
 
 test("관리 종목만 남긴다", () => {
   assert.deepEqual(restrictToManaged({ VTI: 1, QQQ: 5 }, ["VTI"]), { VTI: 1 });
+});
+
+test("기준선을 되살릴 때 우리 체결을 뺀다 — 안 빼면 같은 수량을 두 번 센다", () => {
+  // 계좌에 원래 QQQ 10주가 있었고, 그 뒤 우리가 SCHD 0.357을 샀습니다.
+  const current = { QQQ: 10, SCHD: 0.357333 };
+  const realized = new Map([["SCHD", { quantity: 0.357333, usd: 12 }]]);
+
+  const { positions, warnings } = baselineFromCurrent(current, realized);
+
+  assert.deepEqual(positions, { QQQ: 10, SCHD: 0 });
+  assert.equal(warnings.length, 0);
+
+  // 되살린 기준선에 체결을 더하면 지금 보유와 같아야 합니다. 이것이 성립하지
+  // 않으면 첫 사이클에서 대사가 깨집니다.
+  assert.deepEqual(expectedPositions(positions, realized), current);
+});
+
+test("원장이 비어 있으면 기준선은 지금 보유 그대로다", () => {
+  const current = { QQQ: 10, SPY: 3 };
+  const { positions } = baselineFromCurrent(current, new Map());
+  assert.deepEqual(positions, current);
+});
+
+test("우리 체결이 지금 보유보다 많으면 0으로 두되 사람을 부른다", () => {
+  // 사용자가 우리 SCHD를 손수 팔아버린 경우입니다. 조용히 음수로 두면 그 뒤
+  // 계산이 전부 이상해지고, 조용히 0으로 두면 아무도 모릅니다.
+  const current = { SCHD: 0.1 };
+  const realized = new Map([["SCHD", { quantity: 0.4, usd: 13 }]]);
+
+  const { positions, warnings } = baselineFromCurrent(current, realized);
+
+  assert.equal(positions.SCHD, 0);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /손수 팔았거나|원장이 실제와 다릅니다/);
+});
+
+test("부동소수점 찌꺼기는 0으로 본다", () => {
+  const current = { SCHD: 0.1 + 0.2 };
+  const realized = new Map([["SCHD", { quantity: 0.3, usd: 10 }]]);
+  assert.equal(baselineFromCurrent(current, realized).positions.SCHD, 0);
 });
 
 test("금액 주문 시간창이 닫혔으면 내지 않는다", async () => {

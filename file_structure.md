@@ -57,6 +57,7 @@ toss-ai-agent/
 │   │   ├── doctor.js
 │   │   └── toss-client.js
 │   ├── live/
+│   │   ├── baseline-cli.js
 │   │   ├── broker-contract.js
 │   │   ├── emergency-stop-cli.js
 │   │   ├── emergency-stop.js
@@ -226,11 +227,22 @@ of guessing is a duplicate purchase with real money.
   - One live cycle: takes the PAPER engine's *intent* and turns it into an order
   - Intended to run alongside PAPER so the difference between the two ledgers
     measures real execution cost
-- `position-baseline.js`
+- `position-baseline.js` / `baseline-cli.js`
   - The account already held unrelated assets when live trading began
     (confirmed 2026-08-07). Reconciling against an empty ledger would
     halt permanently, so reconciliation target is
     **baseline + what we filled**, not the whole account
+  - `baselineFromCurrent()` reconstructs the pre-agent account as
+    **current holdings − our realized fills**. The baseline must describe the
+    account *before* we touched it, but it is recorded *after* — using current
+    holdings as-is would fold our own purchases into "was already there", and
+    `expectedPositions` would then count them twice
+  - `npm run live:baseline` records it once. **Check-only without `--confirm`**,
+    and it verifies `baseline + fills == current holdings` before saving —
+    saving a baseline that fails that check only halts the first cycle
+  - Never created automatically: a cycle that captures its own baseline would
+    absorb a mistaken purchase as "originally there", where it disappears from
+    reconciliation forever. `saveBaseline()` also refuses to overwrite
 - `slippage.js` / `slippage-cli.js`
   - Records the quote at submission time as a baseline and measures the gap
     against the actual fill
@@ -545,6 +557,7 @@ PAPER
 Live (human-initiated)
   npm run live:probe         Check the live connection — NO order without --confirm
   npm run live:probe -- --symbol SCHD --amount 2 --confirm
+  npm run live:baseline      Record the holdings baseline once (check-only without --confirm)
   npm run live:slippage      Realized slippage from the order ledger
   npm run stop               Engage the emergency stop (data/EMERGENCY_STOP)
 

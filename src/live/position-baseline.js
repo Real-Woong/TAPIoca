@@ -55,6 +55,54 @@ export async function saveBaseline(dataDir, positions, { at = new Date().toISOSt
   return snapshot;
 }
 
+/** 수량 비교에서 0으로 볼 오차입니다. 체결 수량이 소수점 여섯째 자리까지 옵니다. */
+const QUANTITY_EPSILON = 1e-6;
+
+/**
+ * **지금 보유에서 우리가 체결시킨 것을 빼서** 기준선을 되살립니다.
+ *
+ * 이 함수가 필요한 이유가 있습니다 — 기준선은 "우리가 손대기 전"이어야 하는데,
+ * 실제로 그것을 기록하려는 시점에는 **이미 손을 댄 뒤**인 경우가 많습니다.
+ * 2026-08-07에 수동 `live:probe`로 네 건이 나갔고, 기준선은 그 뒤에 만듭니다.
+ *
+ * 그때 "지금 보유"를 그대로 기준선으로 삼으면 **우리가 산 것이 '원래 있던 것'으로
+ * 편입됩니다.** 그러면 `expectedPositions`가 기준선에 체결분을 또 더해 같은
+ * 수량을 두 번 세고, 대사는 영원히 어긋납니다.
+ *
+ *   기준선 = 지금 브로커 보유 − 우리 원장의 실현 체결
+ *
+ * 이렇게 하면 `expectedPositions(기준선, 체결) == 지금 보유`가 되어 처음부터
+ * 아귀가 맞습니다. 원장이 비어 있으면 빼는 것이 없으므로 그냥 현재 보유입니다.
+ *
+ * @param {object} currentPositions 브로커가 말하는 지금 수량
+ * @param {Map}    realized `realizedFills()` 결과
+ * @returns {{positions: object, warnings: string[]}}
+ */
+export function baselineFromCurrent(currentPositions, realized) {
+  const positions = { ...(currentPositions ?? {}) };
+  const warnings = [];
+
+  for (const [symbol, fill] of realized ?? new Map()) {
+    const now = Number(positions[symbol]) || 0;
+    const ours = Number(fill.quantity) || 0;
+    const before = now - ours;
+
+    // **음수는 그냥 넘길 수 없습니다.** 우리 원장이 브로커보다 많이 샀다고
+    // 말하는 상태이고, 그것은 사용자가 우리 종목을 손수 팔았거나 원장이 실제와
+    // 다르다는 뜻입니다. 어느 쪽이든 사람이 봐야 합니다.
+    if (before < -QUANTITY_EPSILON) {
+      warnings.push(
+        `${symbol}: 지금 보유(${now})보다 우리 체결(${ours})이 많습니다. `
+        + "사용자가 손수 팔았거나 원장이 실제와 다릅니다. 0으로 두지만 확인이 필요합니다.",
+      );
+    }
+
+    positions[symbol] = Math.abs(before) < QUANTITY_EPSILON ? 0 : Math.max(0, before);
+  }
+
+  return { positions, warnings };
+}
+
 /**
  * 지금 브로커에 있어야 할 수량을 계산합니다 — **기준선 + 우리가 체결시킨 것**.
  *

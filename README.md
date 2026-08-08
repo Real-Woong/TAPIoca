@@ -171,6 +171,7 @@ Oracle에서 15분마다 자동 실행하려면 `deploy/`의 systemd 서비스�
 ```bash
 npm run live:probe                       # 확인만 한다 — 주문 안 나감
 npm run live:probe -- --symbol SCHD --amount 2 --confirm
+npm run live:baseline                    # 보유 기준선 기록 (--confirm 없으면 확인만)
 npm run live:slippage                    # 원장에 쌓인 실제 체결의 슬리피지
 npm run stop                             # 긴급 중지 (data/EMERGENCY_STOP)
 ```
