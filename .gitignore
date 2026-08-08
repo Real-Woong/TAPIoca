@@ -21,8 +21,8 @@ id_rsa*
 # 도구별 로컬 설정. 이 기계에서만 맞는 값이라 공유하면 안 됩니다.
 # (지금까지는 전역 ~/.config/git/ignore가 막고 있었는데, 그것은 이 기계에만
 #  있으므로 다른 곳에서 클론하면 뚫립니다.)
-.claude/settings.local.json
-.codex/*.local.*
+.claude/
+.codex/
 
 node_modules/
 coverage/
