@@ -5,9 +5,10 @@ import {
   extractSentimentSeries,
   summarizeSentimentSeries,
   toDailySeries,
+  UNKNOWN_FINGERPRINT,
 } from "../src/paper/signal-history.js";
 
-function event(at, { fetchedAt, score, articleCount = 400 } = {}) {
+function event(at, { fetchedAt, score, articleCount = 400, sourceHealth } = {}) {
   return {
     at,
     score: 0.5,
@@ -15,7 +16,7 @@ function event(at, { fetchedAt, score, articleCount = 400 } = {}) {
     signals: {
       weights: { sentiment: 1 },
       fred: { score: -0.5 },
-      sentiment: { score, confidence: 0.6, articleCount, fetchedAt },
+      sentiment: { score, confidence: 0.6, articleCount, fetchedAt, sourceHealth },
       sentimentFreshness: { ageHours: 1, multiplier: 0.9 },
       trend: { score: 0.98, confidence: 1, annualizedVol: 0.14 },
       macd: { score: 0.47, confidence: 1 },
@@ -222,6 +223,64 @@ test("구성이 그대로면 섞였다고 하지 않는다", () => {
     { tradingDate: "2026-09-02", score: -0.1, sourceFingerprint: "BLUESKY+FED_RSS" },
   ];
   assert.equal(summarizeSentimentSeries(stable).mixedSources, false);
+});
+
+// 2026-08-12 실측: 08-06(기사 359건·신뢰도 0.60)과 08-07 이후(462건·0.77)가 한
+// 표본에 들어 있는데 경고가 울리지 않았다. sourceHealth 기록이 08-08부터라 그 앞
+// 지문이 null이었고, 요약이 그것을 filter(Boolean)으로 버려 지문이 한 종류만
+// 남았기 때문이다. **모른다는 것은 같다는 것이 아니다.**
+test("지문이 없는 구간을 지문이 있는 구간과 같은 구성으로 보지 않는다", () => {
+  const summary = summarizeSentimentSeries([
+    { tradingDate: "2026-08-06", score: -0.545, sourceFingerprint: null },
+    { tradingDate: "2026-08-07", score: -0.202, sourceFingerprint: "BLUESKY+GOOGLE_NEWS" },
+    { tradingDate: "2026-08-10", score: -0.218, sourceFingerprint: "BLUESKY+GOOGLE_NEWS" },
+  ]);
+
+  assert.equal(summary.mixedSources, true);
+  assert.deepEqual(summary.sourceFingerprints, [UNKNOWN_FINGERPRINT, "BLUESKY+GOOGLE_NEWS"]);
+});
+
+test("판정 표본은 마지막 소스 구성의 구간뿐이다", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const pathModule = await import("node:path");
+  const { loadSignalHistory } = await import("../src/paper/signal-history.js");
+
+  const health = [{ source: "BLUESKY", ok: true }, { source: "GOOGLE_NEWS", ok: true }];
+  const events = [
+    // 지문을 남기기 전의 이틀. 기사 수부터 다르다 — 다른 것을 잰 표본이다.
+    event("2026-08-06T14:00:00Z", { fetchedAt: "2026-08-06T13:30:00Z", score: -0.545, articleCount: 359 }),
+    event("2026-08-06T18:00:00Z", { fetchedAt: "2026-08-06T17:30:00Z", score: -0.545, articleCount: 359 }),
+    event("2026-08-07T14:00:00Z", { fetchedAt: "2026-08-07T13:30:00Z", score: -0.546, articleCount: 359 }),
+    // 여기서부터 새 구성이다.
+    event("2026-08-07T20:00:00Z", { fetchedAt: "2026-08-07T19:06:00Z", score: -0.202, articleCount: 460, sourceHealth: health }),
+    event("2026-08-10T20:00:00Z", { fetchedAt: "2026-08-10T19:50:00Z", score: -0.218, articleCount: 462, sourceHealth: health }),
+    event("2026-08-11T20:00:00Z", { fetchedAt: "2026-08-11T19:47:00Z", score: -0.263, articleCount: 462, sourceHealth: health }),
+  ];
+
+  const dataDir = await mkdtemp(pathModule.join(tmpdir(), "signal-history-"));
+  await writeFile(
+    pathModule.join(dataDir, "paper-events.jsonl"),
+    `${events.map((item) => JSON.stringify(item)).join("\n")}\n`,
+  );
+
+  const history = await loadSignalHistory(dataDir);
+
+  // 일별로는 4일이 쌓였지만 판정에 쓸 수 있는 것은 새 구성의 3일뿐이다.
+  assert.equal(history.fullSummary.count, 4, "표본 전체는 4거래일");
+  assert.equal(history.summary.count, 3, "판정 표본은 마지막 구성의 3거래일");
+  assert.equal(history.summary.firstDate, "2026-08-07");
+  assert.equal(history.judgingSnapshotCount, 3, "옛 구성 스냅샷 3건은 빠진다");
+  assert.equal(history.judgingFrom, "2026-08-07T19:06:00Z");
+  assert.deepEqual(
+    history.dailySegments.map((segment) => [segment.fingerprint, segment.rows.length]),
+    [[UNKNOWN_FINGERPRINT, 1], ["BLUESKY+GOOGLE_NEWS", 3]],
+  );
+
+  // 섞인 표본의 표준편차(0.139)는 소스가 바뀐 자국을 포함한다. 판정용은 그것을
+  // 뺀 값이어야 한다. 둘 다 0.01 관문은 넘지만 같은 숫자가 아니다.
+  assert.equal(history.fullSummary.stdev, 0.139);
+  assert.equal(history.summary.stdev, 0.026);
 });
 
 test("소스 지문은 살아 있던 소스만 이름순으로 모은다", () => {

@@ -26,19 +26,27 @@ if (asJson) {
   // **판정에 쓰는 수를 맨 앞에 둡니다.** 예전에는 "감성 스냅샷 N건"이 먼저 나와서
   // 스냅샷 10건을 문턱(10거래일)을 채운 것으로 읽기 쉬웠습니다. 스냅샷은 하루에
   // 여러 개가 쌓이므로 둘은 전혀 다른 수입니다.
+  // **판정 표본은 마지막 소스 구성의 구간뿐입니다.** 구성이 바뀐 지점 앞을 함께
+  // 세면 문턱을 채운 것처럼 보이지만 두 가지를 섞어 잰 표본입니다.
   const tradingDays = history.summary.count ?? 0;
+  const excludedDays = (history.fullSummary.count ?? 0) - tradingDays;
   console.log(
     `판정 표본: 거래일 ${tradingDays}/10일` +
-      `${tradingDays >= 10 ? "" : ` (${10 - tradingDays}일 더 필요)`}\n` +
-      `  스냅샷 ${history.series.length}건 · ` +
+      `${tradingDays >= 10 ? "" : ` (${10 - tradingDays}일 더 필요)`}` +
+      `${excludedDays > 0 ? ` — 옛 소스 구성 ${excludedDays}일은 뺐습니다` : ""}\n` +
+      `  스냅샷 ${history.judgingSnapshotCount}건 · ` +
       `이벤트 ${history.eventCount}건 중 원본 신호 ${history.withSignals}건\n`,
   );
   console.log("수집시각              거래일        원점수   신뢰도  기사수  기여도  통합점수");
   for (const row of rows) {
+    // 판정에서 뺀 줄에 표시를 답니다. 표에는 보이는데 통계에는 안 들어간 줄이
+    // 아무 표시 없이 섞여 있으면 숫자가 어디서 나왔는지 되짚을 수 없습니다.
+    const old = history.judgingFrom && row.fetchedAt < history.judgingFrom;
     console.log(
       `${row.fetchedAt.slice(0, 16).replace("T", " ")}  ${row.tradingDate}  ` +
         `${pad(row.score, 7)} ${pad(row.confidence, 7)} ${pad(row.articleCount, 6)} ` +
-        `${pad(row.contribution, 7)} ${pad(row.combinedScore, 8)}`,
+        `${pad(row.contribution, 7)} ${pad(row.combinedScore, 8)}` +
+        `${old ? "  · 옛 구성(판정 제외)" : ""}`,
     );
   }
 
@@ -62,11 +70,24 @@ if (asJson) {
   if (summary.sourceFingerprints?.length > 0) {
     console.log(`소스 구성: ${summary.sourceFingerprints.join("  →  ")}`);
   }
-  if (summary.mixedSources) {
+  // 구성이 바뀌었다면 어느 구간을 판정에 쓰고 어느 구간을 뺐는지 그대로 보입니다.
+  if (history.dailySegments.length > 1) {
     console.log(
-      "\n⚠️  표본 안에서 소스 구성이 바뀌었습니다.\n" +
-        "   그 전후는 **다른 것을 잰 표본**이라 한 자기상관으로 묶으면 안 됩니다.\n" +
-        "   구성이 같은 구간끼리 나눠 보십시오: npm run paper:signals -- --json --daily",
+      "\n⚠️  표본 안에서 소스 구성이 바뀌었습니다 — **마지막 구성만 판정에 씁니다.**\n" +
+        "   그 전후는 다른 것을 잰 표본이라 한 자기상관으로 묶으면 안 됩니다.",
+    );
+    const width = Math.max(...history.dailySegments.map((seg) => displayWidth(seg.fingerprint)));
+    history.dailySegments.forEach((segment, index) => {
+      const last = index === history.dailySegments.length - 1;
+      console.log(
+        `   ${segment.fingerprint}${" ".repeat(width - displayWidth(segment.fingerprint))}  ` +
+          `${segment.rows[0].tradingDate} ~ ${segment.rows[segment.rows.length - 1].tradingDate} · ` +
+          `${segment.rows.length}일  ${last ? "← 판정 표본" : "← 뺌"}`,
+      );
+    });
+    console.log(
+      `   (참고) 전체 ${history.fullSummary.count}일을 한 표본으로 보면 ` +
+        `표준편차 ${history.fullSummary.stdev} — 소스가 바뀐 자국이 섞인 값입니다.`,
     );
   }
 
@@ -101,6 +122,11 @@ if (asJson) {
     }
   }
   console.log("\n전체 원본: data/paper-events.jsonl · 백테스트용 내보내기: --json --daily");
+}
+
+// 한글은 터미널에서 두 칸을 차지합니다. 글자 수로 맞추면 "(지문없음)" 줄만 밀립니다.
+function displayWidth(text) {
+  return [...text].reduce((sum, char) => sum + (/[ᄀ-ᇿ가-힯　-〿＀-｠]/.test(char) ? 2 : 1), 0);
 }
 
 function pad(value, width) {

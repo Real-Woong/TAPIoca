@@ -64,6 +64,40 @@ function fingerprintSources(sourceHealth) {
     .join("+");
 }
 
+/**
+ * 지문이 없는 스냅샷에 붙이는 이름입니다.
+ *
+ * `sourceHealth`는 2026-08-08부터 기록합니다. 그 전 스냅샷에는 지문이 없는데,
+ * 예전에는 그것을 `filter(Boolean)`으로 조용히 버리고 남은 지문 하나만 셌습니다.
+ * 그래서 08-06의 옛 구성(기사 359건·신뢰도 0.60)과 08-07 이후의 새 구성(462건·
+ * 0.77)이 한 표본에 섞여 있는데도 "구성이 그대로"라고 답했습니다.
+ *
+ * **모른다는 것은 같다는 것이 아닙니다.** 관문이 막으려던 바로 그 경우에 통과를
+ * 내주던 구멍이라, 지문 없음을 별개의 구성으로 셉니다.
+ */
+export const UNKNOWN_FINGERPRINT = "(지문없음)";
+
+function fingerprintOf(row) {
+  return row.sourceFingerprint || UNKNOWN_FINGERPRINT;
+}
+
+/**
+ * 지문이 바뀌는 지점에서 시계열을 자릅니다.
+ *
+ * 판정은 **마지막 구간**으로만 합니다. 구성이 다른 구간을 이어 붙여 자기상관을
+ * 재면 소스가 바뀐 자국을 지속성으로 읽습니다.
+ */
+export function splitBySourceFingerprint(series) {
+  const segments = [];
+  for (const row of series) {
+    const fingerprint = fingerprintOf(row);
+    const last = segments[segments.length - 1];
+    if (last && last.fingerprint === fingerprint) last.rows.push(row);
+    else segments.push({ fingerprint, rows: [row] });
+  }
+  return segments;
+}
+
 /** 하루에 여러 스냅샷이 있으면 마지막 것만 남겨 일봉 백테스트에 맞춥니다. */
 export function toDailySeries(series) {
   const byDate = new Map();
@@ -104,9 +138,8 @@ export function summarizeSentimentSeries(series) {
   const distinctValues = new Set(scores.map((score) => Math.round(score * 1000))).size;
   // 표본 안에서 소스 구성이 바뀌었는지 봅니다. 바뀌었다면 그 표본은 두 가지를
   // 섞어 잰 것이라 자기상관을 그대로 쓸 수 없습니다.
-  const fingerprints = [...new Set(
-    series.map((row) => row.sourceFingerprint).filter(Boolean),
-  )];
+  // 지문이 없는 구간도 하나의 구성으로 셉니다. 버리면 "구성이 그대로"로 읽힙니다.
+  const fingerprints = [...new Set(series.map(fingerprintOf))];
 
   return {
     sourceFingerprints: fingerprints,
@@ -150,6 +183,15 @@ export async function loadSignalHistory(dataDir) {
   const events = await readPaperEvents(dataDir);
   const series = extractSentimentSeries(events);
   const daily = toDailySeries(series);
+  // **판정 표본은 마지막 소스 구성의 구간뿐입니다.** 구성이 바뀐 지점 앞은 다른
+  // 것을 잰 표본이라, 이어 붙이면 10거래일을 채운 것처럼 보이지만 실제로는
+  // 두 가지를 섞어 잰 것입니다.
+  const dailySegments = splitBySourceFingerprint(daily);
+  const judgingDaily = dailySegments.length ? dailySegments[dailySegments.length - 1].rows : daily;
+  const snapshotSegments = splitBySourceFingerprint(series);
+  const judgingSnapshots = snapshotSegments.length
+    ? snapshotSegments[snapshotSegments.length - 1].rows
+    : series;
   return {
     eventCount: events.length,
     // 원본 신호가 없는 예전 이벤트가 몇 건인지 함께 알려, 표본이 언제부터 쌓였는지 드러냅니다.
@@ -171,8 +213,17 @@ export async function loadSignalHistory(dataDir) {
     // 08-06에 정한 판정 규칙은 문턱(0.1/0.3)과 표본 수(10)만 박았고 간격은
     // 비어 있었습니다. **그 빈칸을 결과가 나오기 전에 채운 것이지 규칙을 바꾼
     // 것이 아닙니다.** 문턱과 표본 수는 그대로입니다.
-    summary: summarizeSentimentSeries(daily),
+    summary: summarizeSentimentSeries(judgingDaily),
+    // 구성이 바뀐 지점을 보여 주기 위한 것입니다. 어느 구간을 뺐는지 말없이
+    // 빼면, 이번에 고친 구멍과 반대 방향으로 같은 잘못을 합니다.
+    dailySegments,
+    judgingSnapshotCount: judgingSnapshots.length,
+    // 이 시각부터가 판정 표본입니다. 구간은 시간순으로 이어져 있으므로 이 앞은
+    // 전부 옛 구성입니다.
+    judgingFrom: judgingSnapshots[0]?.fetchedAt ?? null,
+    // 표본 전체입니다. 참고로만 냅니다 — 구성이 섞여 있으면 판정에 쓸 수 없습니다.
+    fullSummary: summarizeSentimentSeries(daily),
     // 참고용입니다. 판정에 쓰지 않습니다.
-    snapshotSummary: summarizeSentimentSeries(series),
+    snapshotSummary: summarizeSentimentSeries(judgingSnapshots),
   };
 }
