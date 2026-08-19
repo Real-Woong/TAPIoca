@@ -35,9 +35,12 @@ export function extractSentimentSeries(events) {
       confidence: sentiment.confidence,
       articleCount: sentiment.articleCount,
       sourceCounts: sentiment.sourceCounts ?? null,
-      // 살아 있던 소스를 이름순으로 이어 붙인 지문입니다. 이 값이 바뀌는
+      // 요청한 소스를 이름순으로 이어 붙인 구성 지문입니다. 이 값이 바뀌는
       // 지점이 곧 표본을 갈라야 하는 지점입니다.
       sourceFingerprint: fingerprintSources(sentiment.sourceHealth),
+      // 그중 실제로 답한 소스. 표본을 가르지는 않지만 빠진 것은 보여야 합니다 —
+      // 질의 소스가 통째로 빠진 날은 값이 구조적으로 느려집니다.
+      liveFingerprint: liveSources(sentiment.sourceHealth),
       ageHours: event.signals.sentimentFreshness?.ageHours ?? null,
       multiplier: event.signals.sentimentFreshness?.multiplier ?? null,
       contribution: event.contributions?.sentiment ?? null,
@@ -52,16 +55,52 @@ export function extractSentimentSeries(events) {
 }
 
 /**
- * 살아 있던 소스만 모아 지문을 만듭니다.
+ * **구성**과 **가용성**은 다른 것입니다. 표본을 가르는 것은 구성뿐입니다.
  *
- * 소스 구성이 바뀌면 그 전후는 **다른 것을 잰 표본**입니다. 지문이 같은 구간만
- * 묶어야 자기상관이 의미를 가집니다.
+ *   구성    우리가 *요청한* 소스 집합. 이것이 바뀌면 그 전후는 다른 것을 잰
+ *           표본이라 한 자기상관으로 묶으면 안 됩니다.
+ *   가용성  그중 실제로 *답한* 소스. 매 사이클 흔들립니다.
+ *
+ * 예전에는 `ok`인 것만 모아 지문을 만들어 둘을 한 값에 뭉쳐 놨습니다. 그래서
+ * **GDELT가 어쩌다 한 번 살아나면 표본이 갈라졌습니다.** GDELT는 실패하면 6시간
+ * 쉬므로(free-news-fetcher.js) 성공이 사실상 무작위이고, 일별 시계열은 그날
+ * 마지막 스냅샷만 남기므로(toDailySeries) 하루의 지문이 동전 던지기로 정해졌습니다.
+ * 실제로 2026-08-18 19:47 한 건 때문에 판정 표본이 1일로 되돌아갔고, 그대로 두면
+ * **10거래일은 영영 차지 않습니다** — 어느 날이든 같은 일이 다시 일어납니다.
+ *
+ * 가용성 흔들림은 원점수를 바꾸지도 않습니다. 분석기가 키워드에 하나도 안 걸린
+ * 기사를 건너뛰므로(sentiment-analyzer.js) 08-18 18:46(464건)과 19:47(539건)의
+ * 원점수는 0.0130으로 같았고, 달라진 것은 신뢰도(0.691 → 0.660)뿐이었습니다.
+ * **판정은 원점수로 합니다.** 원점수를 안 건드리는 차이로 표본을 가르면 안 됩니다.
+ *
+ * 그래서 가용성은 가르지 않고 **기록해서 보여 줍니다**(availabilityGroups).
+ * 조용히 무시하면 이번에 고친 구멍과 반대 방향으로 같은 잘못을 합니다.
  */
 function fingerprintSources(sourceHealth) {
   if (!Array.isArray(sourceHealth) || sourceHealth.length === 0) return null;
-  return [...new Set(sourceHealth.filter((item) => item.ok).map((item) => item.source))]
-    .sort()
-    .join("+");
+  // `ok`로 거르지 않습니다. 쉬는 중인 GDELT도 sourceHealth에 남으므로
+  // (skipped: true) 요청한 집합은 이것으로 온전히 복원됩니다.
+  return joinSources(sourceHealth.map((item) => item.source));
+}
+
+/**
+ * 요청은 했는데 하나도 답하지 않은 경우입니다.
+ *
+ * `(지문없음)`과 붙여 쓰면 안 됩니다. 그쪽은 **기록이 없어 모른다**는 뜻이고,
+ * 이쪽은 **물어봤는데 전부 죽었다**는 뜻입니다. 같은 이름을 주면 앞서 고친
+ * "모른다는 것은 같다는 것이 아니다"를 가용성 쪽에서 다시 어기는 셈입니다.
+ */
+export const NO_LIVE_SOURCE = "(전부 실패)";
+
+/** 그 사이클에 실제로 답한 소스입니다. 표본을 가르지 않고 보고만 합니다. */
+function liveSources(sourceHealth) {
+  if (!Array.isArray(sourceHealth) || sourceHealth.length === 0) return null;
+  return joinSources(sourceHealth.filter((item) => item.ok).map((item) => item.source))
+    || NO_LIVE_SOURCE;
+}
+
+function joinSources(names) {
+  return [...new Set(names)].sort().join("+");
 }
 
 /**
@@ -79,6 +118,42 @@ export const UNKNOWN_FINGERPRINT = "(지문없음)";
 
 function fingerprintOf(row) {
   return row.sourceFingerprint || UNKNOWN_FINGERPRINT;
+}
+
+function availabilityOf(row) {
+  return row.liveFingerprint || UNKNOWN_FINGERPRINT;
+}
+
+/**
+ * 판정 구간 안에서 어느 날 무엇이 답했는지 묶습니다.
+ *
+ * **표본을 가르지 않습니다.** 구성이 같은 이상 한 표본이고, 이 목록은 자기상관을
+ * 읽을 때 곁에 두고 보라고 내는 것입니다. 요청했는데 답하지 않은 소스를 함께
+ * 적어야 "원래 없었는지 그날 죽은 것인지"를 나중에 가릴 수 있습니다.
+ */
+export function groupByAvailability(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const live = availabilityOf(row);
+    if (!groups.has(live)) {
+      const requested = fingerprintOf(row).split("+");
+      // 표식(지문없음·전부 실패)은 소스 이름이 아니므로 답한 것으로 세지 않습니다.
+      const answered = new Set(
+        live === UNKNOWN_FINGERPRINT || live === NO_LIVE_SOURCE ? [] : live.split("+"),
+      );
+      groups.set(live, {
+        live,
+        missing: requested.filter((name) => name !== UNKNOWN_FINGERPRINT && !answered.has(name)),
+        days: 0,
+        firstDate: row.tradingDate,
+        lastDate: row.tradingDate,
+      });
+    }
+    const group = groups.get(live);
+    group.days += 1;
+    group.lastDate = row.tradingDate;
+  }
+  return [...groups.values()];
 }
 
 /**
@@ -126,6 +201,19 @@ export function toDailySeries(series) {
  */
 export const STUCK_STDEV_THRESHOLD = 0.01;
 
+/**
+ * 멈춤 관문이 발동하려면 이만큼은 모여야 합니다.
+ *
+ * **점 하나짜리 표본의 표준편차는 정의상 0입니다.** 그래서 판정 표본이 1일이면
+ * `stuck`이 무조건 참이 되고, "값이 멈췄다 — 수집이 살아 있는지 보라"는 **오진**을
+ * 냈습니다. 2026-08-19 실측이 그랬습니다: 같은 출력에 "표본 부족 1/10"과 "값이
+ * 멈춰 있습니다"가 함께 떴는데 참인 것은 앞의 것뿐이었습니다.
+ *
+ * 표본이 없어서 못 재는 것과 재 보니 안 움직이는 것은 다릅니다. 2일도 값 하나가
+ * 우연히 같으면 걸리므로 3일부터 봅니다.
+ */
+export const MIN_STUCK_DAYS = 3;
+
 export function summarizeSentimentSeries(series) {
   const scores = series.map((row) => Number(row.score)).filter(Number.isFinite);
   if (scores.length === 0) {
@@ -140,15 +228,21 @@ export function summarizeSentimentSeries(series) {
   // 섞어 잰 것이라 자기상관을 그대로 쓸 수 없습니다.
   // 지문이 없는 구간도 하나의 구성으로 셉니다. 버리면 "구성이 그대로"로 읽힙니다.
   const fingerprints = [...new Set(series.map(fingerprintOf))];
+  // 가용성은 표본을 가르지 않습니다. 다만 판정 구간 안에서 흔들렸다면 그 사실은
+  // 남깁니다 — 어느 날 어떤 소스가 빠졌는지 모르고 자기상관만 읽으면 안 됩니다.
+  const availabilities = [...new Set(series.map(availabilityOf))];
 
   return {
     sourceFingerprints: fingerprints,
     mixedSources: fingerprints.length > 1,
+    availabilityVariants: availabilities,
+    mixedAvailability: availabilities.length > 1,
     count: scores.length,
     firstDate: series[0].tradingDate,
     // **값이 움직이는가.** 자기상관보다 먼저 보는 관문입니다.
     distinctValues,
-    stuck: stdev < STUCK_STDEV_THRESHOLD,
+    // 표본이 모자라면 판정하지 않습니다. 0은 "안 움직였다"가 아니라 "못 쟀다"입니다.
+    stuck: scores.length >= MIN_STUCK_DAYS && stdev < STUCK_STDEV_THRESHOLD,
     lastDate: series[series.length - 1].tradingDate,
     tradingDays: new Set(series.map((row) => row.tradingDate)).size,
     mean: round(mean),
@@ -217,6 +311,8 @@ export async function loadSignalHistory(dataDir) {
     // 구성이 바뀐 지점을 보여 주기 위한 것입니다. 어느 구간을 뺐는지 말없이
     // 빼면, 이번에 고친 구멍과 반대 방향으로 같은 잘못을 합니다.
     dailySegments,
+    // 판정 구간 안의 가용성입니다. 구성이 같아도 그날 무엇이 답했는지는 다릅니다.
+    availabilityGroups: groupByAvailability(judgingDaily),
     judgingSnapshotCount: judgingSnapshots.length,
     // 이 시각부터가 판정 표본입니다. 구간은 시간순으로 이어져 있으므로 이 앞은
     // 전부 옛 구성입니다.

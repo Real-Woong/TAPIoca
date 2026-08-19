@@ -66,14 +66,35 @@ if (asJson) {
     console.log(`(참고) 스냅샷 단위 자기상관: ${snapshotSummary.autocorrelation} — 판정에 쓰지 않습니다.`);
   }
 
-  // 소스 구성이 표본 안에서 바뀌면 그 전후는 다른 것을 잰 것입니다.
+  // 요청 구성이 표본 안에서 바뀌면 그 전후는 다른 것을 잰 것입니다.
   if (summary.sourceFingerprints?.length > 0) {
-    console.log(`소스 구성: ${summary.sourceFingerprints.join("  →  ")}`);
+    console.log(`요청 구성: ${summary.sourceFingerprints.join("  →  ")}`);
+  }
+
+  // **구성과 가용성을 갈라서 냅니다.** 표본을 가르는 것은 구성뿐이고, 그날 무엇이
+  // 실제로 답했는지는 여기서 봅니다. 이것마저 안 보여 주면 질의 소스가 통째로
+  // 빠진 날이 섞인 표본을 아무 표시 없이 판정에 씁니다.
+  if (history.availabilityGroups.length > 0) {
+    console.log("응답한 소스:");
+    const width = Math.max(...history.availabilityGroups.map((g) => displayWidth(g.live)));
+    for (const group of history.availabilityGroups) {
+      console.log(
+        `   ${group.live}${" ".repeat(width - displayWidth(group.live))}  ` +
+          `${group.firstDate} ~ ${group.lastDate} · ${group.days}일` +
+          `${group.missing.length ? `  ← ${group.missing.join(", ")} 빠짐` : ""}`,
+      );
+    }
+    if (summary.mixedAvailability) {
+      console.log(
+        "   요청 구성은 같으므로 표본은 가르지 않습니다. 소스가 죽었다 살아나는 것은\n" +
+          "   구성이 바뀐 것이 아닙니다. 다만 자기상관을 읽을 때 이 목록을 곁에 두십시오.",
+      );
+    }
   }
   // 구성이 바뀌었다면 어느 구간을 판정에 쓰고 어느 구간을 뺐는지 그대로 보입니다.
   if (history.dailySegments.length > 1) {
     console.log(
-      "\n⚠️  표본 안에서 소스 구성이 바뀌었습니다 — **마지막 구성만 판정에 씁니다.**\n" +
+      "\n⚠️  표본 안에서 요청 구성이 바뀌었습니다 — **마지막 구성만 판정에 씁니다.**\n" +
         "   그 전후는 다른 것을 잰 표본이라 한 자기상관으로 묶으면 안 됩니다.",
     );
     const width = Math.max(...history.dailySegments.map((seg) => displayWidth(seg.fingerprint)));

@@ -194,6 +194,22 @@ test("아주 조금만 움직여도 멈춘 것으로 본다 — 자기상관은 
   assert.ok(summary.autocorrelation !== null);
 });
 
+// 2026-08-19 실측: 판정 표본이 1일로 떨어지자 "값이 멈춰 있습니다 — 수집이 살아
+// 있는지 보십시오"가 떴다. 수집은 멀쩡했다. **점 하나의 표준편차는 정의상 0이라**
+// 이 관문은 표본이 1일이면 무조건 발동한다. 못 잰 것을 안 움직인 것으로 읽었다.
+test("표본이 모자라면 멈춘 것으로 판정하지 않는다", () => {
+  const oneDay = [{ tradingDate: "2026-08-18", score: 0.013 }];
+  const summary = summarizeSentimentSeries(oneDay);
+  assert.equal(summary.count, 1);
+  assert.equal(summary.stdev, 0, "점 하나의 표준편차는 0이다");
+  assert.equal(summary.stuck, false, "0은 '안 움직였다'가 아니라 '못 쟀다'다");
+
+  // 문턱(3일)을 채우면 그때는 판정한다.
+  const threeDays = ["2026-08-18", "2026-08-19", "2026-08-20"]
+    .map((tradingDate) => ({ tradingDate, score: 0.013 }));
+  assert.equal(summarizeSentimentSeries(threeDays).stuck, true);
+});
+
 test("정상적으로 움직이는 값은 멈춘 것으로 보지 않는다", () => {
   const moving = [0.3, -0.2, 0.5, -0.4, 0.1, 0.6, -0.3, 0.2, -0.5, 0.4, 0.0, -0.1]
     .map((score, index) => ({
@@ -283,7 +299,9 @@ test("판정 표본은 마지막 소스 구성의 구간뿐이다", async () => 
   assert.equal(history.summary.stdev, 0.026);
 });
 
-test("소스 지문은 살아 있던 소스만 이름순으로 모은다", () => {
+// **구성과 가용성은 다른 것이다.** 구성 지문은 요청한 것을 세고, 그중 무엇이
+// 답했는지는 따로 센다. 예전에는 `ok`인 것만 지문에 넣어 둘을 뭉쳐 놨다.
+test("구성 지문은 요청한 소스를, 가용성은 답한 소스를 센다", () => {
   const series = extractSentimentSeries([{
     at: "2026-09-01T14:00:00Z",
     signals: {
@@ -299,8 +317,82 @@ test("소스 지문은 살아 있던 소스만 이름순으로 모은다", () =>
     },
   }]);
 
-  // 죽은 GDELT는 빠지고 나머지가 이름순으로 붙는다.
-  assert.equal(series[0].sourceFingerprint, "BLUESKY+FED_RSS");
+  // 죽은 GDELT도 우리가 요청한 소스다. 구성에는 들어간다.
+  assert.equal(series[0].sourceFingerprint, "BLUESKY+FED_RSS+GDELT");
+  // 실제로 답한 것은 둘뿐이다.
+  assert.equal(series[0].liveFingerprint, "BLUESKY+FED_RSS");
+});
+
+// 2026-08-18 19:47 실측: GDELT가 그날 마지막 스냅샷에서 딱 한 번 살아났고, 그
+// 한 건 때문에 판정 표본이 9거래일에서 1일로 되돌아갔다. GDELT는 실패하면 6시간
+// 쉬므로 성공이 사실상 무작위이고, 일별 시계열은 그날 마지막 스냅샷만 남기므로
+// 하루의 지문이 동전 던지기로 정해졌다. **그대로 두면 10거래일은 영영 안 찬다.**
+test("요청한 소스가 잠깐 죽었다 살아나는 것으로는 표본을 가르지 않는다", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const pathModule = await import("node:path");
+  const { loadSignalHistory } = await import("../src/paper/signal-history.js");
+
+  const requested = ["BLUESKY", "FED_RSS", "GDELT", "GOOGLE_NEWS"];
+  const health = (gdeltAlive) => requested.map((source) => ({
+    source,
+    ok: source === "GDELT" ? gdeltAlive : true,
+    ...(source === "GDELT" && !gdeltAlive ? { skipped: true, error: "요청 제한으로 쉬는 중" } : {}),
+  }));
+
+  const events = [];
+  for (let day = 0; day < 6; day += 1) {
+    const date = `2026-09-${String(day + 1).padStart(2, "0")}`;
+    for (const hour of ["14", "19"]) {
+      // 마지막 날 마지막 스냅샷에서만 GDELT가 살아난다 — 08-18과 같은 모양이다.
+      const gdeltAlive = day === 5 && hour === "19";
+      events.push(event(`${date}T${hour}:05:00Z`, {
+        fetchedAt: `${date}T${hour}:00:00Z`,
+        score: day * 0.1 - 0.25,
+        articleCount: gdeltAlive ? 539 : 464,
+        sourceHealth: health(gdeltAlive),
+      }));
+    }
+  }
+
+  const dataDir = await mkdtemp(pathModule.join(tmpdir(), "signal-history-"));
+  await writeFile(
+    pathModule.join(dataDir, "paper-events.jsonl"),
+    `${events.map((item) => JSON.stringify(item)).join("\n")}\n`,
+  );
+
+  const history = await loadSignalHistory(dataDir);
+
+  assert.equal(history.dailySegments.length, 1, "구성은 한 번도 안 바뀌었다");
+  assert.equal(history.summary.count, 6, "6거래일이 그대로 판정 표본이다");
+  assert.equal(history.summary.mixedSources, false);
+
+  // 가르지는 않되 숨기지도 않는다. 어느 날 무엇이 빠졌는지는 그대로 보인다.
+  assert.equal(history.summary.mixedAvailability, true);
+  assert.deepEqual(
+    history.availabilityGroups.map((group) => [group.live, group.days, group.missing]),
+    [
+      ["BLUESKY+FED_RSS+GOOGLE_NEWS", 5, ["GDELT"]],
+      ["BLUESKY+FED_RSS+GDELT+GOOGLE_NEWS", 1, []],
+    ],
+  );
+});
+
+// 위 규칙이 원래 관문을 무르게 하면 안 된다. 요청 목록에서 소스를 빼는 것은
+// 진짜 구성 변경이고, 그때는 여전히 갈라야 한다.
+test("요청 목록에서 소스가 빠지면 그때는 표본을 가른다", () => {
+  const summary = summarizeSentimentSeries([
+    { tradingDate: "2026-09-01", score: 0.2, sourceFingerprint: "FED_RSS+GDELT+GOOGLE_NEWS" },
+    { tradingDate: "2026-09-02", score: -0.1, sourceFingerprint: "FED_RSS+GDELT+GOOGLE_NEWS" },
+    // GDELT를 설정에서 뺀 날. sourceHealth 에서 아예 사라진다.
+    { tradingDate: "2026-09-03", score: 0.4, sourceFingerprint: "FED_RSS+GOOGLE_NEWS" },
+  ]);
+
+  assert.equal(summary.mixedSources, true);
+  assert.deepEqual(
+    summary.sourceFingerprints,
+    ["FED_RSS+GDELT+GOOGLE_NEWS", "FED_RSS+GOOGLE_NEWS"],
+  );
 });
 
 test("판정 표본은 스냅샷이 아니라 거래일 수다", () => {
