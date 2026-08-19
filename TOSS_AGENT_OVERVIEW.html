@@ -135,6 +135,14 @@
   }
   .callout p { margin: 0; color: var(--muted); font-size: 0.94rem; }
   .callout p strong { color: var(--ink); }
+  .callout + .callout { margin-top: 10px; }
+
+  /* ---- inline code ---- */
+  code {
+    font-family: var(--font-mono); font-size: 0.88em;
+    background: var(--accent-soft); color: var(--accent-ink);
+    padding: 1px 5px; border-radius: 5px;
+  }
 
   /* ---- stack grid ---- */
   .grid { display: grid; gap: 14px; }
@@ -247,16 +255,16 @@
 
 <header class="hero">
   <div class="wrap reveal">
-    <span class="paper-badge"><span class="dot"></span>PAPER 전용 · 실주문 API 미호출</span>
-    <p class="eyebrow">시스템 개요 · 2026-07-26 기준</p>
-    <h1>거시·뉴스·추세·변동성을 읽어<br>미국 ETF를 가상 매매하는 에이전트</h1>
-    <p class="lead">TAPIoca는 Toss Open API로 시세를 읽고, <b>FRED 거시지표·무료 뉴스 감성·200일 이동평균 추세·MACD</b>를 하나의 시장 판정으로 합친 뒤, <b>대칭 리밸런싱 매매 엔진</b>으로 파일 기반 가상 지갑을 운용합니다. Oracle 서버에서 약 15분 주기로 돌며 매일 텔레그램으로 보고합니다.</p>
+    <span class="paper-badge"><span class="dot"></span>PAPER 상시 · 실주문은 LIVE_TRADING 스위치</span>
+    <p class="eyebrow">시스템 개요 · 2026-08-19 기준</p>
+    <h1>덜 잃기 위해<br>미국 ETF의 노출을 조절하는 에이전트</h1>
+    <p class="lead">TAPIoca는 Toss Open API로 시세를 읽고, <b>FRED 거시지표·무료 뉴스 감성·200일 이동평균 추세·MACD</b>를 하나의 시장 판정으로 합친 뒤, <b>대칭 리밸런싱 매매 엔진</b>으로 장부를 운용합니다. Oracle 서버에서 15분 주기로 돌며 매일 텔레그램으로 보고합니다. <b>20년 실데이터로 잰 결과, 이 시스템이 사는 것은 수익률이 아니라 낙폭입니다.</b></p>
 
     <div class="kpis">
-      <div class="kpi"><div class="n">8<small>일</small></div><div class="l">개발 기간</div><div class="sub">07-18 → 07-26</div></div>
-      <div class="kpi"><div class="n">10</div><div class="l">누적 커밋</div><div class="sub">fe80067 → 7bc73ba</div></div>
-      <div class="kpi"><div class="n">7,711<small>줄</small></div><div class="l">전체 코드</div><div class="sub">파일 69개</div></div>
-      <div class="kpi"><div class="n">80<small>/80</small></div><div class="l">테스트 통과</div><div class="sub">18개 파일</div></div>
+      <div class="kpi"><div class="n">33<small>일</small></div><div class="l">개발 기간</div><div class="sub">07-18 → 08-19</div></div>
+      <div class="kpi"><div class="n">114</div><div class="l">누적 커밋</div><div class="sub">fe80067 → a6e0797</div></div>
+      <div class="kpi"><div class="n">16,503<small>줄</small></div><div class="l">전체 코드</div><div class="sub">파일 92개</div></div>
+      <div class="kpi"><div class="n">357<small>/357</small></div><div class="l">테스트 통과</div><div class="sub">30개 파일</div></div>
     </div>
   </div>
 </header>
@@ -265,13 +273,17 @@
   <div class="wrap reveal">
     <div class="sec-head">
       <p class="eyebrow">무엇을 하는가</p>
-      <h2>읽고 · 판단하고 · 가상으로 매매하고 · 보고한다</h2>
+      <h2>읽고 · 판단하고 · 매매하고 · 보고한다</h2>
     </div>
     <div class="prose">
       <p>초기에는 Toss 계좌·보유 종목을 읽고 FRED 하나로 <b>RISK_ON / NEUTRAL / RISK_OFF</b>를 나누는 소규모 실험이었습니다. 이후 뉴스 감성, MACD, 장기 추세, 변동성 관리가 차례로 결합됐고, 매매 엔진도 단순 매수 중심에서 <b>대칭 리밸런싱·거래비용·손실 브레이크·감사 로그·벤치마크</b>를 갖춘 검증 시스템으로 발전했습니다.</p>
+      <p><b>7월 말부터는 성격이 바뀌었습니다.</b> 20년 실데이터 백테스터를 붙여 각 층이 값을 하는지 하나씩 재기 시작했고, 그 결과 <b>거시 층은 배분에서 빠졌으며(가중치 0)</b> 감성 층은 판정이 끝날 때까지 <b>보류(0)</b> 상태입니다. 지금 배분을 움직이는 것은 <b>추세와 변동성 관리</b>뿐입니다 — 재서 값을 확인한 층만 남긴 결과입니다.</p>
     </div>
     <div class="callout">
-      <p><strong>안전 경계.</strong> 초기 원금은 코드 수준에서 <b>KRW 100,000</b>으로 고정되고, <b>LIVE_TRADING=true</b>면 엔진이 실행을 거부합니다. 실주문 endpoint는 구현되지 않았으며, 에이전트가 열지 않은 실제 계좌 포지션은 자동 청산하지 않습니다.</p>
+      <p><strong>한 줄로.</strong> 이 시스템은 시장보다 더 버는 장치가 아니라 <b>덜 잃는 장치</b>입니다. 20년 실데이터에서 연 1.9~2.6%p의 수익을 최대 낙폭 12~23%p와 바꿉니다. <b>수익률 우위는 없고, 주장하지도 않습니다.</b></p>
+    </div>
+    <div class="callout">
+      <p><strong>안전 경계.</strong> 원금은 코드 수준에서 <b>KRW 100,000</b>으로 고정되어 이보다 크게 초기화할 수 없습니다. <b>LIVE_TRADING=true</b>로 두면 실제 주문이 나가지만, 그 앞에 관문이 다섯입니다 — <b>긴급중지 → 미결 주문 → 보유 대사 → 정규장 → 금액 주문 창.</b> 하나라도 걸리면 그 사이클은 주문을 내지 않습니다. 에이전트가 열지 않은 계좌 포지션은 <b>보유 기준선</b>으로 분리해 자동 청산하지 않습니다.</p>
     </div>
   </div>
 </section>
@@ -291,16 +303,16 @@
           <li><b>Node.js 20.12+</b> · ES Modules</li>
           <li><b>Oracle Cloud Linux</b> 인스턴스</li>
           <li><b>systemd</b> 서비스·타이머 (≈15분 주기)</li>
-          <li><b>node --test</b> 내장 러너 (80개)</li>
+          <li><b>node --test</b> 내장 러너 (357개)</li>
         </ul>
       </div>
       <div class="card">
         <span class="tag">데이터 소스 (무료)</span>
         <h3>시세 · 거시 · 뉴스</h3>
         <ul>
-          <li><b>Toss Open API</b> 가격·환율·보유</li>
-          <li><b>FRED</b> 거시지표</li>
-          <li><b>Fed RSS · GDELT</b> 경제뉴스</li>
+          <li><b>Toss Open API</b> 가격·환율·보유·주문</li>
+          <li><b>FRED</b> 거시지표 (개정 이력 포함)</li>
+          <li><b>Fed RSS · Google News · GDELT</b> 경제뉴스</li>
           <li><b>Twelve Data</b> 일봉 종가 (200일선·변동성·MACD)<br><span style="opacity:.7">폴백: Yahoo Finance → Stooq</span></li>
           <li><b>Bluesky · RSS</b> 선택형 의견</li>
         </ul>
@@ -309,10 +321,10 @@
         <span class="tag">신호 계층</span>
         <h3>시장 판정</h3>
         <ul>
-          <li><b>macro-regime</b> FRED 점수·레짐</li>
-          <li><b>sentiment</b> 규칙기반 · 선택형 Ollama</li>
-          <li><b>trend-signal</b> Faber 200일선</li>
-          <li><b>macd-signal</b> 12/26/9 보조</li>
+          <li><b>macro-regime</b> FRED 점수·레짐 <span style="opacity:.7">(배분 가중치 0)</span></li>
+          <li><b>sentiment</b> 규칙기반 · 선택형 Ollama <span style="opacity:.7">(판정 전까지 0)</span></li>
+          <li><b>trend-signal</b> Faber 200일선 <span style="opacity:.7">× 1.0</span></li>
+          <li><b>macd-signal</b> 12/26/9 보조 <span style="opacity:.7">(0)</span></li>
         </ul>
       </div>
       <div class="card">
@@ -326,13 +338,36 @@
         </ul>
       </div>
       <div class="card">
+        <span class="tag">실주문 계층</span>
+        <h3>실계좌 실행</h3>
+        <ul>
+          <li><b>toss-broker</b> 금액 주문 어댑터 (스키마 1.2.13)</li>
+          <li><b>execution-plan</b> 멈출 이유를 먼저 다 본다</li>
+          <li><b>order-lifecycle</b> 멱등 규약 · 미결 주문 봉인</li>
+          <li><b>position-baseline</b> 기존 보유와 분리 대사</li>
+          <li><b>emergency-stop</b> 즉시 정지 스위치</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">검증</span>
+        <h3>백테스터 · 진단</h3>
+        <ul>
+          <li><b>20년 실데이터</b> 백테스트 · 구간 4분할</li>
+          <li><b>거시 되살리기</b> FRED vintage로 그 시점 값 복원</li>
+          <li><b>paper:alpha</b> alpha가 설계된 비용인가</li>
+          <li><b>paper:signals</b> 감성이 신호인가 잡음인가</li>
+          <li><b>live:slippage</b> 10bp 가정 안에 드는가</li>
+        </ul>
+      </div>
+      <div class="card">
         <span class="tag">상태 · 감사</span>
         <h3>기록</h3>
         <ul>
           <li><b>paper-state.json</b> 원자적 저장</li>
           <li><b>paper-events.jsonl</b> append-only 로그</li>
-          <li><b>VTI 벤치마크</b> · alphaUsd</li>
+          <li><b>orders.jsonl</b> 주문 원장 <span style="opacity:.7">(기록이 제출보다 먼저)</span></li>
           <li><b>lock 파일</b> 중복 실행 방지</li>
+          <li><b>이중 백업</b> 서버 매일 · 로컬 매주</li>
         </ul>
       </div>
       <div class="card">
@@ -341,7 +376,7 @@
         <ul>
           <li><b>Telegram</b> 일일 보고서 (16:10 ET)</li>
           <li>신호·변동성·거래비용 표시</li>
-          <li>벤치마크 대비 초과성과</li>
+          <li><b>기준선 둘</b> — VTI 대비 · 무신호 대비</li>
           <li><b>paper:events</b> CLI 조회</li>
         </ul>
       </div>
@@ -394,6 +429,17 @@
           <div class="step"><span class="st-k">report</span>텔레그램 · alpha 표시</div>
         </div>
       </div>
+      <div class="phase">
+        <div class="p-head"><span class="p-num">6</span><span class="p-title">실주문 <span style="opacity:.7;font-weight:400">(LIVE만)</span></span></div>
+        <div class="steps">
+          <div class="step"><span class="st-k">resolve</span>지난 주문의 결말부터 짓는다</div>
+          <div class="step sell"><span class="st-k">halt?</span>긴급중지 · 미결 · 대사 · 장시간 · 주문창</div>
+          <div class="step buy"><span class="st-k">submit</span>기록 먼저, 그 다음 제출 · 한 건씩</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout">
+      <p><strong>왜 PAPER를 끄지 않는가.</strong> LIVE에서도 PAPER 장부는 그대로 돕니다. 같은 신호로 두 장부를 나란히 돌려 그 차이를 봐야 <b>체결 비용의 실측값</b>이 나오기 때문입니다. 백테스트가 전 구간 10bp를 가정했는데, 그 가정이 맞는지는 이 방법으로만 확인할 수 있습니다.</p>
     </div>
   </div>
 </section>
@@ -402,26 +448,26 @@
   <div class="wrap reveal">
     <div class="sec-head">
       <p class="eyebrow">신호 스택</p>
-      <h2>네 층을 더하고, 변동성으로 노출을 조절한다</h2>
-      <p>각 신호는 신뢰도로 감쇠한 뒤 가중치를 곱해 하나의 점수가 됩니다. 점수가 레짐을 정하고, 최근 변동성이 최종 주식 목표 비중을 축소합니다.</p>
+      <h2>재서 값을 확인한 층만 배분을 움직인다</h2>
+      <p>각 신호는 신뢰도로 감쇠한 뒤 가중치를 곱해 하나의 점수가 됩니다. <b>가중치 0인 층도 점수는 계속 계산되고 이벤트 로그에 남습니다</b> — 배분에만 관여하지 않을 뿐이라, 표본이 쌓이면 언제든 다시 판정할 수 있습니다.</p>
     </div>
     <div class="signal">
       <div>
         <div class="layers">
-          <div class="layer"><span class="licon">◆</span><div><div class="lname">FRED 거시</div><div class="ldesc">경제 국면의 기본 점수</div></div><span class="lw">base</span></div>
+          <div class="layer" style="opacity:.62"><span class="licon">◆</span><div><div class="lname">FRED 거시</div><div class="ldesc">신호가 아니라 <b>노출 다이얼</b>로 판정됨 — 배분에서 뺌 (08-08)</div></div><span class="lw">× 0</span></div>
           <div class="plus">+</div>
-          <div class="layer"><span class="licon">◈</span><div><div class="lname">뉴스 감성</div><div class="ldesc">Fed RSS · GDELT · Bluesky · RSS, 신뢰도 반영</div></div><span class="lw">× 1.0</span></div>
+          <div class="layer" style="opacity:.62"><span class="licon">◈</span><div><div class="lname">뉴스 감성</div><div class="ldesc">Fed RSS · Google News · GDELT · Bluesky — <b>자기상관 판정까지 보류</b></div></div><span class="lw">× 0</span></div>
           <div class="plus">+</div>
-          <div class="layer"><span class="licon">▲</span><div><div class="lname">200일 이동평균 추세</div><div class="ldesc">Faber — 1급 방어 신호</div></div><span class="lw">× 1.0</span></div>
+          <div class="layer"><span class="licon">▲</span><div><div class="lname">200일 이동평균 추세</div><div class="ldesc">Faber — 1급 방어 신호. <b>지금 배분을 움직이는 유일한 신호</b></div></div><span class="lw">× 1.0</span></div>
           <div class="plus">+</div>
-          <div class="layer"><span class="licon">≈</span><div><div class="lname">MACD</div><div class="ldesc">일봉 종가 12/26/9, 작은 확인</div></div><span class="lw">× 0.15</span></div>
+          <div class="layer" style="opacity:.62"><span class="licon">≈</span><div><div class="lname">MACD</div><div class="ldesc">기여 상한이 레짐 밴드보다 작아 판정을 못 바꿈 — 진단용</div></div><span class="lw">× 0</span></div>
           <div class="plus">↓ 변동성 오버레이</div>
-          <div class="layer" style="border-color: color-mix(in srgb, var(--accent) 45%, var(--border));"><span class="licon">◇</span><div><div class="lname">변동성 관리</div><div class="ldesc">목표 15% / 실현 변동성 → 주식 익스포저 ×배수</div></div><span class="lw">min 0.3</span></div>
+          <div class="layer" style="border-color: color-mix(in srgb, var(--accent) 45%, var(--border));"><span class="licon">◇</span><div><div class="lname">변동성 관리</div><div class="ldesc">목표 15% / 실현 변동성 → 주식 익스포저 ×배수. <b>낙폭 우위의 주된 출처</b></div></div><span class="lw">min 0.3</span></div>
         </div>
       </div>
       <div class="regime-out">
         <h3>→ 목표 배분 (레짐)</h3>
-        <p>통합 점수 ≥ 1.5 → RISK_ON, ≤ −1.5 → RISK_OFF, 그 사이는 NEUTRAL.</p>
+        <p>통합 점수 ≥ 1.5 → RISK_ON, ≤ −1.5 → RISK_OFF, 그 사이는 NEUTRAL. <b>세 표는 앵커이고 그 사이는 선형 보간</b>합니다 — 한 점에서 주식 90%↔60%가 갈리면 최대 노이즈 지점에 최대 베팅을 거는 구조가 됩니다.</p>
         <div class="regchips">
           <div class="regchip"><span class="swatch on"></span><div><span class="rk on">RISK_ON</span><div class="rd">VTI 70 · SCHD 15 · IWM 15 · 현금 0</div></div></div>
           <div class="regchip"><span class="swatch nt"></span><div><span class="rk nt">NEUTRAL</span><div class="rd">VTI 70 · SCHD 20 · 현금 10</div></div></div>
@@ -432,12 +478,38 @@
   </div>
 </section>
 
+<section id="measured">
+  <div class="wrap reveal">
+    <div class="sec-head">
+      <p class="eyebrow">측정된 것 · 실데이터 20년</p>
+      <h2>사는 것은 오직 낙폭이다</h2>
+      <p>같은 주식 비중으로 맞춰 비교한 결과입니다. <b>노출을 맞추지 않은 비교는 무의미합니다</b> — 주식을 덜 들면 낙폭은 당연히 줍니다.</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>표본</th><th>우리 낙폭</th><th>같은 노출의 정적 배분</th><th>우위</th></tr></thead>
+        <tbody>
+          <tr><td>2006~2026 (2008 포함)</td><td>29.8%</td><td>45.8%</td><td><span class="fix">15.9%p</span></td></tr>
+          <tr><td>2011~2026</td><td>18.7%</td><td>29.1%</td><td><span class="fix">10.3%p</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <p><strong>수익률 우위는 없습니다.</strong> Sharpe 차이는 구간별로 부호가 갈립니다(4구간 중 3개 ✗). 주장할 수 없습니다. <b>낙폭 우위도 4/4는 아닙니다</b> — 평온했던 한 구간에서는 정적 배분이 더 나았습니다. "거의 항상 이긴다"이지 "항상 이긴다"가 아닙니다.</p>
+    </div>
+    <div class="prose">
+      <p><b>그 우위는 변동성 관리에서 옵니다.</b> 레이어를 하나씩 꺼서 갈라보면, 노출 보정 후 우위가 <b>추세만 켰을 때 4.4~5.5%p</b>인 데 비해 <b>변동성만 켰을 때 10.2~13.4%p</b>입니다. 현재 스택(둘 다)은 10.3~15.9%p입니다.</p>
+      <p>실운영 스택은 <b>거시 0 · 감성 0 · 추세 1 · MACD 0 · volTarget 0.15</b>이고, 이것은 백테스터가 잰 스택과 <b>정확히 같습니다.</b> 20년 기준 기대치는 CAGR 5.99% · MDD 29.9% · 평균 노출 75.6%입니다. 같은 기간 VTI 매수후보유는 연 12%(MDD 56.7%) — <b>복리 속도의 절반을 내주고 낙폭 절반을 산 것</b>이고, 의도된 거래입니다.</p>
+    </div>
+  </div>
+</section>
+
 <section id="timeline">
   <div class="wrap reveal">
     <div class="sec-head">
       <p class="eyebrow">진화 타임라인</p>
-      <h2>실험에서 검증 엔진으로, 7단계</h2>
-      <p>발견된 실제 동작 문제를 근거로 단계마다 결점을 닫아왔습니다.</p>
+      <h2>실험에서 검증 엔진으로, 그리고 실계좌로</h2>
+      <p>발견된 실제 동작 문제를 근거로 단계마다 결점을 닫아왔습니다. <b>틀린 진단도 지우지 않고 남깁니다</b> — 왜 그렇게 봤는지가 다음에 같은 실수를 막습니다.</p>
     </div>
     <div class="timeline">
       <div class="tl-item">
@@ -528,6 +600,86 @@
           <div class="tl-tags"><span>news-cache</span><span>layer-weights</span><span>gitignore</span></div>
         </div>
       </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-05~06</span><span class="hash">06678dc</span><span class="phase-n">12 · 측정으로 전환</span></div>
+        <div class="tl-body">
+          <h3>주장하지 말고 재라 — 20년 백테스터</h3>
+          <p>실데이터 20년(3,717일) 백테스터를 붙이고, 파라미터를 눈대중이 아니라 <b>겹치지 않는 4구간에서 반복 측정</b>해 정했음. 변동성 목표 0.15, 추세 가중치 1.0 확정. <b>손절 3%는 기각</b> — 회전율 +35~41%를 치르고 CDaR 1.0~1.6%p를 사는 거래였음. "구간 4개 중 몇 개에서 부호가 일치하는가"를 채택 기준으로 못 박음.</p>
+          <div class="tl-tags"><span>backtest-engine</span><span>block-split</span><span>vol-target</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-06~07</span><span class="hash">a0f774a</span><span class="phase-n">13 · 밴드 래칫</span></div>
+        <div class="tl-body">
+          <h3>목표는 1.6%인데 보유가 6%에 남아 있었다</h3>
+          <p>스파이크로 편입된 IWM이 목표가 내려간 뒤에도 팔리지 않았음. 초과분(4.4%)이 밴드(5%)보다 작아 <b>영구히 갇히는 구조</b>. 시드 문제가 아니라 비율 문제라 증액으로는 안 풀림. <code>TARGET_DRIFT_CAP=2</code>로 교차점을 2.5%까지 덮었고, <b>나머지 절반은 아직 열려 있음</b>을 그대로 기록.</p>
+          <div class="tl-tags"><span>target-drift-cap</span><span>exit-band</span><span>ratchet-test</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-07</span><span class="hash">64ce16c</span><span class="phase-n">14 · 실주문 계층</span></div>
+        <div class="tl-body">
+          <h3>주문을 낼 수 있는 몸을 만들다</h3>
+          <p>멱등 규약(재제출해도 되는 경우는 하나뿐), 긴급 중지 스위치, 호출 제한 처리, 토스 금액 주문 어댑터, 실거래 사이클을 차례로 조립. <b>순서가 곧 안전장치</b> — 지난 주문의 결말을 먼저 짓고, 멈출 이유를 다 본 뒤, 남으면 한 건만 낸다. 주문은 직렬화(<code>maxInFlight=1</code>)해서 응답을 못 받아도 후보가 하나로 남게 함.</p>
+          <div class="tl-tags"><span>toss-broker</span><span>execution-plan</span><span>emergency-stop</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-07</span><span class="hash">2e63d2b</span><span class="phase-n">15 · 첫 실주문</span></div>
+        <div class="tl-body">
+          <h3>$12로 영구 정지 버그를 샀다</h3>
+          <p>실계좌 주문 두 건($2 · $10) 즉시 체결. 금액 주문은 주식 수량 단위 때문에 <b>항상 요청액보다 조금 적게</b> 체결되는데, 잔액으로 상태를 추정하던 코드가 그것을 <code>PARTIAL</code>로 읽었음 — 미결이 있으면 사이클이 멈추고 그 주문은 영원히 결말이 안 남. <b>가짜 브로커로는 못 잡는 버그였음.</b> 브로커가 FILLED라 하면 끝난 것으로 고침.</p>
+          <div class="tl-tags"><span>order-outcome</span><span>position-baseline</span><span>slippage</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-07</span><span class="hash">dd369f4</span><span class="phase-n">16 · 거시층 검증</span></div>
+        <div class="tl-body">
+          <h3>FRED를 그 시점 값으로 되살리다</h3>
+          <p>거시 지표는 나중에 개정되므로 오늘 값으로 과거를 재면 미래를 훔침. FRED가 개정 이력을 주므로 <b>2008년까지 vintage로 복원</b>해 20년을 다시 쟀음. 결과: 상수인 동안 이 층은 신호가 아니라 <b>노출 다이얼</b>이고, 값이 움직이는 것은 <b>평균적으로 해로움</b>(2008 한 구간만 우위, 나머지 3구간 열세).</p>
+          <div class="tl-tags"><span>macro-history</span><span>vintage</span><span>timing-value</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-08</span><span class="hash">baecdd4</span><span class="phase-n">17 · 층을 끄다</span></div>
+        <div class="tl-body">
+          <h3>거시 0 · 감성 0 — 재지 않은 것은 배분에서 뺀다</h3>
+          <p>거시는 검증 결과로 <b>영구히</b> 0. 감성은 판정까지 <b>보류</b>로 0 — 미검증 층이 노출을 6.6%p 깎고 있었고, 백테스터가 감성을 <code>null</code>로 넣으므로 지금까지 잰 모든 숫자는 <b>감성 없는 스택</b>의 것이었음. 0으로 두자 <b>실운영과 백테스트가 정확히 일치</b>하게 됨.</p>
+          <div class="tl-tags"><span>macro-weight</span><span>sentiment-weight</span><span>parity</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-08</span><span class="hash">645159b</span><span class="phase-n">18 · 감성 소스 복구</span></div>
+        <div class="tl-body">
+          <h3>세 번 틀린 진단과 진짜 병</h3>
+          <p>감성 값이 −0.545에서 멈춰 있던 원인을 캐며 <b>진단을 세 번 틀림</b>(캐시 고장 → GDELT 차단 → GDELT가 느림). 진짜 원인은 전날 내가 넣은 10초 타임아웃과 GDELT의 429였음. <b>질의 검색 소스를 Google News로 이중화</b>하자 공식 층 기사 30→130건, 찾은 시장 표현 2→72개. 점수를 표현 두 개가 지배하던 상태가 풀림.</p>
+          <div class="tl-tags"><span>google-news</span><span>source-health</span><span>gdelt-cooldown</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-12</span><span class="hash">24dbcbd</span><span class="phase-n">19 · 관문 정정 ①</span></div>
+        <div class="tl-body">
+          <h3>모른다는 것은 같다는 것이 아니다</h3>
+          <p>소스 지문이 없던 옛 스냅샷을 요약이 조용히 버려서, 서로 다른 구성의 표본이 섞였는데도 <b>"구성이 그대로"</b>라고 답하고 있었음. 관문이 막으려던 바로 그 경우에 통과를 내주던 구멍. 지문 없음을 <b>별개 구성</b>으로 세고 판정은 마지막 구성의 구간으로만 하도록 고침.</p>
+          <div class="tl-tags"><span>source-fingerprint</span><span>judging-window</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-19</span><span class="hash">3494960</span><span class="phase-n">20 · 관문 정정 ②</span></div>
+        <div class="tl-body">
+          <h3>소스가 깜빡이는 것은 구성이 바뀐 것이 아니다</h3>
+          <p>지문을 <i>살아 있는</i> 소스로 만들었더니, GDELT가 하루 마지막 스냅샷에서 한 번 살아난 것만으로 판정 표본이 <b>8거래일 → 1일</b>로 리셋됨. GDELT는 실패하면 6시간 쉬어 성공이 사실상 무작위라 <b>그대로 두면 10거래일이 영영 안 참</b>. 게다가 그 차이는 원점수를 바꾸지도 않았음(0.0130 동일, 신뢰도만 0.691→0.660). 지문을 <b>요청한</b> 소스로 바꿔 구성과 가용성을 가름.</p>
+          <div class="tl-tags"><span>availability</span><span>min-stuck-days</span><span>paper-signals</span></div>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-19</span><span class="hash">—</span><span class="phase-n">21 · 배선</span></div>
+        <div class="tl-body">
+          <h3>PAPER의 결정을 실주문으로 잇다</h3>
+          <p>실거래 사이클은 08-07에 완성돼 테스트도 통과했지만 <b>프로덕션 호출처가 없었음</b> — 부르는 곳이 테스트뿐이었음. 실행기에 배선을 넣어 <code>LIVE_TRADING=true</code> 하나로 켜지게 함. PAPER 결정에는 <code>RISK_ALERT</code> 같은 알림이 섞여 있어 그대로 넘기면 <code>side: "RISK_ALERT"</code>인 주문이 나가므로, 옮기는 층을 따로 두고 <b>버린 것은 이유와 함께 출력</b>하게 함.</p>
+          <div class="tl-tags"><span>paper-bridge</span><span>live-wiring</span><span>account-resolve</span></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -551,6 +703,14 @@
           <tr><td>급격한 변동성에도 고정 비중</td><td>변동성 기반 익스포저 축소</td><td><span class="fix">해결</span></td></tr>
           <tr><td>PAPER 손익이 비용을 무시</td><td>결합 거래비용률(편도 0.1%) 적용</td><td><span class="fix partial">부분</span></td></tr>
           <tr><td>테스트 출력이 너무 장황함</td><td>테마별 짧은 요약 러너</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>목표가 내려가도 보유가 밴드에 갇힘</td><td><code>TARGET_DRIFT_CAP=2</code> — 교차점 2.5%까지</td><td><span class="fix partial">절반</span></td></tr>
+          <tr><td>검증 안 된 층이 배분을 움직임</td><td>거시 0(확정) · 감성 0(판정까지 보류)</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>과거 거시값으로 미래를 훔침</td><td>FRED vintage로 그 시점 값 복원</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>실주문이 잔액 때문에 영구 미결</td><td>브로커가 FILLED라 하면 끝난 것으로 본다</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>계좌의 기존 자산을 우리 것으로 오해</td><td>보유 기준선 + 기준선 대비 대사</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>감성 표본이 소스 깜빡임에 리셋됨</td><td>지문을 <b>요청한</b> 소스로 — 구성과 가용성 분리</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>표본 1일에 "값이 멈췄다" 오진</td><td>멈춤 관문에 최소 표본 3거래일</td><td><span class="fix">해결</span></td></tr>
+          <tr><td>실거래 사이클에 호출처가 없음</td><td><code>LIVE_TRADING</code> 배선 · 알림 결정 분리</td><td><span class="fix">해결</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -565,14 +725,16 @@
     </div>
     <div class="lim">
       <ul>
-        <li>실주문·부분 체결·주문 거절·시장 충격 미구현 (PAPER 전용)</li>
-        <li>거래비용은 수수료·환전·스프레드·슬리피지를 합친 단일 비율</li>
-        <li>MACD 기여 상한은 0.15인데 레짐 밴드는 3.0 — 단독으로 판정을 못 바꿈</li>
+        <li><b>슬리피지 표본 3건</b> — 10건 미만이면 숫자를 결론으로 내지 않음. 10bp 가정은 아직 미검증</li>
+        <li><b>환전 비용 미실측</b> — 원화→달러 환전이 어디서 얼마나 붙는지 아직 경로에 안 나타남</li>
+        <li><b>감성 층의 가치 판정 중</b> — 판정 표본 8/10거래일, 8/20 도달 예정. 백테스트로는 잴 수 없음(수집창이 지나가면 복원 불가)</li>
+        <li>밴드 방향 비대칭의 <b>남은 절반</b> — 목표가 2.5~5%로 되돌아오는 경로는 아직 갇힘. 넓은 버전은 잰 적이 없어 바꾸지 않음</li>
       </ul>
       <ul>
-        <li>감성 분석기는 키워드 매칭이라 연준 문서의 전문 용어를 약세로 읽음</li>
-        <li>30~60 거래일 연속 PAPER 데이터와 정식 백테스트 필요</li>
-        <li>벤치마크는 VTI 매수후보유 중심 (정적 혼합 비교 추가 여지)</li>
+        <li>감성 분석기는 키워드 매칭이라 연준 문서의 전문 용어를 약세로 읽음. 키워드에 안 걸린 기사는 <b>점수에 0을 기여하고 신뢰도만 희석</b>함</li>
+        <li>PAPER 표본이 <b>2주</b> — 20일치로는 경로 의존 규칙의 효과를 노이즈와 구분할 수 없음. <b>성과를 증액 근거로 쓸 수 없음</b></li>
+        <li>매수 체결가가 장중 고점에 쏠리는지 미확인 (단일 관측 1건)</li>
+        <li>두 백테스트 표본(2006~ · 2011~)은 <b>독립이 아님</b> — 뒤가 앞에 통째로 들어 있음</li>
       </ul>
     </div>
   </div>
@@ -580,7 +742,7 @@
 
 <footer>
   <div class="wrap">
-    <p><span class="mono">TAPIoca🧋</span> · Toss ETF PAPER Trading Agent · 기록 범위 2026-07-18 → 2026-07-26 (main <span class="mono">7bc73ba</span>). 본 문서는 소프트웨어와 PAPER 전략의 진화 기록이며, 투자 성과를 보증하지 않습니다.</p>
+    <p><span class="mono">TAPIoca🧋</span> · Toss ETF Trading Agent · 기록 범위 2026-07-18 → 2026-08-19 (main <span class="mono">a6e0797</span>). 본 문서는 소프트웨어와 전략의 진화 기록이며, <b>투자 성과를 보증하지 않습니다.</b> 여기 적힌 모든 숫자는 과거 실데이터에 대한 측정치이지 미래에 대한 약속이 아닙니다. 근거와 판정 기준의 원본은 <span class="mono">STRATEGY.md</span>, 무슨 일이 있었는지는 <span class="mono">develope-log/</span>에 있습니다.</p>
   </div>
 </footer>
 
