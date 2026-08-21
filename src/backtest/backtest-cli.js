@@ -27,6 +27,7 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
  *   npm run backtest -- --compare macro   거시 상수 편향의 대가
  *   npm run backtest -- --compare regime  레짐 경계(보간 스케일)를 낮추면 어떻게 되는가
+ *   npm run backtest -- --last 3719      캐시에서 최신 N일만 (기간만 바꿔 비교할 때)
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --fetch-macro     FRED 개정 이력(vintage)을 받아 캐시에 저장
  *   npm run backtest -- --macro-source vintage  거시 층을 그 시점 값으로 되살려 실행
@@ -644,7 +645,18 @@ async function buildDatasets() {
     const lengths = Object.entries(cached.closesBySymbol)
       .map(([symbol, closes]) => `${symbol} ${closes.length}`)
       .join(", ");
-    const days = Math.min(...Object.values(cached.closesBySymbol).map((closes) => closes.length));
+    // `--last N`은 **최신 N일만** 씁니다. 기간과 바스켓을 동시에 바꾸지 않고
+    // 하나씩 흔들기 위한 손잡이입니다.
+    //
+    // 2026-08-21에 이것이 없어서 갈리지 않은 것이 있었습니다. 2008을 넣으려면
+    // `--symbols VTI,IWM`이어야 하는데, 그 순간 `restrictAllocation`이 SCHD를
+    // 빼고 남은 종목으로 다시 채워 **배분표까지 바뀝니다**(⑮). 그래서 2006~ 과
+    // 2011~ 의 차이가 폭락 때문인지 바스켓 때문인지 물을 방법이 없었습니다.
+    // 같은 종목으로 기간만 자르면 그 둘이 갈립니다.
+    const available = Math.min(
+      ...Object.values(cached.closesBySymbol).map((closes) => closes.length),
+    );
+    const days = options.last > 0 ? Math.min(options.last, available) : available;
     // 상장일이 달라 길이가 다르면 짧은 쪽에 맞춰 최신 구간만 씁니다.
     // 얼마나 잘렸는지 보이지 않으면 평가 구간을 오해하게 됩니다.
     // 종목마다 상장일이 달라 길이가 다르므로 엔진과 같은 규칙으로 뒤에서 자릅니다.
@@ -653,11 +665,17 @@ async function buildDatasets() {
     const shortest = Object.entries(cached.closesBySymbol)
       .sort((a, b) => a[1].length - b[1].length)[0][0];
     const shortestDates = cached.datesBySymbol?.[shortest] ?? null;
+    // `--last`를 줬으면 종가도 여기서 잘라 둡니다. 엔진은 가장 짧은 종목에
+    // 맞추므로, 자르지 않으면 날짜만 짧아져 구간이 어긋납니다.
+    const closesBySymbol = Object.fromEntries(
+      Object.entries(cached.closesBySymbol).map(([symbol, closes]) => [symbol, closes.slice(-days)]),
+    );
     return {
       description:
-        `실데이터 캐시 ${days}일 (${lengths} → 최신 ${days}일로 정렬, 수집 ${cached.fetchedAt})`,
+        `실데이터 캐시 ${days}일 (${lengths} → 최신 ${days}일로 정렬` +
+        `${options.last > 0 ? ` · --last ${options.last}` : ""}, 수집 ${cached.fetchedAt})`,
       sets: [{
-        closesBySymbol: cached.closesBySymbol,
+        closesBySymbol,
         dates: shortestDates
           ? shortestDates.slice(-days).map((date) => new Date(`${date}T21:00:00Z`))
           : null,
@@ -722,6 +740,8 @@ function parseArgs(argv) {
     seed: 42,
     seeds: 3,
     days: 1500,
+    // 캐시 표본에서 **최신 N일만** 씁니다. 기본 null이면 전부 씁니다.
+    last: null,
     macroScore: 0,
     macroSource: "constant",
     blocks: 1,
@@ -741,6 +761,7 @@ function parseArgs(argv) {
       case "--seed": parsed.seed = Number(value); index += 1; break;
       case "--seeds": parsed.seeds = Number(value); index += 1; break;
       case "--days": parsed.days = Number(value); index += 1; break;
+      case "--last": parsed.last = Number(value); index += 1; break;
       case "--macro-score": parsed.macroScore = Number(value); index += 1; break;
       case "--blocks": parsed.blocks = Number(value); index += 1; break;
       default:
