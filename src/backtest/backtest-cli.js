@@ -28,6 +28,8 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --compare macro   거시 상수 편향의 대가
  *   npm run backtest -- --compare regime  레짐 경계(보간 스케일)를 낮추면 어떻게 되는가
  *   npm run backtest -- --last 3719      캐시에서 최신 N일만 (기간만 바꿔 비교할 때)
+ *   npm run backtest -- --compare defensive  방어자산이 현금보다 값을 하는가 (정적)
+ *   npm run backtest -- --cash-yield 0.017   현금 이자 가정 (기본 0)
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --fetch-macro     FRED 개정 이력(vintage)을 받아 캐시에 저장
  *   npm run backtest -- --macro-source vintage  거시 층을 그 시점 값으로 되살려 실행
@@ -63,7 +65,56 @@ function EQUITY_MIX(equityWeight) {
   return allocation;
 }
 
+/** 주식 하나에 방어자산을 섞습니다. 남는 것은 현금입니다. */
+function MIX(parts) {
+  const total = Object.values(parts).reduce((sum, value) => sum + value, 0);
+  const cash = Math.round((1 - total) * 1000) / 1000;
+  return cash > 0 ? { ...parts, CASH: cash } : { ...parts };
+}
+
 const COMPARISONS = {
+  // **ver2의 첫 질문이자 제일 싼 질문입니다.** 신호도 규칙도 없이, 정적 배분만으로
+  // "방어자산이 현금보다 값을 하는가"를 묻습니다. 여기서 아니면 자산군 분리도
+  // aggregator도 만들 필요가 없습니다.
+  //
+  // **같은 주식 비중에서 남는 몫을 무엇으로 채우느냐**만 다릅니다. 그래서 주식
+  // 노출이 맞춰져 있고, 노출 보정 없이도 같은 줄끼리 바로 비교됩니다.
+  //
+  // ⚠️ **현금이 0%라는 가정이 이 표를 편향시킵니다.** 실제 T-bill은 2004~2026
+  // 평균 연 1.7% 안팎이었으므로 현금을 든 변형만 손해 보게 계산됩니다.
+  // **`--cash-yield 0.017`로 한 번 더 돌려 결론이 뒤집히는지 보십시오.**
+  // 뒤집히면 그 결론은 자산이 아니라 엔진의 가정이 정한 것입니다.
+  //
+  // 반대로 **낙폭 축에서는 현금이 절대 유리합니다**(현금의 낙폭은 0). 그러니
+  // "IEF가 MDD에서 진다"는 것만으로 기각하면 안 되고, **낙폭 1%p를 얼마의
+  // CAGR로 샀는가**로 읽어야 합니다 — ⑧의 교환비(MDD 1%p당 CAGR 0.175%p)가 자입니다.
+  defensive: {
+    label: "방어자산이 현금보다 값을 하는가 (정적 배분만, 신호 없음)",
+    // **없는 종목은 조용히 사라지지 않고 여기서 멈춥니다.**
+    // `restrictAllocation`은 없는 종목의 몫을 남은 종목에 **재분배**합니다(⑮).
+    // 그래서 IEF가 없는 표본에서 "VTI70 + IEF30"은 오류가 아니라 **VTI 100%**가
+    // 되어 조용히 다른 전략이 됩니다. 2026-08-21 스모크 실행에서 11행 중 6행이
+    // 그렇게 같은 전략으로 겹쳐 있었고, 표만 봐서는 알 수 없었습니다.
+    requiresSymbols: ["VTI", "IWM", "GLD", "IEF", "TLT"],
+    variants: [
+      { name: "주식 100 (VTI)", options: { staticAllocation: MIX({ VTI: 1 }) } },
+
+      { name: "VTI70 + 현금30", options: { staticAllocation: MIX({ VTI: 0.7 }) } },
+      { name: "VTI70 + IEF30", options: { staticAllocation: MIX({ VTI: 0.7, IEF: 0.3 }) } },
+      { name: "VTI70 + TLT30", options: { staticAllocation: MIX({ VTI: 0.7, TLT: 0.3 }) } },
+      { name: "VTI70 + GLD30", options: { staticAllocation: MIX({ VTI: 0.7, GLD: 0.3 }) } },
+      { name: "VTI70 + IEF20 + GLD10", options: { staticAllocation: MIX({ VTI: 0.7, IEF: 0.2, GLD: 0.1 }) } },
+
+      { name: "VTI50 + 현금50", options: { staticAllocation: MIX({ VTI: 0.5 }) } },
+      { name: "VTI50 + IEF50", options: { staticAllocation: MIX({ VTI: 0.5, IEF: 0.5 }) } },
+      { name: "VTI50 + IEF35 + GLD15", options: { staticAllocation: MIX({ VTI: 0.5, IEF: 0.35, GLD: 0.15 }) } },
+
+      // VER2_PLAN.md §1의 앵커 두 개를 정적으로 굳혀서 함께 봅니다.
+      { name: "제안 NEUTRAL", options: { staticAllocation: MIX({ VTI: 0.55, IWM: 0.05, GLD: 0.1, IEF: 0.2 }) } },
+      { name: "제안 RISK_OFF", options: { staticAllocation: MIX({ VTI: 0.25, GLD: 0.15, IEF: 0.25, TLT: 0.1 }) } },
+    ],
+  },
+
   exit: {
     label: "청산 규칙 (P0에서 바꾼 기본값 검증)",
     variants: [
@@ -524,6 +575,22 @@ async function runComparison() {
   }
 
   const datasets = await buildDatasets();
+
+  // **없는 종목을 조용히 재분배당하지 않게 여기서 멈춥니다.**
+  // 이 검사가 없으면 표는 정상으로 보이는데 여러 행이 같은 전략이 됩니다.
+  if (comparison.requiresSymbols) {
+    const present = new Set(Object.keys(datasets.sets[0]?.closesBySymbol ?? {}));
+    const missing = comparison.requiresSymbols.filter((symbol) => !present.has(symbol));
+    if (missing.length > 0) {
+      throw new Error(
+        `--compare ${options.compare}는 ${comparison.requiresSymbols.join(", ")}가 모두 필요합니다.\n` +
+          `  없는 종목: ${missing.join(", ")} (지금: ${[...present].join(", ") || "없음"})\n` +
+          "  없는 종목의 몫은 남은 종목에 재분배되어, 서로 다른 줄이 조용히 같은 전략이 됩니다.\n" +
+          `  먼저: npm run backtest:fetch -- --symbols ${comparison.requiresSymbols.join(",")}\n` +
+          `  그다음: npm run backtest -- --compare ${options.compare} --source cache --symbols ${comparison.requiresSymbols.join(",")}`,
+      );
+    }
+  }
   // 변형 중 하나라도 vintage를 요구하면 되살립니다. 전역 --macro-source는
   // 모든 변형에 적용되므로 globalScores로 따로 들고 갑니다.
   const needsVintage = comparison.variants.some((variant) => variant.macro === "vintage");
@@ -551,6 +618,7 @@ async function runComparison() {
         ? dataset.macroScores ?? null
         : null,
       signalOptions: variant.signal ?? {},
+      cashYieldAnnual: options.cashYield,
       ...(variant.options ?? {}),
     }).metrics,
   );
@@ -742,6 +810,8 @@ function parseArgs(argv) {
     days: 1500,
     // 캐시 표본에서 **최신 N일만** 씁니다. 기본 null이면 전부 씁니다.
     last: null,
+    // 현금의 연율 수익률. 기본 0은 지금까지의 모든 숫자와 같은 가정입니다.
+    cashYield: 0,
     macroScore: 0,
     macroSource: "constant",
     blocks: 1,
@@ -762,6 +832,7 @@ function parseArgs(argv) {
       case "--seeds": parsed.seeds = Number(value); index += 1; break;
       case "--days": parsed.days = Number(value); index += 1; break;
       case "--last": parsed.last = Number(value); index += 1; break;
+      case "--cash-yield": parsed.cashYield = Number(value); index += 1; break;
       case "--macro-score": parsed.macroScore = Number(value); index += 1; break;
       case "--blocks": parsed.blocks = Number(value); index += 1; break;
       default:

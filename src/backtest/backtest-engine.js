@@ -21,6 +21,9 @@ import { createPaperState, runPaperCycle, summarizePaperState } from "../paper/p
 
 const DEFAULT_ALLOCATION = Object.freeze({ VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 });
 
+/** 연율 → 일할 환산에 쓰는 거래일 수입니다(지표 연율화와 같은 값).*/
+const TRADING_DAYS_PER_YEAR = 252;
+
 export function runBacktest({
   closesBySymbol,
   dates,
@@ -43,6 +46,24 @@ export function runBacktest({
   // 엔진·비용·밴드는 그대로라, 차이가 오직 "신호가 있느냐"에서만 나옵니다.
   // 신호 스택이 정적 배분을 실제로 이기는지 재는 유일한 방법입니다.
   staticAllocation = null,
+  /**
+   * 현금의 연율 수익률입니다. **기본 0은 사실이 아니라 가정입니다.**
+   *
+   * 엔진은 지금까지 현금을 0%로 놓고 계산해 왔다(아래 무위험이자율 주석도 같은
+   * 가정이다). 주식과 현금만 비교할 때는 두 변형에 똑같이 적용되므로 상대
+   * 비교가 유지됐다. **그런데 채권·금을 현금과 비교하는 순간 이 가정이 편향이
+   * 된다** — 실제 T-bill은 2004~2026 평균 연 1.7% 안팎이었으므로, 현금을 든
+   * 변형만 그만큼 손해 보는 것으로 계산된다.
+   *
+   * 그래서 손잡이를 만들되 **기본값은 0으로 둔다.** 과거 숫자와의 연속성이
+   * 끊기면 안 되기 때문이다. 채권 비교에서는 0과 0.017을 둘 다 돌려
+   * **결론이 그 사이에서 뒤집히는지**를 본다. 뒤집히면 그 결론은 자산이 아니라
+   * 이 가정이 정한 것이다.
+   *
+   * 평평한 값이라는 것도 사실이 아니다(2004년 1%, 2007년 5%, 2021년 0%).
+   * 엄밀히 하려면 FRED의 단기금리 이력을 써야 한다 — 아직 안 했다.
+   */
+  cashYieldAnnual = 0,
 }) {
   const symbols = Object.keys(closesBySymbol);
   if (symbols.length === 0) throw new Error("closesBySymbol에 최소 한 종목이 필요합니다.");
@@ -108,6 +129,12 @@ export function runBacktest({
       lastPrice: aligned[symbol][index],
       timestamp: now.toISOString(),
     }));
+
+    // 현금 이자를 매매 **전에** 붙입니다. 그날 쓸 수 있는 돈에 포함되어야
+    // 실제와 같습니다. 0이면 아무 일도 하지 않으므로 기존 숫자와 동일합니다.
+    if (cashYieldAnnual > 0 && state.cashUsd > 0) {
+      state.cashUsd += state.cashUsd * (cashYieldAnnual / TRADING_DAYS_PER_YEAR);
+    }
 
     const { summary } = runPaperCycle(state, prices, policy, now, marketSignal);
     equityCurve.push({ date: isoDate(now), equityUsd: summary.equityUsd });
