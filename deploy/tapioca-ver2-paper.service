@@ -1,0 +1,25 @@
+[Unit]
+# ver2 리서치 인스턴스입니다. **main과 유닛 이름이 겹치면 안 됩니다** —
+# DEPLOY.md의 설치 명령이 `deploy/*.service`를 통째로 복사하므로, 이름이 같으면
+# 여기서 한 번 실행하는 것만으로 main의 실전 타이머가 교체됩니다.
+Description=TAPIoca ver2 (research) PAPER cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/toss-api/apps/TAPIOCA_ver2
+EnvironmentFile=/home/ubuntu/toss-api/apps/TAPIOCA_ver2/.env
+ExecStart=/home/ubuntu/.nvm/versions/node/v24.18.0/bin/node src/paper/paper-runner.js
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# **main의 data/ 는 여기 없습니다.** 두 인스턴스가 장부를 공유하면 안 됩니다.
+ReadWritePaths=/home/ubuntu/toss-api/apps/TAPIOCA_ver2/data
+
+[Install]
+WantedBy=multi-user.target

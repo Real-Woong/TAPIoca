@@ -1,0 +1,15 @@
+[Unit]
+Description=Run TAPIoca ver2 (research) PAPER cycle every 30 minutes
+
+[Timer]
+OnBootSec=5min
+# **main의 15분보다 성기게 돕니다.** 토스 API 호출 한도는 계정 단위이고
+# main과 같은 계정을 보므로, 둘 다 15분이면 429를 부릅니다.
+OnUnitActiveSec=30min
+# main과 같은 순간에 겹치지 않도록 흩뜨립니다.
+RandomizedDelaySec=120s
+AccuracySec=5s
+Unit=tapioca-ver2-paper.service
+
+[Install]
+WantedBy=timers.target

@@ -200,8 +200,16 @@ main ⑮에서 밟은 함정을 그대로 다시 밟는다. **같은 바스켓�
 | ver2 타이머는 **30분 이상** | Toss API 한도는 계정 단위다. 15분 두 개면 429 위험 |
 | ver2는 `.env`를 복사하되 **주문 관련 키는 비운다** | 실수의 경로를 물리적으로 없앤다 |
 
-**`.env`에 맡기지 않고 코드로 막는다.** `main`에서 만든 `assertValidatedStack`
-관문을 그대로 쓴다 — 미검증 바스켓은 미검증 층과 같은 취급이다.
+**`.env`에 맡기지 않고 코드로 막았다** (2026-08-21 구현).
+
+| 막은 것 | 어떻게 |
+|---|---|
+| ver2에서 실주문 | `src/paper/live-allowed.js`의 `LIVE_TRADING_ALLOWED = false`. `LIVE_TRADING=true`면 실행이 **던지고 멈춘다.** 조용히 PAPER로 낮추지 않는다 — 낮추면 "나가는 줄 알았는데 안 나갔다"가 된다 |
+| main의 실전 타이머 교체 | 유닛 이름을 `tapioca-ver2-paper.*`로 바꾸고, main과 겹치는 유닛(`toss-ai-report`·`toss-ai-backup`)은 이 브랜치에서 **지웠다.** main의 `DEPLOY.md`가 `deploy/*.service`를 와일드카드로 복사하므로 이름이 같으면 한 번의 실행으로 실전 타이머가 바뀐다 |
+| 429 | ver2 타이머는 **30분** (main은 15분). 토스 API 한도는 계정 단위다 |
+
+`test/live-safety.test.js`가 셋 다 고정한다 — 상수값, **실행기가 그 상수를 실제로
+읽는지**, 유닛 이름 접두사.
 
 ---
 

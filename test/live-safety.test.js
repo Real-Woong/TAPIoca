@@ -219,3 +219,35 @@ test("데이터 디렉터리가 없어도 중지를 걸 수 있다", async () =>
   await engageEmergencyStop(missing, { reason: "새 호스트" });
   assert.equal((await readEmergencyStop(missing)).stopped, true);
 });
+
+// ── 리서치 체크아웃은 실제 돈을 만지지 않는다 ────────────────────────────
+// main과 ver2는 같은 토스 계정을 본다. 둘 다 실주문을 내면 보유 기준선이
+// 폴더마다 따로라, ver2가 산 것을 main이 "남의 자산"으로 보고 대사가 깨진다.
+// 그러면 main이 영구 정지한다. 설정이 아니라 코드로 막는 이유다.
+test("ver2 체크아웃은 LIVE를 코드에서 막는다", async () => {
+  const { LIVE_TRADING_ALLOWED } = await import("../src/paper/live-allowed.js");
+  assert.equal(LIVE_TRADING_ALLOWED, false, "리서치 브랜치에서 실주문은 불가능해야 한다");
+
+  // 실행기가 그 상수를 실제로 보는지까지 확인한다. 상수만 있고 아무도 안 보면
+  // 막은 것이 아니다.
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile("src/paper/paper-runner.js", "utf8");
+  assert.match(source, /LIVE_TRADING_ALLOWED/, "paper-runner가 관문을 읽어야 한다");
+  assert.match(
+    source,
+    /if \(live && !LIVE_TRADING_ALLOWED\) \{[\s\S]*?throw new Error/,
+    "조용히 PAPER로 낮추지 않고 던져야 한다",
+  );
+});
+
+// main과 유닛 이름이 겹치면, ver2에서 설치 명령을 한 번 돌리는 것만으로
+// main의 실전 타이머가 교체된다.
+test("systemd 유닛 이름이 main과 겹치지 않는다", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const units = (await readdir("deploy")).filter((name) => /\.(service|timer)$/.test(name));
+
+  assert.ok(units.length > 0, "유닛 파일이 있어야 한다");
+  for (const unit of units) {
+    assert.ok(unit.startsWith("tapioca-ver2-"), `${unit}: ver2 접두사가 없다`);
+  }
+});

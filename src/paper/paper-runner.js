@@ -19,6 +19,7 @@ import { getUsRegularSessionStatus } from "../market/us-market-session.js";
 import { buildDailyMacdSignal, updateMacdSignal } from "../market/macd-signal.js";
 import { loadDailyCloses, loadTrendSignal } from "../market/trend-signal.js";
 import { runLiveCycle } from "../live/live-cycle.js";
+import { CHECKOUT_NAME, LIVE_TRADING_ALLOWED } from "./live-allowed.js";
 import { createTossBroker } from "../live/toss-broker.js";
 import { buildOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
@@ -59,6 +60,16 @@ async function run() {
   // 장부를 나란히 돌려 그 차이를 봐야 체결 비용의 실측값이 나옵니다
   // (`live-cycle.js`). 실주문은 PAPER 결정을 받아 뒤에 덧붙는 단계입니다.
   const live = policy.mode === "LIVE";
+  // **리서치 체크아웃은 실제 돈을 만지지 않는다.** 설정이 아니라 코드로 막는다 —
+  // 이유는 `live-allowed.js`에 있다. 조용히 PAPER로 낮추지 않고 던지는 것은,
+  // 낮추면 "실주문이 나가는 줄 알았는데 안 나갔다"가 되기 때문이다.
+  if (live && !LIVE_TRADING_ALLOWED) {
+    throw new Error(
+      `${CHECKOUT_NAME} 체크아웃에서는 실주문을 낼 수 없습니다 (LIVE_TRADING=true).\n` +
+        "  같은 계좌에 봇 둘이 주문하면 보유 기준선이 어긋나 main이 영구 정지합니다.\n" +
+        "  실전은 main 체크아웃에서만 켜십시오. 이 폴더의 .env에서 LIVE_TRADING을 지우세요.",
+    );
+  }
 
   const session = getUsRegularSessionStatus();
   const forced = process.argv.includes("--force");
