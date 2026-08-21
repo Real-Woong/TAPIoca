@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   extractSentimentSeries,
+  judgeAutocorrelation,
+  JUDGMENT_TRADING_DAYS,
   summarizeSentimentSeries,
   toDailySeries,
   UNKNOWN_FINGERPRINT,
@@ -410,4 +412,37 @@ test("판정 표본은 스냅샷이 아니라 거래일 수다", () => {
   const series = extractSentimentSeries(twoDaysTenSnapshots);
   assert.equal(series.length, 10, "스냅샷은 10건");
   assert.equal(summarizeSentimentSeries(toDailySeries(series)).count, 2, "판정 표본은 2거래일");
+});
+
+// 2026-08-20에 10거래일이 찼는데 자기상관 0.140 — 판정표의 가운데 칸이었다. 그때
+// 잰 표준오차가 0.32라 세 칸을 전부 덮었다. 그래서 판정을 60거래일로 옮기고,
+// 다음 숫자를 보기 전에 종료 조건을 함께 박았다. 아래 두 테스트가 그것을 고정한다.
+function summaryOf(autocorrelation, count, stuck = false) {
+  return { autocorrelation, count, stuck };
+}
+
+test("판정은 60거래일에 한 번만 한다 — 그 전의 숫자는 판정이 아니다", () => {
+  assert.equal(JUDGMENT_TRADING_DAYS, 60);
+
+  // 10거래일에 나온 실제 값이다. 규칙만 보면 "애매"지만 판정일이 아니다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.14, 10)).status, "collecting");
+  // 0.3을 넘겨도 마찬가지다. 표본이 작을 때의 큰 값이야말로 가장 잘못 읽힌다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.62, 20)).status, "collecting");
+  // 관문은 여전히 판정보다 앞선다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.98, 80, true)).status, "stuck");
+  assert.equal(judgeAutocorrelation(summaryOf(null, 4)).status, "insufficient");
+});
+
+test("60거래일에서 애매하면 연장하지 않고 가중치 0으로 확정한다", () => {
+  // 종료 조건이 없으면 "표본 추가"가 무한히 반복돼 전략 동결이 오지 않는다.
+  const unresolved = judgeAutocorrelation(summaryOf(0.14, 60));
+  assert.equal(unresolved.status, "unresolved");
+  assert.equal(unresolved.weight, 0, "판정 불가는 기본값(0)이 이긴다");
+
+  assert.equal(judgeAutocorrelation(summaryOf(0.05, 60)).weight, 0);
+  // 문턱 0.1/0.3은 2026-08-06에 정한 그대로다. 경계값도 그대로 붙어 있어야 한다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.1, 60)).status, "noise");
+  assert.equal(judgeAutocorrelation(summaryOf(0.3, 60)).status, "carries");
+  // 값이 이어진다면 가중치는 그때 정한다. 여기서 미리 숫자를 박지 않는다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.42, 60)).weight, null);
 });

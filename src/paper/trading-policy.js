@@ -77,7 +77,9 @@ export function loadTradingPolicy(env = process.env) {
   const rebalanceBandRate = readRate(env.REBALANCE_BAND_RATE, DEFAULTS.rebalanceBandRate);
 
   return Object.freeze({
-    // true를 명시한 경우에만 LIVE로 해석하지만, 현재 실행기는 LIVE 자체를 거부합니다.
+    // true를 명시한 경우에만 LIVE로 해석합니다. **2026-08-19부터 실행기가 이것을
+    // 받아 실주문을 냅니다** — 그전까지는 거부했습니다(`paper-runner.js`).
+    // 미검증 층이 켜져 있으면 그 앞에서 멈춥니다(`unvalidatedLayersInUse`).
     mode: env.LIVE_TRADING === "true" ? "LIVE" : "PAPER",
     assetType: "ETF",
     tradingCurrency: env.TRADING_CURRENCY || DEFAULTS.tradingCurrency,
@@ -167,4 +169,53 @@ function readPositiveInteger(value, fallback) {
   const number = readPositive(value, fallback);
   if (!Number.isInteger(number)) throw new Error(`정수 설정값이 필요합니다: ${value}`);
   return number;
+}
+
+/**
+ * **아직 판정하지 않은 층입니다.** 여기 있는 동안은 실제 돈을 움직일 수 없습니다.
+ *
+ * 감성 층은 백테스트에 넣을 수 없어(수집창이 지나가면 복원되지 않는다) 운영
+ * 로그로만 판정 중이고, 그 판정일은 2026-10-30이다 — `STRATEGY.md` §3 ②.
+ */
+export const UNVALIDATED_LAYERS = Object.freeze([
+  Object.freeze({
+    key: "sentiment",
+    env: "SENTIMENT_SCORE_WEIGHT",
+    label: "감성",
+    why: "2026-10-30 자기상관 판정 전까지 보류 (STRATEGY.md §3 ②·§5-1)",
+  }),
+]);
+
+/**
+ * 실행 중인 스택을 한 줄로 만듭니다. **매 실행마다 찍습니다.**
+ *
+ * 2026-08-21에 이 한 줄이 없어서 놓친 것이 있습니다. `STRATEGY.md`·`README.md`·
+ * 코드 기본값·테스트가 전부 감성 가중치를 **0**이라고 적고 있었는데 **운영 서버의
+ * `.env`만 1**이었습니다. 일일 보고서는 기여도(`뉴스 감성 -0.228`)만 찍고 가중치는
+ * 찍지 않았고, 기여도가 0이 아닌 것은 정상 동작처럼 보였습니다.
+ *
+ * **기여도는 층이 무엇을 했는지 말해 주지만, 그 층이 켜져 있어도 되는지는 말해
+ * 주지 않습니다.** 08-18~20 사흘 동안 미검증 층이 목표 현금을 3.5%→5.0%로
+ * 밀고 있었고, 아무도 몰랐습니다.
+ */
+export function formatStack(stack = {}) {
+  return (
+    `거시 ${stack.macroWeight} · 감성 ${stack.sentimentWeight} · ` +
+    `추세 ${stack.trendWeight} · MACD ${stack.macdWeight} · volTarget ${stack.volTarget}`
+  );
+}
+
+/**
+ * 켜져 있으면 안 되는 층이 켜져 있는지 봅니다.
+ *
+ * **가중치 0은 "층을 지운다"가 아닙니다.** 점수는 계속 계산되고 이벤트 로그에
+ * 남으므로 판정 표본은 그대로 쌓입니다(`market-signal.js`). 0은 **그 값이 배분에
+ * 관여하지 않는다**는 뜻뿐입니다. 그래서 판정 전까지 0으로 두는 데 드는 비용이
+ * 없습니다 — 켜 둘 이유도 없다는 뜻입니다.
+ */
+export function unvalidatedLayersInUse(stack = {}) {
+  return UNVALIDATED_LAYERS.filter((layer) => {
+    const weight = Number(stack[`${layer.key}Weight`]);
+    return Number.isFinite(weight) && weight !== 0;
+  });
 }

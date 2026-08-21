@@ -2,7 +2,13 @@
 
 import path from "node:path";
 
-import { loadSignalHistory } from "./signal-history.js";
+import {
+  JUDGMENT_TRADING_DAYS,
+  MIN_AUTOCORRELATION_DAYS,
+  autocorrelationStandardError,
+  judgeAutocorrelation,
+  loadSignalHistory,
+} from "./signal-history.js";
 
 // 이벤트 로그에 쌓인 감성 스냅샷을 표와 통계로 보여줍니다. 매매는 하지 않습니다.
 // --json 을 주면 백테스트에 바로 먹일 수 있는 일별 시계열만 출력합니다.
@@ -31,8 +37,8 @@ if (asJson) {
   const tradingDays = history.summary.count ?? 0;
   const excludedDays = (history.fullSummary.count ?? 0) - tradingDays;
   console.log(
-    `판정 표본: 거래일 ${tradingDays}/10일` +
-      `${tradingDays >= 10 ? "" : ` (${10 - tradingDays}일 더 필요)`}` +
+    `판정 표본: 거래일 ${tradingDays}/${JUDGMENT_TRADING_DAYS}일` +
+      `${tradingDays >= JUDGMENT_TRADING_DAYS ? "" : ` (${JUDGMENT_TRADING_DAYS - tradingDays}일 더 필요)`}` +
       `${excludedDays > 0 ? ` — 옛 소스 구성 ${excludedDays}일은 뺐습니다` : ""}\n` +
       `  스냅샷 ${history.judgingSnapshotCount}건 · ` +
       `이벤트 ${history.eventCount}건 중 원본 신호 ${history.withSignals}건\n`,
@@ -123,22 +129,38 @@ if (asJson) {
         "   먼저 수집이 살아 있는지 보십시오: npm run sentiment:status");
   }
 
-  if (summary.autocorrelation === null) {
+  // 판정을 눈대중으로 하지 않도록 규칙은 signal-history.js에 박아 두고, 여기서는
+  // 그 결과를 말로 옮기기만 합니다.
+  const verdict = judgeAutocorrelation(summary);
+  const standardError = autocorrelationStandardError(summary.count);
+
+  if (verdict.status === "insufficient") {
     console.log(
-      `1차 자기상관(일별): 표본 부족 (${summary.count}/10거래일) — 최소 10거래일은 모여야 계산합니다.`,
+      `1차 자기상관(일별): 표본 부족 (${summary.count}/${JUDGMENT_TRADING_DAYS}거래일) — ` +
+        `최소 ${MIN_AUTOCORRELATION_DAYS}거래일은 모여야 숫자를 냅니다.`,
     );
   } else {
-    console.log(`1차 자기상관(일별): ${summary.autocorrelation}`);
-    if (summary.stuck) {
-      console.log("→ **판정 보류.** 값이 멈춰 있어 이 숫자는 지속성이 아니라 고장을 잽니다.");
-    } else {
-    // 판정 기준을 코드에 박아 두면 나중에 눈대중으로 해석이 흔들리지 않습니다.
+    // **표준오차를 숫자 옆에 붙입니다.** 2026-08-20에 0.140만 보고 "0.1보다 크다"로
+    // 읽을 뻔했는데, 그때 표준오차가 0.32라 판정표 세 칸을 전부 덮고 있었습니다.
     console.log(
-      summary.autocorrelation >= 0.3
-        ? "→ 값이 이어집니다. 정보를 담고 있을 가능성이 있어 가중치를 유지할 근거가 됩니다."
-        : summary.autocorrelation <= 0.1
-          ? "→ 매일 새로 뽑히는 값과 구분되지 않습니다. 가중치 축소나 평활을 검토하세요."
-          : "→ 판단하기 애매합니다. 표본을 더 모으세요.",
+      `1차 자기상관(일별): ${summary.autocorrelation} (표준오차 약 ${standardError})`,
+    );
+    if (verdict.status === "stuck") {
+      console.log("→ **판정 보류.** 값이 멈춰 있어 이 숫자는 지속성이 아니라 고장을 잽니다.");
+    } else if (verdict.status === "collecting") {
+      console.log(
+        `→ **아직 판정하지 않습니다.** 판정은 ${JUDGMENT_TRADING_DAYS}거래일에 한 번만 합니다 ` +
+          `(지금 ${summary.count}일 · ${JUDGMENT_TRADING_DAYS - summary.count}일 남음).\n` +
+          "   표준오차가 판정 구간(0.1~0.3)보다 넓은 동안 이 숫자는 아무것도 가르지 못합니다.",
+      );
+    } else if (verdict.status === "carries") {
+      console.log("→ 값이 이어집니다. 정보를 담고 있을 가능성이 있어 가중치를 정할 근거가 됩니다.");
+    } else if (verdict.status === "noise") {
+      console.log("→ 매일 새로 뽑히는 값과 구분되지 않습니다. **감성 가중치 0으로 확정합니다.**");
+    } else {
+      console.log(
+        "→ 여전히 애매합니다. **연장은 없습니다 — 감성 가중치 0으로 확정합니다.**\n" +
+          "   2026-08-21에 미리 정한 종료 조건입니다. 판정 불가는 기본값이 이깁니다.",
       );
     }
   }

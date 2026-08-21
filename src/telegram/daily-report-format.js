@@ -101,6 +101,7 @@ function formatMacroLines(macro) {
   const dead = layers.filter((layer) => !layer.available && Number(layer.weight) > 0);
   return [
     `통합 시장 상태: ${macro.regime} (점수 ${macro.score})`,
+    ...formatStackLines(macro.weights),
     ...(layers.length ? [`신호 기여: ${layers.map(formatContribution).join(" · ")}`] : []),
     ...(dead.length
       ? [`⚠️ 비활성 신호: ${dead.map((layer) => `${layer.label}(${reasonText(layer.reason)})`).join(", ")}`]
@@ -116,6 +117,28 @@ function formatMacroLines(macro) {
       : []),
     `목표 비중: ${formatAllocation(macro.targetAllocation)}`,
   ];
+}
+
+/**
+ * **어떤 가중치로 돌고 있는지 매일 적습니다.**
+ *
+ * 2026-08-21까지 이 줄이 없었습니다. 보고서는 기여도(`뉴스 감성 -0.228`)만 찍었고,
+ * 기여도가 0이 아닌 것은 정상 동작과 구분되지 않았습니다. 그래서 문서·코드
+ * 기본값·테스트가 전부 0이라고 적은 감성 가중치가 **운영 `.env`에서만 1**인 채로
+ * 사흘 동안 목표 현금을 3.5%→5.0%로 밀고 있었는데도 드러나지 않았습니다.
+ *
+ * **기여도는 층이 무엇을 했는지 말해 주지만, 그 층이 켜져 있어도 되는지는 말해
+ * 주지 않습니다.**
+ */
+function formatStackLines(weights) {
+  if (!weights) return [];
+  const line =
+    `실행 스택: 거시 ${weights.macro} · 감성 ${weights.sentiment} · ` +
+    `추세 ${weights.trend} · MACD ${weights.macd} · volTarget ${weights.volTarget}`;
+  // 판정이 끝나지 않은 층이 켜져 있으면 그 사실을 스택 바로 아래에 답니다.
+  return Number(weights.sentiment) !== 0
+    ? [line, "⚠️ 미검증 층 작동 중: 감성 가중치가 0이 아닙니다 — 2026-10-30 판정 전까지는 0이어야 합니다"]
+    : [line];
 }
 
 function formatContribution(layer) {

@@ -10,7 +10,11 @@ import { createPaperState, runPaperCycle } from "./paper-engine.js";
 import { appendPaperEvent, buildPaperEvent } from "./event-log.js";
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
 import { createUsdBudget } from "./trading-budget.js";
-import { loadTradingPolicy } from "./trading-policy.js";
+import {
+  formatStack,
+  loadTradingPolicy,
+  unvalidatedLayersInUse,
+} from "./trading-policy.js";
 import { getUsRegularSessionStatus } from "../market/us-market-session.js";
 import { buildDailyMacdSignal, updateMacdSignal } from "../market/macd-signal.js";
 import { loadDailyCloses, loadTrendSignal } from "../market/trend-signal.js";
@@ -136,14 +140,22 @@ async function run() {
       console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
       return null;
     });
-  const marketSignal = combineMarketSignals(macroSignal, sentiment, {
+  // **스택을 매 실행마다 찍습니다.** 기여도만 보고는 어떤 가중치로 돌고 있는지
+  // 알 수 없습니다 — 2026-08-21에 그래서 미검증 층이 사흘간 배분을 밀고 있었습니다.
+  const stack = {
     macroWeight: readMacroWeight(process.env.MACRO_SCORE_WEIGHT),
     sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
-    trend,
     trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
-    macd,
     macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
     volTarget: readRate01(process.env.VOL_TARGET_ANNUALIZED, 0.15, "VOL_TARGET_ANNUALIZED"),
+  };
+  console.log(`■ 스택: ${formatStack(stack)}`);
+  assertValidatedStack(stack, live);
+
+  const marketSignal = combineMarketSignals(macroSignal, sentiment, {
+    ...stack,
+    trend,
+    macd,
     minExposure: readRate01(process.env.MIN_EXPOSURE, 0.3, "MIN_EXPOSURE"),
   });
   let state = await readState();
@@ -282,6 +294,39 @@ function readCsv(value) {
  * 남고(`market-signal.js`가 `sentiment`를 그대로 실어 보낸다), 판정은 그
  * 원점수의 자기상관으로 한다.
  */
+/**
+ * **미검증 층은 실제 돈을 움직이지 못합니다.**
+ *
+ * LIVE에서는 멈춥니다. PAPER에서는 경고만 하고 계속 돕니다 — PAPER 장부가 멈추면
+ * 판정 표본이 그날치를 잃고, 그것이야말로 이 층을 켜 둔 이유였던 판정을 늦춥니다.
+ * 대신 **PAPER 장부도 그 사흘은 백테스트 숫자와 비교할 수 없다**는 것을 같은
+ * 자리에서 말합니다.
+ *
+ * **안전 스위치는 안전한 쪽으로 넘어집니다**(`live-safety.test.js`와 같은 원칙).
+ * 설정이 어긋난 채로 실주문을 내느니 사이클을 거르는 편이 낫습니다 — cron이
+ * 실패하면 보고서가 오지 않아 사람이 알아챕니다.
+ */
+function assertValidatedStack(stack, live) {
+  const inUse = unvalidatedLayersInUse(stack);
+  if (inUse.length === 0) return;
+
+  const detail = inUse
+    .map((layer) => `${layer.label}(${layer.env}=${stack[`${layer.key}Weight`]}) — ${layer.why}`)
+    .join(", ");
+
+  if (live) {
+    throw new Error(
+      `미검증 층이 켜진 채로 실주문을 낼 수 없습니다: ${detail}\n` +
+        `  .env에서 ${inUse.map((layer) => `${layer.env}=0`).join(", ")} 으로 두고 다시 실행하세요.`,
+    );
+  }
+  console.warn(
+    `⚠️  미검증 층이 배분에 관여하고 있습니다: ${detail}\n` +
+      "   PAPER 장부는 계속 돌지만, 이 사이클은 백테스트 숫자와 비교할 수 없습니다 —\n" +
+      "   백테스터는 감성을 null로 넣습니다(backtest-engine.js).",
+  );
+}
+
 function readSentimentWeight(value) {
   if (value === undefined || value === "") return 0;
   const weight = Number(value);

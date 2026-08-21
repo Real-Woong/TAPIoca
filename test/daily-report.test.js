@@ -199,3 +199,48 @@ test("정책믹스 기준선과 그 대비 초과성과를 보고서에 함께 �
   assert.match(report, /벤치마크\(VTI 매수후보유\)/);
   assert.match(report, /초과성과\(alpha\)/);
 });
+
+// 2026-08-21: 보고서가 기여도(`뉴스 감성 -0.228`)만 찍어서, 문서가 0이라고 적은
+// 감성 가중치가 운영 .env에서만 1인 채로 사흘간 배분을 밀고 있는 것을 놓쳤다.
+// 기여도가 0이 아닌 것은 정상 동작과 구분되지 않는다. 가중치를 직접 적는다.
+function stateWithWeights(weights) {
+  return {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 1.5,
+    realizedPnlUsd: 0,
+    positions: {},
+    trades: [],
+    macro: {
+      regime: "NEUTRAL",
+      score: 0.748,
+      targetAllocation: { VTI: 0.7, SCHD: 0.18, IWM: 0.08, CASH: 0.05 },
+      weights,
+      layers: [
+        { key: "NEWS", label: "뉴스 감성", weight: weights.sentiment, available: true,
+          contribution: -0.228 },
+        { key: "TREND", label: "추세(200일선)", weight: 1, available: true, contribution: 0.976 },
+      ],
+    },
+  };
+}
+
+test("보고서가 실행 중인 가중치를 그대로 적는다", () => {
+  const report = formatDailyReport(
+    stateWithWeights({ macro: 0, sentiment: 0, trend: 1, macd: 0, volTarget: 0.15 }),
+    "2026-08-19",
+  );
+
+  assert.match(report, /실행 스택: 거시 0 · 감성 0 · 추세 1 · MACD 0 · volTarget 0\.15/);
+  assert.doesNotMatch(report, /미검증 층 작동 중/);
+});
+
+test("판정 전인 감성 층이 켜져 있으면 보고서가 경고한다", () => {
+  // 실제로 08-18~20에 돌던 스택이다. 통합 점수 0.748 = 추세 0.976 + 감성 -0.228.
+  const report = formatDailyReport(
+    stateWithWeights({ macro: 0, sentiment: 1, trend: 1, macd: 0, volTarget: 0.15 }),
+    "2026-08-19",
+  );
+
+  assert.match(report, /실행 스택: 거시 0 · 감성 1 /);
+  assert.match(report, /⚠️ 미검증 층 작동 중: 감성 가중치가 0이 아닙니다/);
+});

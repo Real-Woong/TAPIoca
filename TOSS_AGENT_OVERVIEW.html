@@ -256,12 +256,12 @@
 <header class="hero">
   <div class="wrap reveal">
     <span class="paper-badge"><span class="dot"></span>PAPER 상시 · 실주문은 LIVE_TRADING 스위치</span>
-    <p class="eyebrow">시스템 개요 · 2026-08-19 기준</p>
+    <p class="eyebrow">시스템 개요 · 2026-08-21 기준</p>
     <h1>덜 잃기 위해<br>미국 ETF의 노출을 조절하는 에이전트</h1>
     <p class="lead">TAPIoca는 Toss Open API로 시세를 읽고, <b>FRED 거시지표·무료 뉴스 감성·200일 이동평균 추세·MACD</b>를 하나의 시장 판정으로 합친 뒤, <b>대칭 리밸런싱 매매 엔진</b>으로 장부를 운용합니다. Oracle 서버에서 15분 주기로 돌며 매일 텔레그램으로 보고합니다. <b>20년 실데이터로 잰 결과, 이 시스템이 사는 것은 수익률이 아니라 낙폭입니다.</b></p>
 
     <div class="kpis">
-      <div class="kpi"><div class="n">33<small>일</small></div><div class="l">개발 기간</div><div class="sub">07-18 → 08-19</div></div>
+      <div class="kpi"><div class="n">35<small>일</small></div><div class="l">개발 기간</div><div class="sub">07-18 → 08-21</div></div>
       <div class="kpi"><div class="n">114</div><div class="l">누적 커밋</div><div class="sub">fe80067 → a6e0797</div></div>
       <div class="kpi"><div class="n">16,503<small>줄</small></div><div class="l">전체 코드</div><div class="sub">파일 92개</div></div>
       <div class="kpi"><div class="n">357<small>/357</small></div><div class="l">테스트 통과</div><div class="sub">30개 파일</div></div>
@@ -680,6 +680,14 @@
           <div class="tl-tags"><span>paper-bridge</span><span>live-wiring</span><span>account-resolve</span></div>
         </div>
       </div>
+      <div class="tl-item">
+        <div class="tl-when"><span class="date">08-21</span><span class="hash">—</span><span class="phase-n">22 · 첫 감성 판정</span></div>
+        <div class="tl-body">
+          <h3>애매하다고 답한 것은 신호가 아니라 표본이었다</h3>
+          <p>10거래일이 차서 처음 판정. 앞선 관문은 둘 다 통과했고(구성 하나로 10일, 표준편차 0.140) 일별 자기상관은 <b>0.140</b> — 판정표의 가운데 칸. 그 자리에서 <b>이 검정의 해상도를 처음 쟀음</b>: 자기상관의 표준오차는 대략 1/√n이라 n=10이면 <b>0.32</b>이고 95% 구간이 −0.48~0.76으로 <b>판정표 세 칸을 전부 덮음</b>. 표본 10으로는 0.1과 0.3을 가를 수 없음 — 문턱을 정할 때 이 계산을 한 적이 없었음. 문턱(0.1/0.3)은 그대로 두고 표본을 <b>60거래일(10/30)</b>로 늘리되, 숫자를 본 뒤의 변경이므로 같은 자리에서 <b>종료 조건</b>을 함께 박음: 그때도 0.1~0.3이면 연장 없이 가중치 0으로 확정. <b>판정 불가는 기본값이 이김.</b></p>
+          <div class="tl-tags"><span>judgment-days</span><span>standard-error</span><span>stopping-rule</span></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -727,7 +735,7 @@
       <ul>
         <li><b>슬리피지 표본 3건</b> — 10건 미만이면 숫자를 결론으로 내지 않음. 10bp 가정은 아직 미검증</li>
         <li><b>환전 비용 미실측</b> — 원화→달러 환전이 어디서 얼마나 붙는지 아직 경로에 안 나타남</li>
-        <li><b>감성 층의 가치 판정 중</b> — 판정 표본 8/10거래일, 8/20 도달 예정. 백테스트로는 잴 수 없음(수집창이 지나가면 복원 불가)</li>
+        <li><b>감성 층의 가치 판정 중</b> — 8/20 첫 판정은 <b>애매</b>(일별 자기상관 0.140). 표본 10의 표준오차가 0.32라 판정표 세 칸(0.1~0.3)을 전부 덮어 아무것도 가르지 못함. <b>60거래일(10/30)에 한 번 더 판정하고 끝냄</b> — 그때도 애매하면 연장 없이 가중치 0 확정. 백테스트로는 잴 수 없음(수집창이 지나가면 복원 불가)</li>
         <li>밴드 방향 비대칭의 <b>남은 절반</b> — 목표가 2.5~5%로 되돌아오는 경로는 아직 갇힘. 넓은 버전은 잰 적이 없어 바꾸지 않음</li>
       </ul>
       <ul>
@@ -742,7 +750,7 @@
 
 <footer>
   <div class="wrap">
-    <p><span class="mono">TAPIoca🧋</span> · Toss ETF Trading Agent · 기록 범위 2026-07-18 → 2026-08-19 (main <span class="mono">a6e0797</span>). 본 문서는 소프트웨어와 전략의 진화 기록이며, <b>투자 성과를 보증하지 않습니다.</b> 여기 적힌 모든 숫자는 과거 실데이터에 대한 측정치이지 미래에 대한 약속이 아닙니다. 근거와 판정 기준의 원본은 <span class="mono">STRATEGY.md</span>, 무슨 일이 있었는지는 <span class="mono">develope-log/</span>에 있습니다.</p>
+    <p><span class="mono">TAPIoca🧋</span> · Toss ETF Trading Agent · 기록 범위 2026-07-18 → 2026-08-21 (main <span class="mono">9a151e5</span>). 본 문서는 소프트웨어와 전략의 진화 기록이며, <b>투자 성과를 보증하지 않습니다.</b> 여기 적힌 모든 숫자는 과거 실데이터에 대한 측정치이지 미래에 대한 약속이 아닙니다. 근거와 판정 기준의 원본은 <span class="mono">STRATEGY.md</span>, 무슨 일이 있었는지는 <span class="mono">develope-log/</span>에 있습니다.</p>
   </div>
 </footer>
 

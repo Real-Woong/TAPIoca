@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { loadTradingPolicy } from "../src/paper/trading-policy.js";
+import {
+  formatStack,
+  loadTradingPolicy,
+  unvalidatedLayersInUse,
+} from "../src/paper/trading-policy.js";
 
 test("지수 ETF 기본값은 개별 종목용 청산 규칙을 켜지 않는다", () => {
   const policy = loadTradingPolicy({});
@@ -65,7 +69,9 @@ test("거시 가중치의 운영 기본값은 0이다", async () => {
  * 감성 층 가중치의 운영 기본값입니다.
  *
  * 2026-08-08: 0. **거시와 달리 최종 결정이 아니라 판정 전까지의 보류**입니다.
- * 10거래일 표본으로 8/20 전후에 판정하고 그때 값을 정합니다.
+ * 8/20의 10거래일 판정은 자기상관 0.140 — 표본의 표준오차가 판정표를 덮어
+ * 아무것도 가르지 못했습니다. **60거래일(2026-10-30)에 한 번 더 판정하고 끝냅니다.**
+ * 그때 또 0.1~0.3이면 연장 없이 0으로 확정합니다(STRATEGY.md §3 ②).
  */
 test("감성 가중치의 운영 기본값은 판정 전까지 0이다", async () => {
   const { readFile } = await import("node:fs/promises");
@@ -75,4 +81,31 @@ test("감성 가중치의 운영 기본값은 판정 전까지 0이다", async (
 
   assert.ok(match, "readSentimentWeight의 기본값을 찾지 못했다");
   assert.equal(match[1], "0", "미검증 층은 매매를 바꾸지 않는다(2026-08-08, 판정 전까지)");
+});
+
+// 2026-08-21: 문서·README·코드 기본값·아래 테스트가 전부 감성 가중치를 0이라고
+// 적고 있었는데 **운영 서버의 .env만 1**이었다. 사흘치 일일 보고서의 통합 점수가
+// 정확히 `추세 기여 + 감성 기여`였다 — 0.976 + (−0.228) = 0.748. 미검증 층이
+// 목표 현금을 3.5%→5.0%로 밀고 있었다.
+//
+// **소스의 기본값을 검사하는 것으로는 이것을 잡을 수 없다.** 실제로 도는 값은
+// .env에서 온다. 그래서 실행 중인 스택을 보는 관문을 따로 둔다.
+test("미검증 층이 켜져 있으면 실행 중인 스택에서 드러난다", () => {
+  const running = { macroWeight: 0, sentimentWeight: 1, trendWeight: 1, macdWeight: 0, volTarget: 0.15 };
+  const inUse = unvalidatedLayersInUse(running);
+  assert.equal(inUse.length, 1);
+  assert.equal(inUse[0].env, "SENTIMENT_SCORE_WEIGHT");
+
+  // 판정이 끝날 때까지 실제 돈을 움직일 수 있는 스택은 이것뿐이다.
+  assert.deepEqual(
+    unvalidatedLayersInUse({ ...running, sentimentWeight: 0 }),
+    [],
+  );
+});
+
+test("스택 한 줄에 가중치가 전부 보인다 — 기여도만으로는 못 본다", () => {
+  const line = formatStack({
+    macroWeight: 0, sentimentWeight: 0, trendWeight: 1, macdWeight: 0, volTarget: 0.15,
+  });
+  assert.equal(line, "거시 0 · 감성 0 · 추세 1 · MACD 0 · volTarget 0.15");
 });

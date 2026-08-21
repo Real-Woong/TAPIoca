@@ -214,6 +214,72 @@ export const STUCK_STDEV_THRESHOLD = 0.01;
  */
 export const MIN_STUCK_DAYS = 3;
 
+/**
+ * **판정을 내리는 표본 크기입니다. 10거래일이 아니라 60거래일입니다.**
+ *
+ * 2026-08-20에 10거래일이 찼고 일별 1차 자기상관은 0.140이 나왔습니다. 0.1~0.3
+ * 구간이라 규칙대로 "애매 — 표본 추가"입니다. 그 자리에서 처음으로 **이 검정의
+ * 해상도**를 쟀습니다. 자기상관 추정치의 표준오차는 대략 1/√n이라 n=10이면
+ * 0.32이고, 95% 구간이 −0.48~0.76 — **판정표의 세 칸을 전부 덮습니다.** 표본 10은
+ * 0.1과 0.3을 가를 수 없습니다. 문턱을 정할 때 이 계산을 한 적이 없었습니다.
+ *
+ * 60거래일이면 표준오차가 0.13입니다. **그래도 밴드 폭 0.2보다 큽니다.** 그러니
+ * 60은 "가를 수 있는 표본"이 아니라 **더 기다리지 않기로 정한 지점**입니다.
+ * 가르려면 n≈100(2027년 1월)이 필요한데, 미검증 층을 가중치 0으로 안고 그때까지
+ * 가는 값이 그 해상도가 주는 것보다 크다고 보지 않았습니다.
+ *
+ * **그래서 종료 조건이 함께 붙습니다 — `judgeAutocorrelation`을 보십시오.**
+ */
+export const JUDGMENT_TRADING_DAYS = 60;
+
+/**
+ * 숫자를 아예 내지 않는 하한입니다. 판정은 60거래일에 하되, 그 전에도 참고로
+ * 보여 주려면 최소한 이만큼은 있어야 합니다. 적은 표본의 통계는 근거처럼 쓰입니다.
+ */
+export const MIN_AUTOCORRELATION_DAYS = 10;
+
+/** 자기상관 추정치의 대략적인 표준오차. 숫자 옆에 붙여 혼자 읽히지 않게 합니다. */
+export function autocorrelationStandardError(count) {
+  return count > 0 ? round(1 / Math.sqrt(count)) : null;
+}
+
+/**
+ * **판정을 코드에 박아 둡니다.** 눈대중으로 해석이 흔들리지 않게 하려는 것이고,
+ * 특히 아래 `unresolved` 가지가 나중에 "한 번만 더 모으자"로 읽히지 않게 하려는
+ * 것입니다. 문턱 0.1/0.3은 2026-08-06에 정한 그대로입니다.
+ *
+ * | 자기상관 | 판정 | 가중치 |
+ * |---|---|---|
+ * | ≥ 0.3 | 값이 이어짐 | 0이 아닌 값을 정한다 |
+ * | 0.1 ~ 0.3 | 애매 — **연장 없음** | 0으로 확정 |
+ * | ≤ 0.1 | 난수와 구분 안 됨 | 0으로 확정 |
+ *
+ * **중간 칸에 연장이 없는 이유.** 종료 조건이 없으면 "표본 추가"가 무한히
+ * 반복되고 전략 동결이 영영 오지 않습니다. 그래서 **판정 불가는 기본값(0)이
+ * 이깁니다.** 2026-08-21에, 60거래일의 숫자를 보기 전에 정했습니다.
+ */
+export function judgeAutocorrelation(summary) {
+  if (summary.autocorrelation === null) {
+    return { status: "insufficient", weight: null };
+  }
+  // 멈춘 값은 자기상관이 1에 가까워 "정보를 담고 있다"로 읽힙니다. 고장을 신호로
+  // 읽는 것이므로 판정보다 앞섭니다.
+  if (summary.stuck) {
+    return { status: "stuck", weight: null };
+  }
+  // 판정일 전의 숫자는 참고입니다. 이 구간의 표준오차는 판정표보다 넓습니다.
+  if (summary.count < JUDGMENT_TRADING_DAYS) {
+    return { status: "collecting", weight: null };
+  }
+  if (summary.autocorrelation >= 0.3) {
+    return { status: "carries", weight: null };
+  }
+  if (summary.autocorrelation <= 0.1) {
+    return { status: "noise", weight: 0 };
+  }
+  return { status: "unresolved", weight: 0 };
+}
+
 export function summarizeSentimentSeries(series) {
   const scores = series.map((row) => Number(row.score)).filter(Number.isFinite);
   if (scores.length === 0) {
@@ -258,7 +324,7 @@ export function summarizeSentimentSeries(series) {
 
 function autocorrelation(scores, mean, stdev) {
   // 표본이 너무 적으면 숫자가 나오더라도 의미가 없으므로 아예 내지 않습니다.
-  if (scores.length < 10 || stdev === 0) return null;
+  if (scores.length < MIN_AUTOCORRELATION_DAYS || stdev === 0) return null;
   const covariance = average(
     scores.slice(1).map((score, index) => (score - mean) * (scores[index] - mean)),
   );
