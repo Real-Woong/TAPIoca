@@ -11,6 +11,7 @@ import {
   macroScoreTimeline,
   summarizeMacroTimeline,
 } from "./macro-history.js";
+import { splitIntoBlocks } from "./blocks.js";
 import { fetchAndCacheCloses, loadCachedCloses } from "./price-cache.js";
 import { buildScenario, SCENARIOS } from "./scenarios.js";
 
@@ -625,41 +626,6 @@ function reportBlocks(comparison, datasets, runVariant) {
       "  실재하는 효과도 폭락 구간에서 크고 평온 구간에서 작습니다. 폭은 효과의\n" +
       "  존재가 아니라 **일반화 가능성**을 알려줍니다.",
   );
-}
-
-/** 각 데이터셋을 겹치지 않는 구간으로 자릅니다. 워밍업을 못 채우는 구간은 버립니다. */
-function splitIntoBlocks(sets, count) {
-  const minimumDays = 200 + 250; // 워밍업 200일 + 평가할 최소 구간
-  const blocks = [];
-  for (let index = 0; index < count; index += 1) {
-    const sliced = sets.map((dataset) => {
-      const closesBySymbol = {};
-      let size = 0;
-      for (const [symbol, closes] of Object.entries(dataset.closesBySymbol)) {
-        size = Math.floor(closes.length / count);
-        closesBySymbol[symbol] = closes.slice(index * size, (index + 1) * size);
-      }
-      // 날짜와 거시 점수도 **같은 자리에서** 잘라야 합니다. 종가만 자르고
-      // 나머지를 전체 길이로 두면 구간 인덱스가 엉뚱한 날을 가리킵니다.
-      // 2026-08-07에 실제로 그랬습니다 — 되살린 거시가 뒤쪽 1738일에만 있는데
-      // 구간 길이가 1250이라 모든 구간이 null로 떨어져 상수와 같아졌고,
-      // 구간 차이가 정확히 0으로 찍혀 "차이가 없다"처럼 보였습니다.
-      const slice = (array) =>
-        Array.isArray(array) ? array.slice(index * size, (index + 1) * size) : array;
-      return {
-        ...dataset,
-        closesBySymbol,
-        dates: slice(dataset.dates),
-        macroScores: slice(dataset.macroScores),
-      };
-    });
-    const usable = Math.min(
-      ...sliced.flatMap((dataset) =>
-        Object.values(dataset.closesBySymbol).map((closes) => closes.length)),
-    );
-    if (usable >= minimumDays) blocks.push(sliced);
-  }
-  return blocks;
 }
 
 function round3(value) {

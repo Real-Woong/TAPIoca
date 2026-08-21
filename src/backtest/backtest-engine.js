@@ -59,7 +59,13 @@ export function runBacktest({
     symbols.map((symbol) => [symbol, closesBySymbol[symbol].slice(-length)]),
   );
 
-  const timeline = dates ?? defaultDates(length);
+  // **날짜도 종가와 같은 규칙으로 뒤에서 맞춥니다.** 종가만 짧은 쪽에 맞추고
+  // 날짜를 그대로 두면 인덱스가 어긋나고, 날짜가 더 짧으면 `timeline[index]`가
+  // undefined가 되어 한참 뒤에서 터집니다(2026-08-21 구간 분할).
+  if (Array.isArray(dates) && dates.length < length) {
+    throw new Error(`날짜가 일봉보다 짧습니다: 날짜 ${dates.length}개, 일봉 ${length}개`);
+  }
+  const timeline = Array.isArray(dates) ? dates.slice(-length) : defaultDates(length);
   const state = createPaperState({
     budget: {
       fundingKrw: 100_000,

@@ -274,3 +274,50 @@ test("구간 분할은 겹치지 않고 순서를 지킨다", () => {
     assert.ok(Number.isFinite(runBacktest({ closesBySymbol: block, policy }).metrics.cdar5Pct));
   }
 });
+
+// ── 구간 분할 ──────────────────────────────────────────────────────────────
+// 2026-08-21: `--compare regime --source cache --blocks 4`(3종목)가 마지막
+// 구간에서 터졌다. 원인은 크래시가 아니라 **정렬 없이 자른 것**이었다 —
+// 종목마다 길이가 달라 같은 구간 번호가 종목마다 다른 날짜를 가리켰고,
+// 구간1~3은 조용히 틀린 값을 냈다. 터진 구간4가 오히려 운이 좋았다.
+test("구간 분할은 자르기 전에 종목 길이를 맞춘다", async () => {
+  const { splitIntoBlocks, alignToShortest } = await import("../src/backtest/blocks.js");
+
+  // VTI 5000 · SCHD 3719 · IWM 5000 — 실제 캐시와 같은 모양이다.
+  // 날짜는 가장 짧은 종목 기준이라 3719개다(backtest-cli.js의 buildDatasets).
+  const closesBySymbol = {
+    VTI: Array.from({ length: 5000 }, (unused, index) => 100 + index),
+    SCHD: Array.from({ length: 3719 }, (unused, index) => 50 + index),
+    IWM: Array.from({ length: 5000 }, (unused, index) => 80 + index),
+  };
+  const dates = Array.from({ length: 3719 }, (unused, index) => new Date(2011, 0, 1 + index));
+
+  const blocks = splitIntoBlocks([{ closesBySymbol, dates }], 4, 450);
+  assert.equal(blocks.length, 4, "구간4가 빈 배열이 되어 사라지지 않는다");
+
+  for (const [number, [dataset]] of blocks.entries()) {
+    const lengths = Object.values(dataset.closesBySymbol).map((closes) => closes.length);
+    assert.equal(new Set(lengths).size, 1, `구간${number + 1}: 종목마다 길이가 같아야 한다`);
+    assert.ok(
+      dataset.dates.length >= lengths[0],
+      `구간${number + 1}: 날짜 ${dataset.dates.length}개가 일봉 ${lengths[0]}개보다 짧다`,
+    );
+  }
+
+  // 같은 구간 번호는 모든 종목에서 같은 날짜 구간이어야 한다. 정렬 뒤 SCHD는
+  // 그대로고 VTI·IWM은 앞의 1281일이 잘리므로, 각 구간의 첫 값이 그만큼 밀린다.
+  const aligned = alignToShortest(closesBySymbol);
+  assert.equal(aligned.length, 3719);
+  assert.equal(aligned.closesBySymbol.VTI[0], 100 + (5000 - 3719));
+  assert.equal(aligned.closesBySymbol.SCHD[0], 50);
+});
+
+test("날짜가 일봉보다 짧으면 조용히 지나가지 않는다", () => {
+  assert.throws(
+    () => runBacktest({
+      closesBySymbol: { VTI: Array.from({ length: 600 }, (unused, i) => 100 + i) },
+      dates: [new Date(2020, 0, 1)],
+    }),
+    /날짜가 일봉보다 짧습니다/,
+  );
+});
