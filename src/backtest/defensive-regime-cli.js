@@ -106,49 +106,84 @@ function main(cached) {
       "  아닙니다. 판정은 겹치지 않는 **구간 4개의 부호**로만 합니다.",
   );
   console.log("\n── 판정 ──\n");
-  const down = (list) => list.filter((r) => r.score < 0);
-  const mean = (list, symbol) =>
-    list.length ? list.reduce((sum, r) => sum + r.forward[symbol], 0) / list.length : NaN;
+  const groups = [];
+  for (let block = 0; block < 4; block += 1) {
+    groups.push(rows.filter(
+      (r) => r.index >= block * blockSize && r.index < (block + 1) * blockSize));
+  }
 
+  // ① 신호가 주식의 앞날을 실제로 가리는가. 하방일 수익률이 상방일보다 낮아야 한다.
+  //    이것이 안 되면 그 뒤의 모든 이야기는 신호가 아니라 자산 이야기다.
+  const trendGap = groups.map((g) =>
+    meanOf(g.filter((r) => r.score < 0), trendSymbol)
+    - meanOf(g.filter((r) => r.score >= 0), trendSymbol));
+  const negatives = trendGap.filter((v) => v < 0).length;
+  console.log(
+    `  ① ${trendSymbol} 하방일 − 상방일: ` +
+      trendGap.map((v) => v.toFixed(2).padStart(7)).join(" ") +
+      `   음수 ${negatives}/4` +
+      (negatives === 4 ? "  ← 신호가 주식 약세를 가린다" : "  ← **신호가 주식 약세를 못 가린다**"),
+  );
+
+  // ② 방어자산이 **하방일에 상대적으로 더** 좋았는가. 절대 수익률이 아니라 차이다.
+  //    절대값으로 보면 "그 자산이 원래 좋았다"와 구분되지 않는다.
   const defensive = symbols.filter((s) => s !== trendSymbol);
+  console.log("");
   for (const symbol of defensive) {
-    const perBlock = [];
-    for (let block = 0; block < 4; block += 1) {
-      const inBlock = down(rows.filter(
-        (r) => r.index >= block * blockSize && r.index < (block + 1) * blockSize));
-      perBlock.push(mean(inBlock, symbol));
-    }
-    const positives = perBlock.filter((v) => v > cashOverHorizon).length;
+    const gap = groups.map((g) =>
+      meanOf(g.filter((r) => r.score < 0), symbol)
+      - meanOf(g.filter((r) => r.score >= 0), symbol));
+    const positives = gap.filter((v) => v > 0).length;
     console.log(
-      `  ${symbol.padEnd(5)} 추세 하방일의 수익률: ` +
-        perBlock.map((v) => (Number.isFinite(v) ? v.toFixed(2) : "  —").padStart(7)).join(" ") +
-        `   현금초과 ${positives}/4` +
-        (positives === 4 ? "  ← 국면과 무관하게 이겼다" : "  ← 국면이 정한다"),
+      `  ② ${symbol.padEnd(4)} 하방일 − 상방일: ` +
+        gap.map((v) => v.toFixed(2).padStart(7)).join(" ") +
+        `   양수 ${positives}/4` +
+        (positives === 4 ? "  ← 하방 신호에 반응한다" : "  ← 국면이 정한다"),
     );
   }
+
   console.log(
-    `\n  기준은 같은 기간의 현금 ${cashOverHorizon.toFixed(2)}%입니다(연 ${(cashYield * 100).toFixed(1)}%).\n` +
-      "  **현금초과 4/4가 아니면 추세만으로는 갈아탈 곳을 정할 수 없습니다.**\n" +
-      "  같은 '하방' 신호에 어떤 구간에서는 벌고 어떤 구간에서는 잃는다면,\n" +
-      "  그 구분은 추세 안에 들어 있지 않은 것입니다. aggregator로도 못 만듭니다.",
+    "\n  **①이 4/4가 아니면 ②를 읽을 필요가 없습니다.** 신호가 주식 약세조차\n" +
+      "  가리지 못하면, 그 신호로 갈아탈 곳을 정하는 것은 동전을 던지는 것입니다.\n" +
+      "  그리고 이 진단은 **수익률만** 잽니다. 이 시스템이 사는 것은 낙폭이므로,\n" +
+      "  여기서 통과해도 낙폭 기여는 따로 재야 합니다(정적 비교에서 GLD는 4/4로\n" +
+      "  낙폭을 악화시켰습니다).",
   );
 }
 
 function header() {
   console.log(
-    "  " + "구간".padEnd(8) + "기간".padEnd(26) + "날수(하방/전체)".padEnd(18) +
+    "  " + " ".repeat(8 + 26 + 12) +
+      "하방일".padEnd(symbols.length * 8) + "  |" +
+      "상방일".padEnd(symbols.length * 8) + "  |" + "차이(하방−상방)",
+  );
+  console.log(
+    "  " + "구간".padEnd(8) + "기간".padEnd(26) + "하방/전체".padEnd(12) +
+      symbols.map((s) => s.padStart(8)).join("") + "  |" +
+      symbols.map((s) => s.padStart(8)).join("") + "  |" +
       symbols.map((s) => s.padStart(8)).join(""),
   );
 }
 
+function meanOf(list, symbol) {
+  return list.length ? list.reduce((sum, r) => sum + r.forward[symbol], 0) / list.length : NaN;
+}
+
+/**
+ * **상방일이 대조군입니다.** 이것 없이 하방일 수익률만 보면 "신호가 고른 것"과
+ * "자산이 원래 좋은 것"이 구분되지 않습니다. 2026-08-21 첫 실행에서 GLD가
+ * 하방일에 4/4로 현금을 이겼는데, 표본(2006~2026)이 금 대세상승기라 **아무 날에나
+ * 이겼을 뿐인지** 알 수 없었습니다. 차이(하방 − 상방)가 그것을 가릅니다.
+ */
 function printGroup(label, list, from, to) {
   const down = list.filter((r) => r.score < 0);
-  const mean = (symbol) =>
-    down.length ? down.reduce((sum, r) => sum + r.forward[symbol], 0) / down.length : NaN;
+  const up = list.filter((r) => r.score >= 0);
   const span = from && to ? `${from} ~ ${to}` : "";
+  const cell = (value) => (Number.isFinite(value) ? value.toFixed(2) : "—").padStart(8);
   console.log(
-    "  " + label.padEnd(8) + span.padEnd(26) +
-      `${down.length}/${list.length}`.padEnd(18) +
-      symbols.map((s) => (Number.isFinite(mean(s)) ? mean(s).toFixed(2) : "—").padStart(8)).join(""),
+    "  " + label.padEnd(8) + span.padEnd(26) + `${down.length}/${list.length}`.padEnd(12) +
+      symbols.map((s) => cell(meanOf(down, s))).join("") + "  |" +
+      symbols.map((s) => cell(meanOf(up, s))).join("") + "  |" +
+      symbols.map((s) => cell(meanOf(down, s) - meanOf(up, s))).join(""),
   );
 }
