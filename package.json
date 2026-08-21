@@ -31,7 +31,8 @@
     "test:verbose": "node --test",
     "pull-data": "bash scripts/pull-data.sh",
     "pull-snapshots": "bash scripts/pull-snapshots.sh",
-    "snapshot-data": "bash scripts/snapshot-data.sh"
+    "snapshot-data": "bash scripts/snapshot-data.sh",
+    "diagnose:defensive": "node src/backtest/defensive-regime-cli.js"
   },
   "engines": {
     "node": ">=20.12"
