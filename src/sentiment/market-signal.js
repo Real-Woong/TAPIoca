@@ -16,14 +16,15 @@ export const REGIME_THRESHOLD = 1.5;
  * 보간하면 점수 0.1 변동이 30%p 점프가 아니라 2%p 드리프트가 되고,
  * 무거래 밴드(기본 5%) 안에 들어와 실제 주문으로 이어지지 않습니다.
  */
-export function allocationForScore(score, tables = ALLOCATIONS) {
+export function allocationForScore(score, tables = ALLOCATIONS, threshold = REGIME_THRESHOLD) {
   const value = Number(score);
+  const scale = Number(threshold) > 0 ? Number(threshold) : REGIME_THRESHOLD;
   if (!Number.isFinite(value)) return { ...tables.NEUTRAL };
-  if (value <= -REGIME_THRESHOLD) return { ...tables.RISK_OFF };
-  if (value >= REGIME_THRESHOLD) return { ...tables.RISK_ON };
+  if (value <= -scale) return { ...tables.RISK_OFF };
+  if (value >= scale) return { ...tables.RISK_ON };
   return value < 0
-    ? blend(tables.NEUTRAL, tables.RISK_OFF, -value / REGIME_THRESHOLD)
-    : blend(tables.NEUTRAL, tables.RISK_ON, value / REGIME_THRESHOLD);
+    ? blend(tables.NEUTRAL, tables.RISK_OFF, -value / scale)
+    : blend(tables.NEUTRAL, tables.RISK_ON, value / scale);
 }
 
 /** from에서 to로 ratio(0~1)만큼 이동한 비중표를 만듭니다. */
@@ -39,11 +40,12 @@ function blend(from, to, ratio) {
   return blended;
 }
 
-export function regimeForScore(score) {
+export function regimeForScore(score, threshold = REGIME_THRESHOLD) {
   const value = Number(score);
-  return value >= REGIME_THRESHOLD
+  const scale = Number(threshold) > 0 ? Number(threshold) : REGIME_THRESHOLD;
+  return value >= scale
     ? "RISK_ON"
-    : value <= -REGIME_THRESHOLD
+    : value <= -scale
       ? "RISK_OFF"
       : "NEUTRAL";
 }
@@ -90,6 +92,17 @@ export function combineMarketSignals(
     // **기본값 1은 지금까지의 모든 측정과 동일한 동작입니다** — 재기 전에는
     // 켜지 않습니다.
     maxExposure = 1,
+    /**
+     * 레짐 경계이자 **보간 스케일**입니다. 두 가지를 한 값이 겸합니다 —
+     * `|점수| ≥ 이 값`이면 RISK_ON/RISK_OFF 표에 그대로 닿고, 그 안에서는
+     * `점수 / 이 값`만큼 NEUTRAL에서 이동합니다. **낮출수록 같은 점수가 비중을
+     * 더 크게 움직입니다.**
+     *
+     * **`.env` 손잡이를 일부러 만들지 않았습니다.** 재기 전에는 바꾸지 않는다는
+     * 규율(§6) 때문이고, 백테스트가 값을 정하면 그때 뚫습니다. 지금은
+     * `--compare regime`이 이 인자로만 흔듭니다.
+     */
+    regimeThreshold = REGIME_THRESHOLD,
     // 감성 스냅샷이 오래될수록 신뢰도를 깎고, 이 시간을 넘기면 기여도를 0으로 만듭니다.
     sentimentHalfLifeHours = 6,
     sentimentMaxAgeHours = 24,
@@ -119,7 +132,7 @@ export function combineMarketSignals(
     ? round(Number(macd.score) * Number(macd.confidence) * macdWeight)
     : 0;
   const score = round(baseScore + trendContribution + macdContribution);
-  const regime = regimeForScore(score);
+  const regime = regimeForScore(score, regimeThreshold);
   const reasons = [...(macroSignal.reasons ?? [])];
   if (sentiment) {
     reasons.push(
@@ -153,7 +166,7 @@ export function combineMarketSignals(
   if (volTarget > 0 && Number.isFinite(annualizedVol) && annualizedVol > 0) {
     exposureMultiplier = clamp(round(volTarget / annualizedVol), minExposure, maxExposure);
   }
-  const regimeAllocation = allocationFor(score, macroSignal.targetAllocation);
+  const regimeAllocation = allocationFor(score, macroSignal.targetAllocation, regimeThreshold);
   const targetAllocation = exposureMultiplier === 1
     ? regimeAllocation
     : scaleForExposure(regimeAllocation, exposureMultiplier);
@@ -202,6 +215,9 @@ export function combineMarketSignals(
       macd: macdWeight,
       volTarget,
       minExposure,
+      // 가중치는 아니지만 배분을 정하는 손잡이라 같은 자리에 남깁니다. 이것이
+      // 기록에 없으면 "그날 어떤 스케일로 보간했는가"를 나중에 되짚을 수 없습니다.
+      regimeThreshold,
     },
     macroScore: macroSignal.score,
     // 가중치를 곱한 뒤 실제로 점수에 들어간 값입니다. 원점수만 기록하면
@@ -281,11 +297,11 @@ function validateWeight(value, name, maximum) {
 
 // 기본 ETF 세트일 때만 점수 기반 연속 배분을 씁니다. 다른 종목 세트가 오면
 // 거시 신호가 준 표를 그대로 존중합니다(테스트·커스텀 워치리스트 경로).
-function allocationFor(score, original) {
+function allocationFor(score, original, threshold) {
   const symbols = Object.keys(original ?? {}).filter((symbol) => symbol !== "CASH");
   const isDefaultEtfSet =
     symbols.length > 0 && symbols.every((symbol) => symbol in ALLOCATIONS.NEUTRAL);
-  return isDefaultEtfSet ? allocationForScore(score) : original;
+  return isDefaultEtfSet ? allocationForScore(score, ALLOCATIONS, threshold) : original;
 }
 
 /**

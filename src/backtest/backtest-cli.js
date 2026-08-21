@@ -25,6 +25,7 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --blocks 5        표본을 5등분해 지표가 얼마나 흔들리는지
  *   npm run backtest -- --compare source  낙폭 우위가 어느 레이어에서 오는지
  *   npm run backtest -- --compare macro   거시 상수 편향의 대가
+ *   npm run backtest -- --compare regime  레짐 경계(보간 스케일)를 낮추면 어떻게 되는가
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --fetch-macro     FRED 개정 이력(vintage)을 받아 캐시에 저장
  *   npm run backtest -- --macro-source vintage  거시 층을 그 시점 값으로 되살려 실행
@@ -200,6 +201,45 @@ const COMPARISONS = {
       { name: "상한 1.4", signal: { maxExposure: 1.4 } },
       { name: "상한 1.6", signal: { maxExposure: 1.6 } },
       // 낙폭 사다리의 기준선입니다. 이 점들을 잇는 선보다 위에 있어야 의미가 있습니다.
+      { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
+      { name: "정적 90/10", options: { staticAllocation: EQUITY_MIX(0.9) } },
+    ],
+  },
+  // 레짐 경계 1.5는 **경계이자 보간 스케일**입니다(`allocationForScore`).
+  // 낮추면 같은 점수가 비중을 더 크게 움직입니다 — 점수 0.97에서 목표 현금이
+  // 1.5면 3.5%, 1.0이면 0%가 됩니다.
+  //
+  // **이 비교가 생긴 이유.** 지금 스택(추세 1 · 나머지 0)에서 통합 점수의
+  // 절댓값은 `|tanh(·)| × 신뢰도 ≤ 1`이라 **±1.5에 구조적으로 닿지 못합니다.**
+  // RISK_ON(현금 0%)·RISK_OFF(현금 40%) 표가 한 번도 쓰이지 않고, 목표는 항상
+  // NEUTRAL에서 최대 2/3 지점까지만 움직입니다. 경계를 1.0으로 내리면 그제야
+  // 양 끝에 닿습니다.
+  //
+  // **재는 것은 "닿게 하면 좋아지는가"입니다.** 낮출수록 노출이 양방향으로 더
+  // 크게 흔들리므로, 낙폭은 반드시 **노출을 맞춘 뒤에** 읽어야 합니다(§3).
+  // 그래서 정적 사다리 3점을 기준선으로 함께 돌립니다.
+  //
+  // ⚠️ **지금 스택에서 이 비교는 `--compare trend`와 수학적으로 같습니다.**
+  // 보간 비율은 `점수 / 경계`이고 점수는 `tanh(·) × 신뢰도 × 추세가중치`뿐이라
+  // (나머지 층은 가중치 0), **결과를 정하는 것은 `가중치 / 경계` 하나입니다.**
+  //
+  //   경계 1.5 ≡ 가중치 1 (현재)   경계 0.75 ≡ 가중치 2   경계 0.5 ≡ 가중치 3
+  //
+  // 가중치 2는 이미 쟀고 **Sharpe에서 4/4로 졌습니다**(②). 그래서 이 비교의
+  // 새 땅은 **1.25와 1.0(≈가중치 1.2·1.5)** 사이입니다. 거기는 잰 적이 없고,
+  // 이 시스템이 사는 것은 Sharpe가 아니라 낙폭이므로 물어볼 값이 남아 있습니다.
+  // 감성이나 거시가 켜지면 그때는 둘이 갈라집니다 — 경계는 모든 층을 함께
+  // 나누고 가중치는 그 층만 곱합니다.
+  regime: {
+    label: "레짐 경계 (경계이자 보간 스케일 — 낮추면 같은 점수가 더 크게 움직인다)",
+    variants: [
+      { name: "현재 1.5 (추세만으론 양 끝에 못 닿음)", signal: { regimeThreshold: 1.5 } },
+      { name: "1.25", signal: { regimeThreshold: 1.25 } },
+      { name: "1.0 (추세 최대치가 겨우 닿음)", signal: { regimeThreshold: 1.0 } },
+      { name: "0.75", signal: { regimeThreshold: 0.75 } },
+      { name: "0.5 (점수 0.5면 이미 양 끝)", signal: { regimeThreshold: 0.5 } },
+      // 노출 사다리 기준선. 낙폭이 줄어도 노출이 함께 줄었으면 산 게 없습니다.
+      { name: "정적 50/50", options: { staticAllocation: EQUITY_MIX(0.5) } },
       { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
       { name: "정적 90/10", options: { staticAllocation: EQUITY_MIX(0.9) } },
     ],

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { combineMarketSignals } from "../src/sentiment/market-signal.js";
+import {
+  allocationForScore,
+  combineMarketSignals,
+  regimeForScore,
+  REGIME_THRESHOLD,
+} from "../src/sentiment/market-signal.js";
 
 const macro = {
   regime: "NEUTRAL",
@@ -386,4 +391,45 @@ test("가중치가 0이어도 감성 원점수는 그대로 실려 나간다", (
   // 그래도 원점수는 남는다 — 이벤트 로그가 여기서 읽는다.
   assert.equal(combined.sentiment.sentiment_score, -0.343);
   assert.equal(combined.sentiment.confidence, 0.774);
+});
+
+// ── 레짐 경계 ──────────────────────────────────────────────────────────────
+// 경계 1.5는 **경계이자 보간 스케일**이다. 낮추면 같은 점수가 비중을 더 크게
+// 움직인다. `--compare regime`이 재기 전에, 손잡이가 실제로 도는지부터 고정한다.
+
+test("지금 스택으로는 레짐 경계 1.5에 구조적으로 닿지 못한다", () => {
+  // 통합 점수 = 추세 tanh(·) × 신뢰도 × 1. 셋 다 최대여도 1을 못 넘는다.
+  assert.equal(REGIME_THRESHOLD, 1.5);
+
+  const 최대 = allocationForScore(1.0);
+  assert.equal(regimeForScore(1.0), "NEUTRAL", "추세 최대치로도 RISK_ON이 아니다");
+  // NEUTRAL(현금 10%)에서 RISK_ON(현금 0%)으로 1/1.5 = 2/3 지점까지만 간다.
+  assert.equal(최대.CASH, 0.033);
+  assert.equal(최대.IWM, 0.1);
+
+  const 최저 = allocationForScore(-1.0);
+  assert.equal(regimeForScore(-1.0), "NEUTRAL");
+  assert.equal(최저.CASH, 0.3, "RISK_OFF의 현금 40%에도 닿지 못한다");
+});
+
+test("경계를 낮추면 같은 점수가 양 끝에 닿는다", () => {
+  // 같은 점수 1.0인데 스케일만 다르다.
+  assert.equal(regimeForScore(1.0, 1.0), "RISK_ON");
+  assert.deepEqual(allocationForScore(1.0, undefined, 1.0), {
+    VTI: 0.7, SCHD: 0.15, IWM: 0.15, CASH: 0,
+  });
+
+  // 0.5로 내리면 점수 0.5에서 이미 끝이고, 그 위는 더 갈 데가 없다.
+  assert.deepEqual(allocationForScore(0.5, undefined, 0.5), allocationForScore(1.0, undefined, 0.5));
+
+  // 0이나 음수를 주면 기본값으로 돌아간다 — 0으로 나누지 않는다.
+  assert.deepEqual(allocationForScore(1.0, undefined, 0), allocationForScore(1.0));
+});
+
+test("경계가 신호 결과에 실려 나온다 — 그날 무엇으로 보간했는지 되짚을 수 있다", () => {
+  const 기본 = combineMarketSignals(macro, null, {});
+  assert.equal(기본.weights.regimeThreshold, 1.5);
+
+  const 좁힘 = combineMarketSignals(macro, null, { regimeThreshold: 0.75 });
+  assert.equal(좁힘.weights.regimeThreshold, 0.75);
 });
