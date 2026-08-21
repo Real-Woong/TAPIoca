@@ -28,7 +28,8 @@ import { buildScenario, SCENARIOS } from "./scenarios.js";
  *   npm run backtest -- --compare macro   거시 상수 편향의 대가
  *   npm run backtest -- --compare regime  레짐 경계(보간 스케일)를 낮추면 어떻게 되는가
  *   npm run backtest -- --last 3719      캐시에서 최신 N일만 (기간만 바꿔 비교할 때)
- *   npm run backtest -- --compare defensive  방어자산이 현금보다 값을 하는가 (정적)
+ *   npm run backtest -- --compare defensive    주식70%: 남는 30%를 무엇으로 (정적)
+ *   npm run backtest -- --compare defensive50  주식50%: 남는 50%를 무엇으로 (정적)
  *   npm run backtest -- --cash-yield 0.017   현금 이자 가정 (기본 0)
  *   npm run backtest -- --fetch           실데이터 일봉을 받아 캐시에 저장
  *   npm run backtest -- --fetch-macro     FRED 개정 이력(vintage)을 받아 캐시에 저장
@@ -88,174 +89,38 @@ const COMPARISONS = {
   // 반대로 **낙폭 축에서는 현금이 절대 유리합니다**(현금의 낙폭은 0). 그러니
   // "IEF가 MDD에서 진다"는 것만으로 기각하면 안 되고, **낙폭 1%p를 얼마의
   // CAGR로 샀는가**로 읽어야 합니다 — ⑧의 교환비(MDD 1%p당 CAGR 0.175%p)가 자입니다.
+  // **기준선은 같은 주식 비중의 현금 버전이다.** 2026-08-21 첫 실행에서 기준선을
+  // "주식 100"으로 뒀더니 모든 변형이 MDD·CDaR 4/4 개선으로 나왔는데, 그것은
+  // **"주식을 덜 들면 낙폭이 준다"는 자명한 사실**을 4/4로 확인한 것뿐이었다.
+  // 부호검정이 아무것도 판정하지 못했다. 물어야 할 것은 그게 아니라
+  // **"같은 주식 비중에서 남는 몫을 현금 대신 무엇으로 채우는가"**다.
+  // 그래서 주식 비중별로 비교를 나누고, 각 비교의 첫 줄(=기준선)을 현금 버전으로 둔다.
   defensive: {
-    label: "방어자산이 현금보다 값을 하는가 (정적 배분만, 신호 없음)",
-    // **없는 종목은 조용히 사라지지 않고 여기서 멈춥니다.**
-    // `restrictAllocation`은 없는 종목의 몫을 남은 종목에 **재분배**합니다(⑮).
-    // 그래서 IEF가 없는 표본에서 "VTI70 + IEF30"은 오류가 아니라 **VTI 100%**가
-    // 되어 조용히 다른 전략이 됩니다. 2026-08-21 스모크 실행에서 11행 중 6행이
-    // 그렇게 같은 전략으로 겹쳐 있었고, 표만 봐서는 알 수 없었습니다.
+    label: "주식 70%: 남는 30%를 현금 대신 무엇으로 채우는가 (정적, 신호 없음)",
     requiresSymbols: ["VTI", "IWM", "GLD", "IEF", "TLT"],
     variants: [
-      { name: "주식 100 (VTI)", options: { staticAllocation: MIX({ VTI: 1 }) } },
-
-      { name: "VTI70 + 현금30", options: { staticAllocation: MIX({ VTI: 0.7 }) } },
+      { name: "VTI70 + 현금30 (기준)", options: { staticAllocation: MIX({ VTI: 0.7 }) } },
       { name: "VTI70 + IEF30", options: { staticAllocation: MIX({ VTI: 0.7, IEF: 0.3 }) } },
       { name: "VTI70 + TLT30", options: { staticAllocation: MIX({ VTI: 0.7, TLT: 0.3 }) } },
       { name: "VTI70 + GLD30", options: { staticAllocation: MIX({ VTI: 0.7, GLD: 0.3 }) } },
       { name: "VTI70 + IEF20 + GLD10", options: { staticAllocation: MIX({ VTI: 0.7, IEF: 0.2, GLD: 0.1 }) } },
-
-      { name: "VTI50 + 현금50", options: { staticAllocation: MIX({ VTI: 0.5 }) } },
+      { name: "VTI70 + IEF15 + GLD15", options: { staticAllocation: MIX({ VTI: 0.7, IEF: 0.15, GLD: 0.15 }) } },
+      // 주식 비중이 달라 부호검정이 자명해지는 줄이다. 눈으로만 본다.
+      { name: "(참고) 주식100 VTI", options: { staticAllocation: MIX({ VTI: 1 }) } },
+    ],
+  },
+  defensive50: {
+    label: "주식 50%: 남는 50%를 현금 대신 무엇으로 채우는가 (정적, 신호 없음)",
+    requiresSymbols: ["VTI", "IWM", "GLD", "IEF", "TLT"],
+    variants: [
+      { name: "VTI50 + 현금50 (기준)", options: { staticAllocation: MIX({ VTI: 0.5 }) } },
       { name: "VTI50 + IEF50", options: { staticAllocation: MIX({ VTI: 0.5, IEF: 0.5 }) } },
+      { name: "VTI50 + TLT50", options: { staticAllocation: MIX({ VTI: 0.5, TLT: 0.5 }) } },
+      { name: "VTI50 + GLD50", options: { staticAllocation: MIX({ VTI: 0.5, GLD: 0.5 }) } },
       { name: "VTI50 + IEF35 + GLD15", options: { staticAllocation: MIX({ VTI: 0.5, IEF: 0.35, GLD: 0.15 }) } },
-
-      // VER2_PLAN.md §1의 앵커 두 개를 정적으로 굳혀서 함께 봅니다.
-      { name: "제안 NEUTRAL", options: { staticAllocation: MIX({ VTI: 0.55, IWM: 0.05, GLD: 0.1, IEF: 0.2 }) } },
-      { name: "제안 RISK_OFF", options: { staticAllocation: MIX({ VTI: 0.25, GLD: 0.15, IEF: 0.25, TLT: 0.1 }) } },
-    ],
-  },
-
-  exit: {
-    label: "청산 규칙 (P0에서 바꾼 기본값 검증)",
-    variants: [
-      { name: "현재: 손절12%·트레일링off·보유기간off", env: {} },
-      {
-        name: "이전: 손절3%·트레일링2.5/1.5%·15일",
-        env: {
-          STOP_LOSS_RATE: "0.03",
-          TRAILING_ACTIVATION_RATE: "0.025",
-          TRAILING_DRAWDOWN_RATE: "0.015",
-          MAX_HOLDING_DAYS: "15",
-        },
-      },
-      { name: "손절만 3%로 좁힘", env: { STOP_LOSS_RATE: "0.03" } },
-      { name: "보유기간 15일만 켬", env: { MAX_HOLDING_DAYS: "15" } },
-    ],
-  },
-  macd: {
-    label: "MACD 가중치 (P1-3: 0.15는 결정에 영향이 없다)",
-    variants: [
-      { name: "MACD 제거 (0)", signal: { macdWeight: 0 } },
-      { name: "현재 (0.15)", signal: { macdWeight: 0.15 } },
-      { name: "0.5", signal: { macdWeight: 0.5 } },
-      { name: "1.0", signal: { macdWeight: 1 } },
-    ],
-  },
-  band: {
-    label: "무거래 밴드 (회전율 대 추적오차)",
-    variants: [
-      { name: "1%", env: { REBALANCE_BAND_RATE: "0.01" } },
-      { name: "현재 5%", env: { REBALANCE_BAND_RATE: "0.05" } },
-      { name: "10%", env: { REBALANCE_BAND_RATE: "0.10" } },
-    ],
-  },
-  // 밴드 "폭"이 아니라 "모양"을 봅니다. 폭은 2026-08-07에 0.05로 확정했습니다.
-  // 남은 문제는 대칭 밴드가 방향에 따라 다르게 작동한다는 것입니다 — 진입은 목표
-  // 전체가 결손이라 밴드를 넘지만 이탈은 되돌아온 만큼만 초과분이라 못 넘습니다.
-  // 효과(잔여물이 빠지는가)는 test/rebalance-band-ratchet.test.js가 재고,
-  // 여기서 재는 것은 **대가**입니다: 고칠 게 없는 15년 구간에서 회전율이 얼마나 느는가.
-  bandshape: {
-    label: "무거래 밴드의 모양 (방향 비대칭을 고치는 대가)",
-    variants: [
-      { name: "현재 (대칭 5%)", env: {} },
-      // ⓐ 밴드보다 작은 목표는 아예 안 듭니다. 잔여물은 사라지지만 목표가 밴드를
-      //    넘나들 때마다 전량 매수·전량 매도가 됩니다.
-      { name: "ⓐ 최소포지션 5%", env: { MIN_POSITION_RATE: "0.05" } },
-      // ⓑ 이탈 쪽만 좁힙니다. 모든 종목에 똑같이 걸리므로 큰 포지션의 회전율도 함께 오릅니다.
-      { name: "ⓑ 이탈밴드 2%", env: { REBALANCE_EXIT_BAND_RATE: "0.02" } },
-      // ⓒ 목표 대비 상한을 함께 겁니다. 큰 포지션에서는 자산 대비 5%가 여전히
-      //    먼저 걸리므로 이론상 작은 포지션에만 작용합니다. 그 "이론상"을 여기서 확인합니다.
-      //    교차점 = 밴드 / 배수입니다. 문턱이 보유액이 아니라 **초과분** 기준이라
-      //    (`exitBand()`), 배수 2의 교차점은 2.5%입니다. 08-07 기록의
-      //    `밴드/(배수−1) = 5%`는 틀렸고 08-07 채택 시 정정했습니다.
-      //    2.5%면 VTI·SCHD는 여전히 자산 대비 5%가 먼저 걸립니다.
-      { name: "ⓒ 목표대비 2배", env: { TARGET_DRIFT_CAP: "2" } },
-      { name: "ⓒ 목표대비 1.25배", env: { TARGET_DRIFT_CAP: "1.25" } },
-    ],
-  },
-  cost: {
-    label: "거래비용 민감도 (엣지가 비용을 견디는가)",
-    variants: [
-      { name: "비용 0", env: { TRADE_COST_RATE: "0" } },
-      { name: "현재 10bp", env: { TRADE_COST_RATE: "0.001" } },
-      { name: "30bp", env: { TRADE_COST_RATE: "0.003" } },
-    ],
-  },
-  // FRED 거시 층은 점수 하나로만 배분에 들어갑니다(`allocationForScore`). 그리고
-  // 그 점수의 범위는 −7 ~ +3.5로 추세(±1)·감성(±2)보다 큽니다. **범위 기준으로
-  // 가장 큰 입력인데 가중치 손잡이가 없고 검증된 적이 없습니다.**
-  //
-  // 점수는 주식 비중으로 이렇게 번역됩니다 — 0에서 주식 90%, −1.5에서 60%.
-  // 즉 **점수 1당 주식 20%p**입니다. 실운영에서 −0.5가 유지되므로 이 층은 지금
-  // 주식 노출을 상시 10%p 깎고 있습니다.
-  //
-  // 이 비교가 재는 것은 **그 상시 편향의 대가**입니다. 값이 안 움직이는 동안
-  // 거시 층은 신호가 아니라 파라미터이고, 파라미터라면 값을 해야 합니다.
-  // 층이 실제로 **때를 맞추는지**는 이 비교가 답하지 않습니다 — `--macro-source
-  // vintage`가 그쪽입니다.
-  macro: {
-    label: "거시 상수 편향 (점수 1당 주식 20%p, 실운영은 −0.5)",
-    variants: [
-      { name: "+0.5 (완화 편향)", options: { macroScore: 0.5 } },
-      { name: "0 (백테스트 기본)", options: { macroScore: 0 } },
-      { name: "−0.5 (실운영 값)", options: { macroScore: -0.5 } },
-      { name: "−1.0", options: { macroScore: -1 } },
-      { name: "−1.5 (RISK_OFF 바닥)", options: { macroScore: -1.5 } },
-    ],
-  },
-  // 거시 층이 **때를 맞추는가**를 재는 유일한 비교입니다.
-  //
-  // `macro`가 답한 것은 "상수 편향의 대가"였고, 답은 **신호가 아니라 노출
-  // 다이얼**이었습니다(2026-08-07: Sharpe 평평, 부호일치 전부 ✗). 남은 질문은
-  // 이것입니다 — 실제 FRED 값은 20년 동안 움직였고, **그 움직임이 때를 맞췄는가.**
-  // 2008년에 Sahm이 발동해 폭락 직전에 방어했다면 그것은 진짜 신호입니다.
-  //
-  // **되살린 거시는 반드시 상수와 노출을 맞춰 비교해야 합니다.** 되살린 점수가
-  // 평균 −0.8이면 노출이 낮아져 낙폭이 주는 것은 당연하고, 그것만 보면 타이밍
-  // 가치를 잰 것이 아니라 주식을 덜 든 것을 잰 것입니다. 그래서 상수 여러 개를
-  // 같은 표에 두고, **vintage의 평균 노출과 가장 가까운 상수**와 비교합니다.
-  //
-  // 판정 — 되살린 점수가 애초에 안 움직이면(표준편차 0) 거기서 끝입니다.
-  // 상수인 층은 타이밍 가치를 가질 수 없습니다. 움직였다면 같은 평균 노출의
-  // 상수보다 MDD·CDaR가 **4/4로** 낮아야 타이밍 가치를 주장할 수 있습니다.
-  macrotiming: {
-    label: "거시 되살리기 대 상수 (이 층이 때를 맞추는가)",
-    variants: [
-      { name: "되살린 거시 (vintage)", macro: "vintage" },
-      { name: "상수 0", options: { macroScore: 0 } },
-      { name: "상수 −0.5", options: { macroScore: -0.5 } },
-      { name: "상수 −1.0", options: { macroScore: -1 } },
-      { name: "상수 −1.5", options: { macroScore: -1.5 } },
-    ],
-  },
-  // 지금까지의 모든 비교는 **노출을 맞춰놓고 낙폭을 쟀습니다.** 이 비교만 방향이
-  // 반대입니다 — 낙폭을 벤치마크 수준까지 풀어주고 그동안 수익이 얼마나 오르는지 봅니다.
-  //
-  // 익스포저 배수는 `clamp(volTarget / 변동성, minExposure, maxExposure)`이고
-  // 상한이 1로 박혀 있었습니다. 그래서 변동성 관리가 **한 방향으로만** 동작했습니다 —
-  // 시끄러우면 줄이고, 조용해도 기본 배분 이상으로는 늘리지 않았습니다.
-  // 그 결과 아낀 낙폭(같은 노출에서 정적 배분 대비 10~16%p)이 현금으로만 쌓이고
-  // CAGR로 돌아오지 않았습니다. 이 비교가 묻는 것은 하나입니다:
-  //
-  //   **낙폭 여유를 노출로 되쓰면 CAGR을 얼마나 살 수 있는가.**
-  //
-  // 판정은 "CAGR이 올랐는가"가 아닙니다. 노출을 늘리면 CAGR은 당연히 오릅니다.
-  // 봐야 할 것은 **같은 MDD에서 정적 배분보다 CAGR이 높은가**이고, 그래서 정적
-  // 배분 3점을 같은 표에 둡니다. 정적 배분의 (MDD, CAGR) 점들이 기준선이고,
-  // 우리 변형이 그 선 위쪽에 있어야 노출 확대가 값을 한 것입니다.
-  //
-  // 레버리지는 없습니다. `scaleForExposure()`가 주식 합을 100%에서 눌러 담으므로
-  // 상한을 아무리 올려도 전액 주식에서 멈춥니다.
-  exposure: {
-    label: "익스포저 상한 (아낀 낙폭을 수익으로 되사는가)",
-    variants: [
-      { name: "현재 (상한 1.0)", signal: { maxExposure: 1 } },
-      { name: "상한 1.2", signal: { maxExposure: 1.2 } },
-      { name: "상한 1.4", signal: { maxExposure: 1.4 } },
-      { name: "상한 1.6", signal: { maxExposure: 1.6 } },
-      // 낙폭 사다리의 기준선입니다. 이 점들을 잇는 선보다 위에 있어야 의미가 있습니다.
-      { name: "정적 70/30", options: { staticAllocation: EQUITY_MIX(0.7) } },
-      { name: "정적 90/10", options: { staticAllocation: EQUITY_MIX(0.9) } },
+      { name: "VTI50 + IEF25 + GLD25", options: { staticAllocation: MIX({ VTI: 0.5, IEF: 0.25, GLD: 0.25 }) } },
+      // VER2_PLAN.md §1의 앵커. 주식 25%라 위 줄들과 노출이 다르다 — 눈으로만 본다.
+      { name: "(참고) 제안 RISK_OFF", options: { staticAllocation: MIX({ VTI: 0.25, GLD: 0.15, IEF: 0.25, TLT: 0.1 }) } },
     ],
   },
   // 레짐 경계 1.5는 **경계이자 보간 스케일**입니다(`allocationForScore`).
