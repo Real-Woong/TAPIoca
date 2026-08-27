@@ -35,15 +35,18 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     `현재 총자산: $${summary.equityUsd.toFixed(2)}`,
     `현금: $${summary.cashUsd.toFixed(2)}`,
     `ETF 평가액: $${summary.marketValueUsd.toFixed(2)}`,
-    `누적손익: ${signedUsd(summary.totalPnlUsd)} (${summary.returnPct}%)`,
+    `누적손익(${sinceLabel(state.createdAt)}): ${signedUsd(summary.totalPnlUsd)} (${summary.returnPct}%)`,
     `실현손익: ${signedUsd(summary.realizedPnlUsd)}`,
     `미실현손익: ${signedUsd(summary.unrealizedPnlUsd)}`,
     ...(summary.feesUsd ? [`누적 거래비용: -$${summary.feesUsd.toFixed(2)}`] : []),
+    // **기준선마다 시작일이 다릅니다.** 지갑은 자금 투입일부터, VTI 기준선과
+    // 정책믹스 기준선은 각자 개설일부터입니다. 그래서 시작일을 함께 찍고,
+    // 초과성과는 그 기준선이 열린 날부터의 지갑 손익에서만 뺍니다.
     ...(summary.benchmark
       ? [
-          `벤치마크(${summary.benchmark.symbol} 매수후보유): ` +
+          `벤치마크(${summary.benchmark.symbol} 매수후보유 · ${sinceLabel(summary.benchmark.startedAt)}): ` +
             `${signedUsd(summary.benchmark.pnlUsd)} (${summary.benchmark.returnPct}%)`,
-          `초과성과(alpha): ${signedUsd(summary.alphaUsd)}`,
+          alphaLine("초과성과(alpha)", summary.alphaWindow, summary.benchmark.startedAt),
         ]
       : []),
     // 위험을 맞춘 두 번째 기준선입니다. VTI 100%와만 비교하면 "현금을 들고 있어서"와
@@ -51,10 +54,11 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     // 있었을 때와 비교해야 신호 레이어의 순수한 성적이 보입니다.
     ...(summary.policyBenchmark
       ? [
-          `정책믹스(${formatMix(summary.policyBenchmark.mix)} 고정): ` +
+          `정책믹스(${formatMix(summary.policyBenchmark.mix)} 고정 · ` +
+            `${sinceLabel(summary.policyBenchmark.startedAt)}): ` +
             `${signedUsd(summary.policyBenchmark.pnlUsd)} ` +
             `(${summary.policyBenchmark.returnPct}%)`,
-          `└ 신호 초과성과: ${signedUsd(summary.policyAlphaUsd)}`,
+          alphaLine("└ 신호 초과성과", summary.policyAlphaWindow, summary.policyBenchmark.startedAt),
         ]
       : []),
     `누적 거래: ${summary.tradeCount}건`,
@@ -233,6 +237,28 @@ function formatMix(mix) {
 function signedUsd(value) {
   const number = Number(value);
   return `${number >= 0 ? "+" : "-"}$${Math.abs(number).toFixed(2)}`;
+}
+
+/** 이 손익이 언제부터의 것인지 한 칸에 적습니다. */
+function sinceLabel(startedAt) {
+  return typeof startedAt === "string" && startedAt.length >= 10
+    ? `${startedAt.slice(0, 10)}~`
+    : "시작일 불명";
+}
+
+/**
+ * 초과성과 한 줄.
+ *
+ * 구간을 맞출 수 없으면 **숫자를 내지 않습니다.** 예전에는 시작일이 다른 두
+ * 손익을 그냥 빼서, 기준선이 열리기 전 구간의 손익까지 초과성과에 실렸습니다.
+ * 빈 값 대신 왜 못 냈는지를 적습니다.
+ */
+function alphaLine(label, window, startedAt) {
+  if (!window || window.alphaUsd === null || window.alphaUsd === undefined) {
+    return `${label}: 계산 안 함 — 기준선 개설일(${sinceLabel(startedAt)})의 지갑 자산을 모릅니다`;
+  }
+  const approx = window.anchorSource === "DAY_START" ? " · 개설일 시작 자산 기준" : "";
+  return `${label}: ${signedUsd(window.alphaUsd)} (${sinceLabel(startedAt)} 같은 구간${approx})`;
 }
 
 function formatRiskReason(reason) {

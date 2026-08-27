@@ -726,6 +726,52 @@ test("같은 비중을 신호 없이 들고 있었을 때를 두 번째 기준�
   assert.ok(summary.benchmark);
 });
 
+// 2026-08-27: 기준선은 지갑보다 나중에 열린다. 개설 시점의 지갑 자산을 남겨 두지
+// 않으면, 나중에 초과성과를 낼 때 **기준선이 열리기 전 구간의 손익까지** 함께
+// 빼게 된다. 운영 상태에서는 그 구간이 20일이었고 그 안에 구축 램프가 통째로 들어 있었다.
+test("기준선을 열 때 그 시점의 지갑 자산을 함께 남긴다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["VTI", "SCHD"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  const marketPrices = [
+    { symbol: "VTI", lastPrice: 100 },
+    { symbol: "SCHD", lastPrice: 50 },
+  ];
+
+  const first = runPaperCycle(
+    state, marketPrices, policy, new Date("2026-07-14T00:00:00Z"), macroSignal("NEUTRAL"),
+  );
+  const funded = first.state.funding.fundedUsd;
+
+  // 첫 사이클이라 개설 시점의 지갑은 아직 전액 현금이다.
+  assert.equal(first.state.benchmark.walletEquityUsdAtStart, funded);
+  assert.equal(first.state.policyBenchmark.walletEquityUsdAtStart, funded);
+  assert.equal(first.summary.alphaWindow.anchorEquityUsd, roundTo(funded));
+  assert.equal(first.summary.alphaWindow.anchorSource, "OPEN");
+
+  // 같은 날 열렸으므로 이 시점의 초과성과는 예전 방식(누적손익 − 기준선손익)과 같다.
+  assert.equal(
+    first.summary.alphaUsd,
+    roundTo(first.summary.totalPnlUsd - first.summary.benchmark.pnlUsd),
+  );
+
+  // 지갑이 움직여도 기준선의 기준점은 개설 시점 그대로여야 한다.
+  const second = runPaperCycle(
+    first.state,
+    [{ symbol: "VTI", lastPrice: 110 }, { symbol: "SCHD", lastPrice: 55 }],
+    policy,
+    new Date("2026-07-15T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+  assert.equal(second.state.benchmark.walletEquityUsdAtStart, funded);
+  assert.equal(
+    second.summary.alphaUsd,
+    roundTo((second.summary.equityUsd - funded) - second.summary.benchmark.pnlUsd),
+  );
+});
+
 test("정책믹스 기준선은 진입 비용을 부담하고 현금 몫을 그대로 남긴다", () => {
   // 공유 policy는 수량 단언을 위해 비용 0이므로, 비용 부담은 여기서 따로 켠다.
   const costPolicy = loadTradingPolicy({

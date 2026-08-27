@@ -23,7 +23,8 @@ if (events.length === 0) {
       .map((decision) => `${decision.action} ${decision.symbol} ${decision.amountUsd ?? ""}`.trim())
       .join(", ") || "체결 없음";
     const benchmark = event.benchmark
-      ? `벤치마크 ${event.benchmark.symbol} ${event.benchmark.pnlUsd} (초과 ${event.alphaUsd})`
+      ? `벤치마크 ${event.benchmark.symbol} ${event.benchmark.pnlUsd} ` +
+        `(초과 ${event.alphaUsd ?? "구간 불명"})`
       : "벤치마크 -";
     console.log(
       `${event.at} | ${event.regime ?? "-"} 점수 ${event.score ?? "-"} | ${contributions}\n` +

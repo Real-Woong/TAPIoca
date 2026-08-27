@@ -141,17 +141,24 @@ export function buildPaperEvent({ now = new Date(), marketSignal, result, prices
           valueUsd: summary.benchmark.valueUsd,
           pnlUsd: summary.benchmark.pnlUsd,
           returnPct: summary.benchmark.returnPct,
+          startedAt: summary.benchmark.startedAt ?? null,
         }
       : null,
     alphaUsd: summary.alphaUsd ?? null,
+    // 초과성과를 어느 구간에서 뺐는지 함께 남깁니다. 이 필드가 없는 옛 줄들은
+    // **자금 투입일부터의 누적손익**에서 뺀 값이라 기준선 개설 전 구간이 섞여
+    // 있습니다. 나중에 이 로그를 읽는 쪽이 그 둘을 구분할 수 있어야 합니다.
+    alphaWindow: summary.alphaWindow ?? null,
     // 위험을 맞춘 두 번째 기준선. 나중에 alpha 귀속 분해가 이 값을 쓸 수 있게 남깁니다.
     policyBenchmark: summary.policyBenchmark
       ? {
           valueUsd: summary.policyBenchmark.valueUsd,
           pnlUsd: summary.policyBenchmark.pnlUsd,
           returnPct: summary.policyBenchmark.returnPct,
+          startedAt: summary.policyBenchmark.startedAt ?? null,
         }
       : null,
     policyAlphaUsd: summary.policyAlphaUsd ?? null,
+    policyAlphaWindow: summary.policyAlphaWindow ?? null,
   };
 }

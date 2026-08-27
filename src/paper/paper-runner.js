@@ -418,10 +418,14 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal, liveRes
     console.log(`누적 거래비용: -${summary.feesUsd.toFixed(2)} USD`);
   }
   if (summary.benchmark) {
+    // 초과성과는 기준선이 열린 날부터의 구간에서만 냅니다. 구간을 못 맞추면
+    // 숫자 대신 그 사실을 찍습니다.
+    const alpha = Number.isFinite(Number(summary.alphaUsd))
+      ? `초과성과 ${summary.alphaUsd.toFixed(2)} USD (${(summary.benchmark.startedAt ?? "").slice(0, 10)}~)`
+      : "초과성과 계산 안 함 (기준선 개설일의 지갑 자산 불명)";
     console.log(
       `벤치마크 ${summary.benchmark.symbol} 매수후보유: ` +
-        `${summary.benchmark.pnlUsd.toFixed(2)} USD (${summary.benchmark.returnPct}%), ` +
-        `초과성과 ${summary.alphaUsd.toFixed(2)} USD`,
+        `${summary.benchmark.pnlUsd.toFixed(2)} USD (${summary.benchmark.returnPct}%), ${alpha}`,
     );
   }
   if (marketSignal) {

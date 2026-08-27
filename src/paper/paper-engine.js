@@ -607,12 +607,18 @@ function updateBenchmark(state, priceMap, now, costRate = 0) {
 
   if (!state.benchmark) {
     const fundedUsd = state.funding.fundedUsd;
+    // 개설 시점의 지갑 자산을 함께 남깁니다. 이 값이 없으면 초과성과를 낼 때
+    // **구간이 다른 두 손익을 빼게 됩니다.** 지갑 손익은 자금 투입일부터,
+    // 기준선 손익은 개설일부터라서, 그 사이에 벌어진 손익이 통째로 한쪽에만
+    // 실립니다. 개설 전에 재야 하므로 state.benchmark를 넣기 전에 계산합니다.
+    const walletEquityUsdAtStart = summarizePaperState(state, priceMap).equityUsd;
     state.benchmark = {
       symbol: preferred,
       quantity: (fundedUsd * (1 - costRate)) / price,
       entryPriceUsd: price,
       fundedUsd,
       startedAt: now.toISOString(),
+      walletEquityUsdAtStart,
       lastPrice: price,
       lastPriceAt: market.timestamp ?? now.toISOString(),
     };
@@ -657,12 +663,61 @@ function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
     // 우리와 같은 진입 비용을 부담시킵니다.
     positions[symbol] = { quantity: (amountUsd * (1 - costRate)) / price, lastPrice: price };
   }
+  // VTI 기준선과 같은 이유로 개설 시점의 지갑 자산을 남깁니다. 이 기준선은
+  // 지갑보다 한참 뒤에 열렸으므로(운영 상태에서는 20일), 이 값 없이 빼면 그
+  // 20일치 손익이 통째로 초과성과에 들어갑니다.
+  const walletEquityUsdAtStart = summarizePaperState(state, priceMap).equityUsd;
   state.policyBenchmark = {
     mix: { ...mix },
     fundedUsd,
     cashUsd: roundUsd(fundedUsd * (Number(mix.CASH) || 0)),
     positions,
     startedAt: now.toISOString(),
+    walletEquityUsdAtStart,
+  };
+}
+
+/**
+ * 기준선이 열린 시점의 지갑 자산을 찾습니다. 초과성과를 **같은 구간에서** 빼기
+ * 위한 값입니다.
+ *
+ * 개설 때 기록해 두는 것이 정확합니다(`walletEquityUsdAtStart`). 이미 열려 있던
+ * 기준선에는 그 값이 없으므로, 위험 관리가 남긴 일별 시작 자산에서 같은 날짜를
+ * 찾아 씁니다. 그 값은 개설 시각이 아니라 **그날 첫 사이클 직전**의 자산이라
+ * 몇십 분 어긋나지만, 구간이 며칠~수십 일 어긋난 것을 고치는 값으로는 충분합니다.
+ *
+ * 둘 다 없으면 null입니다. 부르는 쪽은 그때 숫자를 만들어내지 않습니다 —
+ * **틀린 숫자를 맞는 것처럼 보여주는 것이 지금 고치고 있는 문제입니다.**
+ */
+function walletEquityAtBenchmarkStart(state, benchmark) {
+  const recorded = Number(benchmark?.walletEquityUsdAtStart);
+  if (Number.isFinite(recorded) && recorded > 0) return { equityUsd: recorded, source: "OPEN" };
+
+  const startedAt = benchmark?.startedAt;
+  if (typeof startedAt !== "string") return null;
+  // dailyStartEquityUsd의 키는 runPaperCycle과 같은 UTC 날짜입니다.
+  const dayStart = Number(state.risk?.dailyStartEquityUsd?.[startedAt.slice(0, 10)]);
+  if (Number.isFinite(dayStart) && dayStart > 0) return { equityUsd: dayStart, source: "DAY_START" };
+  return null;
+}
+
+/**
+ * 지갑과 기준선을 **겹치는 구간에서만** 뺍니다.
+ *
+ * 남는 어긋남 하나는 그대로 둡니다: 기준선은 개설일에 **원금 전액**을 넣은
+ * 것으로 잡히는데, 그날 지갑의 실제 자산은 그보다 조금 적거나 많습니다.
+ * 그 차이만큼 규모가 다른 둘을 비교하게 됩니다. 그것까지 맞추려면 기준선을
+ * 지갑 시작일 가격으로 다시 여는 수밖에 없고, 그건 상태 파일을 고치는 일입니다.
+ * 여기서 없앤 것은 **구간**의 어긋남입니다.
+ */
+function alignedAlpha(state, benchmarkState, benchmarkSummary, equityUsd) {
+  if (!benchmarkSummary) return null;
+  const anchor = walletEquityAtBenchmarkStart(state, benchmarkState);
+  if (!anchor) return { alphaUsd: null, anchorEquityUsd: null, anchorSource: null };
+  return {
+    alphaUsd: roundUsd((equityUsd - anchor.equityUsd) - benchmarkSummary.pnlUsd),
+    anchorEquityUsd: roundUsd(anchor.equityUsd),
+    anchorSource: anchor.source,
   };
 }
 
@@ -681,6 +736,8 @@ function summarizePolicyBenchmark(state, priceMap) {
     valueUsd,
     pnlUsd,
     returnPct: benchmark.fundedUsd > 0 ? round3((pnlUsd / benchmark.fundedUsd) * 100) : 0,
+    // 이 손익이 언제부터의 것인지 함께 내보냅니다. 보고서가 이 날짜를 찍습니다.
+    startedAt: benchmark.startedAt ?? null,
   };
 }
 
@@ -695,6 +752,7 @@ function summarizeBenchmark(state, priceMap) {
     valueUsd,
     pnlUsd,
     returnPct: benchmark.fundedUsd > 0 ? round3((pnlUsd / benchmark.fundedUsd) * 100) : 0,
+    startedAt: benchmark.startedAt ?? null,
   };
 }
 
@@ -756,6 +814,8 @@ export function summarizePaperState(state, prices = new Map()) {
   const totalPnlUsd = roundUsd(equityUsd - state.funding.fundedUsd);
   const benchmark = summarizeBenchmark(state, priceMap);
   const policyBenchmark = summarizePolicyBenchmark(state, priceMap);
+  const alphaWindow = alignedAlpha(state, state.benchmark, benchmark, equityUsd);
+  const policyAlphaWindow = alignedAlpha(state, state.policyBenchmark, policyBenchmark, equityUsd);
   return {
     fundingKrw: state.funding.fundingKrw,
     fundedUsd: state.funding.fundedUsd,
@@ -771,10 +831,15 @@ export function summarizePaperState(state, prices = new Map()) {
       ? round3((totalPnlUsd / state.funding.fundedUsd) * 100)
       : 0,
     benchmark,
-    alphaUsd: benchmark ? roundUsd(totalPnlUsd - benchmark.pnlUsd) : null,
+    // 초과성과는 **기준선이 열린 날부터의 지갑 손익**에서 뺍니다. 예전에는
+    // 자금 투입일부터의 누적손익에서 그대로 빼서, 기준선이 열리기 전 구간의
+    // 손익이 초과성과로 둔갑했습니다. 구간을 못 맞추면 숫자 대신 null입니다.
+    alphaUsd: alphaWindow ? alphaWindow.alphaUsd : null,
+    alphaWindow,
     // 위험을 맞춘 두 번째 기준선. 이쪽 초과성과가 신호 레이어의 순수한 성적입니다.
     policyBenchmark,
-    policyAlphaUsd: policyBenchmark ? roundUsd(totalPnlUsd - policyBenchmark.pnlUsd) : null,
+    policyAlphaUsd: policyAlphaWindow ? policyAlphaWindow.alphaUsd : null,
+    policyAlphaWindow,
     tradeCount: state.trades.length,
     positions,
   };
