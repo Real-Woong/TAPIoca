@@ -19,6 +19,7 @@
     "live:probe": "node --env-file=.env src/live/live-probe.js",
     "live:baseline": "node --env-file=.env src/live/baseline-cli.js",
     "live:slippage": "node src/live/slippage-cli.js",
+    "live:reconcile": "node --env-file=.env src/live/reconcile-cli.js",
     "paper:status": "node --env-file=.env src/paper/paper-status.js",
     "paper:events": "node --env-file=.env src/paper/events-cli.js",
     "paper:signals": "node --env-file=.env src/paper/signal-history-cli.js",

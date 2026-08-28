@@ -58,8 +58,23 @@
 (`live-position-baseline.json`, 8/08 기록) `expectedPositions`가 `기준선 +
 실현 체결`이라, 체결분이 양쪽에 똑같이 들어온다. 순서도 무관하다 —
 `baselineFromCurrent`가 기준선을 잡을 때 우리 체결분을 이미 빼기 때문이다.
-확인은 `npm run live:baseline`이다 — **`--confirm` 없이 돌리면 저장하지 않고**
-`기준선 + 체결 = 지금 보유`를 검사해 ✓만 찍는다(`baseline-cli.js:96`).
+확인은 `npm run live:reconcile`이다 — 읽기 전용이고, `live-cycle.js`가 부르는
+함수를 그대로 부른다.
+
+> **`live:baseline`으로는 확인할 수 없다.** 기준선이 이미 있으면 검사 전에
+> 되돌아 나온다(`baseline-cli.js`의 덮어쓰기 방지). 그 파일의 ✓는 기준선을
+> **처음 잡을 때만** 나온다.
+>
+> **PAPER 경로로도 확인할 수 없다.** 대사는 `runLiveCycle` 2단계에 있고, 그것을
+> 부르는 `submitLiveOrders`는 `LIVE_TRADING=true`일 때만 탄다
+> (`paper-runner.js:180`). **즉 9/1에 켜는 순간 처음 도는 검사다.** 켜기 전에
+> 그것을 한 번 보려고 `live:reconcile`을 만들었다.
+
+기준선(8/08 기록)에는 계좌에 원래 있던 것이 함께 들어 있다 — GOOGL 2.236649 ·
+TEM 0.751115 · BOTZ 12.382768 · QQQ 1.707699 · SPY 0.22237. **전부 워치리스트
+밖이라 `restrictToManaged`가 대사에서 뺀다.** 관리 종목 쪽은 SCHD가 명시적 0이고
+VTI·IWM은 아예 키가 없다(= 0). 그래서 8/28 probe 체결분은 기대·실제 양쪽에
+똑같이 0에서 더해진다.
 
 **배너 줄을 보는 것이 절차의 핵심이다.** `trading-policy.js:83`이
 `env.LIVE_TRADING === "true"` — **정확히 소문자 문자열 비교**다. `TRUE`·`True`·
@@ -1441,6 +1456,7 @@ npm run backtest -- --compare <종류> --source cache --blocks 4
 | `npm run backtest -- --compare <종류>` | 이 파라미터를 바꾸면 어떻게 되는가 |
 | `npm run live:slippage` | **슬리피지가 10bp 가정 안에 드는가** |
 | `npm run live:probe` | 실계좌 연결이 성립하는가 (`--confirm` 없이는 주문 안 나감) |
+| `npm run live:reconcile` | **대사가 지금 맞는가** — 읽기 전용. 실거래를 켜기 전에 보는 유일한 방법 |
 | `npm test` | 구조가 여전히 그렇게 동작하는가 |
 
 > **`live:slippage`는 10건 미만이면 숫자를 결론으로 내지 않는다.** 슬리피지는 한
