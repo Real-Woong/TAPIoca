@@ -160,8 +160,19 @@ export function realizedFills(orders) {
  * 목표 비중을 계산해 오차를 키웁니다.
  *
  * **수량으로 비교하는 것이 정확합니다.** 평가액은 어느 시점 가격을 쓰느냐에
- * 따라 달라져 없는 불일치를 만듭니다. 단위가 바뀌면 `tolerance`도 함께 바꿔야
- * 합니다 — 수량 0.05는 VTI 기준 15달러라 사실상 검사를 끄는 값입니다.
+ * 따라 달라져 없는 불일치를 만듭니다.
+ *
+ * **그래서 단위는 수량입니다 — 이름도 값도 달러가 아닙니다.** 예전에는 차이
+ * 항목이 `ledgerUsd`·`brokerUsd`·`gapUsd`였고 값을 센트 자리로 반올림해서
+ * 냈습니다. 탐지는 원값으로 하므로 판정은 맞았지만 **찍히는 숫자가 거짓말을
+ * 했습니다** — VTI 0.005248이 `0.01`로, 그보다 작은 차이는 `0`으로 보입니다.
+ * 멈춘 이유를 읽어야 할 자리에서 "차이 0" 이라고 적힌 halt 메시지를 보게 됩니다.
+ * 반올림은 여기서 하지 않고 보여 주는 쪽이 합니다.
+ *
+ * `tolerance` 기본값도 수량 기준입니다. 예전 기본값 0.05는 달러 시절의 값인데,
+ * 수량에서 0.05는 VTI 기준 19달러라 **사실상 검사를 끄는 값**입니다. 호출부가
+ * 안 넘기면 안전한 쪽이 되도록 1e-6으로 둡니다 — 체결 수량이 소수점 여섯째
+ * 자리까지 오므로 그것이 눈금 하나입니다.
  *
  * **배당은 여기 안 걸립니다.** 토스에는 DRIP(배당 자동재투자)이 없어서
  * (2026-08-27 확인) 배당이 주식으로 안 돌아오고, 수량이 안 변하니 이 검사는
@@ -169,7 +180,7 @@ export function realizedFills(orders) {
  * 않습니다 — 그래서 그 돈은 장부 밖에 고입니다. STRATEGY.md §2의 배당 항목을
  * 보십시오. 이 함수를 고쳐서 될 일이 아닙니다.
  */
-export function reconcile(ledgerPositions, brokerPositions, { tolerance = 0.05 } = {}) {
+export function reconcile(ledgerPositions, brokerPositions, { tolerance = 1e-6 } = {}) {
   const symbols = new Set([
     ...Object.keys(ledgerPositions ?? {}),
     ...Object.keys(brokerPositions ?? {}),
@@ -181,13 +192,10 @@ export function reconcile(ledgerPositions, brokerPositions, { tolerance = 0.05 }
     const broker = Number(brokerPositions?.[symbol] ?? 0);
     const gap = broker - ledger;
     if (Math.abs(gap) > tolerance) {
-      differences.push({ symbol, ledgerUsd: round2(ledger), brokerUsd: round2(broker), gapUsd: round2(gap) });
+      differences.push({ symbol, ledger, broker, gap });
     }
   }
 
   return { matched: differences.length === 0, differences };
 }
 
-function round2(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-}

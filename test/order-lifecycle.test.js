@@ -137,11 +137,27 @@ test("브로커와 장부가 어긋나면 대사가 잡아낸다", () => {
   assert.equal(result.matched, false);
   assert.equal(result.differences.length, 1);
   assert.equal(result.differences[0].symbol, "IWM");
-  assert.equal(result.differences[0].gapUsd, -2.61);
+  assert.equal(result.differences[0].gap, -2.61);
 });
 
-test("센트 단위 반올림 차이는 어긋남으로 보지 않는다", () => {
-  assert.equal(reconcile({ VTI: 43.83 }, { VTI: 43.85 }).matched, true);
+test("차이를 반올림하지 않는다 — 소수점 매매에서 센트 자리는 거짓말이다", () => {
+  // 예전에는 차이를 센트 자리로 반올림해서 냈다. 탐지는 원값으로 하므로 판정은
+  // 맞았지만, VTI 0.005248이 0.01로 보이고 그보다 작은 차이는 0으로 보였다.
+  // 멈춘 이유를 읽어야 할 자리에서 "차이 0"을 보게 된다.
+  const result = reconcile({ VTI: 0 }, { VTI: 0.005248 });
+  assert.equal(result.matched, false);
+  assert.equal(result.differences[0].gap, 0.005248, "원값 그대로다");
+  assert.equal(result.differences[0].broker, 0.005248);
+  assert.equal(result.differences[0].ledger, 0);
+});
+
+test("허용치 기본값은 수량 눈금이다 — 달러 시절의 0.05면 검사가 꺼진다", () => {
+  // 수량 0.05는 VTI 기준 19달러다. 호출부가 허용치를 안 넘겨도 안전한 쪽이어야
+  // 한다.
+  assert.equal(reconcile({ VTI: 0 }, { VTI: 0.04 }).matched, false, "기본값으로 잡힌다");
+  assert.equal(reconcile({ VTI: 0 }, { VTI: 0.04 }, { tolerance: 0.05 }).matched, true);
+  // 체결 눈금 하나(1e-6)까지는 같은 것으로 본다.
+  assert.equal(reconcile({ VTI: 1 }, { VTI: 1.0000005 }).matched, true);
 });
 
 test("장부에 없는 종목을 브로커가 들고 있으면 잡아낸다", () => {

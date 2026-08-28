@@ -92,13 +92,9 @@ async function main() {
   if (result.matched) {
     console.log("  ✓ 기준선 + 우리 체결 = 브로커 보유 — 대사가 맞습니다.");
   } else {
-    // `reconcile`의 차이 표는 금액용이라 소수점 둘째 자리로 반올림합니다.
-    // 수량 대사에서는 0.005248이 0.01로 보이므로 여기서 원값을 다시 냅니다.
     console.log("  ✗ 어긋납니다 — 이 상태로 `LIVE_TRADING=true`를 켜면 첫 사이클에서 멈춥니다.");
     for (const item of result.differences) {
-      const want = Number(expected[item.symbol] ?? 0);
-      const have = Number(actual[item.symbol] ?? 0);
-      line(item.symbol, `기대 ${qty(want)} / 실제 ${qty(have)} / 차이 ${qty(have - want)}`);
+      line(item.symbol, `기대 ${qty(item.ledger)} / 실제 ${qty(item.broker)} / 차이 ${qty(item.gap)}`);
     }
   }
 

@@ -82,7 +82,7 @@ export async function runLiveCycle({
   } catch (error) {
     reconciliation = {
       matched: false,
-      differences: [{ symbol: "(조회 실패)", ledgerUsd: null, brokerUsd: null, gapUsd: null }],
+      differences: [{ symbol: "(조회 실패)", ledger: null, broker: null, gap: null }],
       error: error.message,
     };
     log.push(`보유 조회 실패: ${error.message}`);

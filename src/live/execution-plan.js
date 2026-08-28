@@ -27,6 +27,13 @@ import { unresolvedOrders } from "./order-lifecycle.js";
  */
 export const DEFAULT_MAX_IN_FLIGHT = 1;
 
+/** 대사 차이는 수량입니다. 부호를 붙이고 체결 눈금(1e-6)까지 냅니다. */
+function formatGap(gap) {
+  if (!Number.isFinite(Number(gap))) return "(조회 실패)";
+  const value = Number(gap);
+  return `${value > 0 ? "+" : ""}${value.toFixed(6)}`;
+}
+
 export const HALT_REASONS = Object.freeze({
   EMERGENCY_STOP: "EMERGENCY_STOP",
   UNRESOLVED_ORDERS: "UNRESOLVED_ORDERS",
@@ -75,9 +82,12 @@ export function planCycle({
   if (!reconciliation.matched) {
     return halt(
       HALT_REASONS.RECONCILE_MISMATCH,
+      // **수량이므로 여섯째 자리까지 냅니다.** 센트 자리로 반올림하면 VTI
+      // 0.005248이 0.01로, 그보다 작은 차이는 0으로 보입니다 — 멈춘 이유를
+      // 읽어야 할 자리에서 "차이 0"을 보게 됩니다.
       `브로커와 장부가 어긋납니다: ` +
         reconciliation.differences
-          .map((item) => `${item.symbol} ${item.gapUsd > 0 ? "+" : ""}${item.gapUsd}`)
+          .map((item) => `${item.symbol} ${formatGap(item.gap)}`)
           .join(", "),
       { differences: reconciliation.differences },
     );
