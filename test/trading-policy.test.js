@@ -50,8 +50,20 @@ test("한도 다섯 개를 한 줄로 찍는다 — .env가 이기는 값이라 
   // 없었다. 감성 가중치가 문서는 0인데 서버만 1이었던 2026-08-21과 같은 구조다.
   assert.equal(
     formatLimits(loadTradingPolicy({})),
-    "1회 $5 (최소 $1) · 일일 매수 $10 · 총 손실 $10 · 일일 손실 $3 · 고정 원금 100,000 KRW",
+    "1회 $6.7 (최소 $1) · 일일 매수 $13.4 · 총 손실 $6.7 · 일일 손실 $2 · 고정 원금 100,000 KRW",
   );
+});
+
+test("주문 한도 기본값을 못 박는다 — .env는 재배포 때 사라진다", () => {
+  // 2026-08-28까지 서버 .env가 이 넷을 덮어쓰고 있었고 실행 로그에 흔적이
+  // 없었다. 값을 여기로 옮긴 이유는 재배포가 조용히 옛 값으로 되돌리는 것을
+  // 막기 위해서다. 지갑 $67.05의 10% · 20% · 10% · 3%다.
+  const policy = loadTradingPolicy({});
+  assert.equal(policy.maxOrderUsd, 6.7);
+  assert.equal(policy.minOrderUsd, 1);
+  assert.equal(policy.maxDailyBuyUsd, 13.4);
+  assert.equal(policy.maxTotalLossUsd, 6.7);
+  assert.equal(policy.maxDailyLossUsd, 2);
 });
 
 test("한도 줄은 .env 값을 그대로 비춘다 — 기본값을 찍으면 확인이 되지 않는다", () => {
