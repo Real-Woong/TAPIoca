@@ -43,4 +43,8 @@ _STATUS.md
 # 친구에게 넘기는 기초 추출본. 원본 코드의 복사본이라 저장소에 두 벌 둘 이유가 없습니다.
 starter/
 toss-starter.zip
-Substack/
+
+# 발행 원고 일체. Substack(영문·퀀트 독자)과 Brunch(한글·서사) 두 갈래가
+# 들어 있습니다. 코드가 아니라 글이고, 발행 전 초고라서 공개 저장소에 두지
+# 않습니다.
+Article/
