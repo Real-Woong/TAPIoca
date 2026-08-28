@@ -11,6 +11,7 @@ import { appendPaperEvent, buildPaperEvent } from "./event-log.js";
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
 import { createUsdBudget } from "./trading-budget.js";
 import {
+  formatLimits,
   formatStack,
   loadTradingPolicy,
   unvalidatedLayersInUse,
@@ -60,6 +61,35 @@ async function run() {
   // (`live-cycle.js`). 실주문은 PAPER 결정을 받아 뒤에 덧붙는 단계입니다.
   const live = policy.mode === "LIVE";
 
+  // ── 배너 ──────────────────────────────────────────────────────────────
+  // **장 시간 검사보다 앞입니다.** 9/1 전환 절차는 개장 30분 전(22:00)에 이
+  // 명령으로 배너를 눈으로 확인하는데, 뒤에 두면 장외에서 그냥 되돌아 나가
+  // **확인해야 할 줄이 안 찍힙니다.** 셋 다 정책과 환경변수만 읽으므로 네트워크도
+  // 토큰도 쓰지 않습니다 — 장 시간과 무관하게 찍는 것이 맞습니다.
+  if (live) {
+    console.log("■ LIVE_TRADING=true — PAPER 장부와 함께 실주문을 냅니다.");
+  }
+
+  // **스택을 매 실행마다 찍습니다.** 기여도만 보고는 어떤 가중치로 돌고 있는지
+  // 알 수 없습니다 — 2026-08-21에 그래서 미검증 층이 사흘간 배분을 밀고 있었습니다.
+  const stack = {
+    macroWeight: readMacroWeight(process.env.MACRO_SCORE_WEIGHT),
+    sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
+    trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
+    macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
+    volTarget: readRate01(process.env.VOL_TARGET_ANNUALIZED, 0.15, "VOL_TARGET_ANNUALIZED"),
+  };
+  console.log(`■ 스택: ${formatStack(stack)}`);
+  assertValidatedStack(stack, live);
+
+  // **한도는 `.env`가 이기고 로그에 안 남았습니다.** 원금(10만 원)은 상수라
+  // 실행 로그로 확인되는데, 이 다섯은 `.env` 한 줄이면 조용히 달라집니다
+  // (`trading-policy.js:72-92`). 문서에 적힌 값과 서버가 다른지 알 방법이
+  // 없었던 것이 감성 가중치가 서버에서만 1이었던 일(2026-08-21)과 같은
+  // 구조입니다. **총 노출은 지갑에 묶여 있어 안전하고, 이 다섯이 정하는 것은
+  // 속도입니다.** 그래서 막는 대신 찍습니다.
+  console.log(`■ 한도: ${formatLimits(policy)}`);
+
   const session = getUsRegularSessionStatus();
   const forced = process.argv.includes("--force");
   // 장외에는 Toss 클라이언트를 만들기 전에 반환하므로 토큰과 시세 API를 호출하지 않습니다.
@@ -75,10 +105,6 @@ async function run() {
     // 다시 보고 멈춥니다 — 여기서 뚫으면 안전장치를 우회하는 길이 생깁니다.
     console.log(`강제 PAPER 실행: 미국 정규장 밖입니다 (${session.newYorkTime} ET).`);
   }
-  if (live) {
-    console.log("■ LIVE_TRADING=true — PAPER 장부와 함께 실주문을 냅니다.");
-  }
-
   await mkdir(dataDir, { recursive: true });
   // wx 모드는 이미 잠금 파일이 있으면 실패합니다. 실행이 겹쳐 장부가 깨지는 것을 막습니다.
   lock = await open(lockPath, "wx");
@@ -140,18 +166,6 @@ async function run() {
       console.error(`MACD 시장 신호를 사용할 수 없습니다: ${error.message}`);
       return null;
     });
-  // **스택을 매 실행마다 찍습니다.** 기여도만 보고는 어떤 가중치로 돌고 있는지
-  // 알 수 없습니다 — 2026-08-21에 그래서 미검증 층이 사흘간 배분을 밀고 있었습니다.
-  const stack = {
-    macroWeight: readMacroWeight(process.env.MACRO_SCORE_WEIGHT),
-    sentimentWeight: readSentimentWeight(process.env.SENTIMENT_SCORE_WEIGHT),
-    trendWeight: readTrendWeight(process.env.TREND_SCORE_WEIGHT),
-    macdWeight: readMacdWeight(process.env.MACD_SCORE_WEIGHT),
-    volTarget: readRate01(process.env.VOL_TARGET_ANNUALIZED, 0.15, "VOL_TARGET_ANNUALIZED"),
-  };
-  console.log(`■ 스택: ${formatStack(stack)}`);
-  assertValidatedStack(stack, live);
-
   const marketSignal = combineMarketSignals(macroSignal, sentiment, {
     ...stack,
     trend,

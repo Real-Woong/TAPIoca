@@ -206,6 +206,27 @@ export function formatStack(stack = {}) {
 }
 
 /**
+ * 주문 한도 다섯 개를 한 줄로 냅니다.
+ *
+ * **원금과 달리 이 다섯은 `.env`가 이깁니다.** `tradingBudgetKrw`는 상수라
+ * 코드를 고치지 않으면 못 바꾸는데, 아래 다섯은 `.env` 한 줄이면 조용히
+ * 달라지고 실행 로그에는 아무 흔적도 남지 않았습니다. 문서에 적힌 값이 서버에서
+ * 참인지 확인할 방법이 없다는 뜻입니다 — 감성 가중치가 문서는 0인데 서버만
+ * 1이었던 2026-08-21과 같은 구조의 사각지대입니다.
+ *
+ * 막지 않고 찍기만 합니다. 총 노출은 지갑에 묶여 있어 안전하고, 이 다섯이
+ * 정하는 것은 얼마나 빨리 쓰느냐입니다.
+ */
+export function formatLimits(policy = {}) {
+  return (
+    `1회 $${policy.maxOrderUsd} (최소 $${policy.minOrderUsd}) · ` +
+    `일일 매수 $${policy.maxDailyBuyUsd} · ` +
+    `총 손실 $${policy.maxTotalLossUsd} · 일일 손실 $${policy.maxDailyLossUsd} · ` +
+    `고정 원금 ${policy.tradingBudgetKrw?.toLocaleString("en-US")} KRW`
+  );
+}
+
+/**
  * 켜져 있으면 안 되는 층이 켜져 있는지 봅니다.
  *
  * **가중치 0은 "층을 지운다"가 아닙니다.** 점수는 계속 계산되고 이벤트 로그에

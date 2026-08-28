@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  formatLimits,
   formatStack,
   loadTradingPolicy,
   unvalidatedLayersInUse,
@@ -43,6 +44,24 @@ test("잘못된 설정값은 조용히 기본값으로 넘어가지 않고 실�
   assert.throws(() => loadTradingPolicy({ STOP_LOSS_RATE: "2" }), /0보다 크고 1 이하/);
   assert.throws(() => loadTradingPolicy({ MAX_HOLDING_DAYS: "1.5" }), /정수/);
 });
+
+test("한도 다섯 개를 한 줄로 찍는다 — .env가 이기는 값이라 로그가 유일한 확인이다", () => {
+  // 원금과 달리 이 다섯은 .env 한 줄이면 조용히 달라지고 실행 로그에 흔적이
+  // 없었다. 감성 가중치가 문서는 0인데 서버만 1이었던 2026-08-21과 같은 구조다.
+  assert.equal(
+    formatLimits(loadTradingPolicy({})),
+    "1회 $5 (최소 $1) · 일일 매수 $10 · 총 손실 $10 · 일일 손실 $3 · 고정 원금 100,000 KRW",
+  );
+});
+
+test("한도 줄은 .env 값을 그대로 비춘다 — 기본값을 찍으면 확인이 되지 않는다", () => {
+  const line = formatLimits(loadTradingPolicy({ MAX_ORDER_USD: "20", MAX_DAILY_BUY_USD: "50" }));
+  assert.match(line, /1회 \$20/);
+  assert.match(line, /일일 매수 \$50/);
+  // 원금은 .env로 못 바꾸므로 무엇을 넣어도 같은 값이다.
+  assert.match(formatLimits(loadTradingPolicy({ TRADING_BUDGET_KRW: "999" })), /100,000 KRW/);
+});
+
 
 /**
  * 거시 층 가중치의 운영 기본값입니다.
