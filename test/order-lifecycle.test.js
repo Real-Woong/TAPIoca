@@ -371,6 +371,21 @@ test("브로커가 전량 체결이라고 하면 잔액이 남아도 끝난 것�
   assert.deepEqual(unresolvedOrders(orders), [], "미결로 남지 않는다");
 });
 
+test("부분 체결 뒤 취소는 결말이 난 것이다 — 조회로도 못 푸는 미결이 된다", () => {
+  // 2026-08-07 주문 두 건이 PARTIAL로 남아 있었다. 그것을 닫는 경로가
+  // `eventsFromLookup(null)`의 CANCELED인데, 체결분이 있으면 상태가 다시
+  // PARTIAL이 되어 **닫으려는 사건이 미결을 영속시켰다.** 매 사이클이 조회하고
+  // 매 사이클이 멈춘다.
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 10 },
+    { type: "FILL", clientOrderId: "A", filledUsd: 9.98, filledQuantity: 0.2971 },
+    ...eventsFromLookup("A", null),
+  ]);
+  assert.equal(orders.get("A").state, ORDER_STATES.PARTIAL, "부분 체결이었던 것은 사실이다");
+  assert.equal(orders.get("A").canceled, true);
+  assert.deepEqual(unresolvedOrders(orders), [], "그러나 더 일어날 일이 없으므로 미결이 아니다");
+});
+
 test("브로커 상태를 모를 때만 금액으로 추정한다", () => {
   const orders = buildOrders([
     { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 10 },

@@ -124,9 +124,15 @@ export function buildOrders(events) {
  *
  * PARTIAL도 포함합니다. 일부만 체결된 주문은 나머지가 아직 시장에 살아 있을
  * 수 있고, 그 상태로 같은 종목에 새 주문을 얹으면 의도한 것보다 많이 삽니다.
+ *
+ * **다만 취소된 주문은 뺍니다.** 부분 체결 뒤 취소면 상태는 PARTIAL로 남는데
+ * (체결분은 실제로 있었으므로 그 이름이 맞습니다), **취소된 주문에는 더 일어날
+ * 일이 없습니다.** 그것을 미결로 세면 조회로도 못 풉니다 — `eventsFromLookup`이
+ * "조회 결과 없음"을 닫으려고 내는 것이 바로 CANCELED라서, 닫으려는 사건이
+ * 도리어 미결을 영속시킵니다. 2026-08-07 주문 두 건이 그 상태로 남아 있었습니다.
  */
 export function unresolvedOrders(orders) {
-  return [...orders.values()].filter((order) => !isTerminal(order.state));
+  return [...orders.values()].filter((order) => !isTerminal(order.state) && !order.canceled);
 }
 
 /** 체결된 것만 모아 실제 포지션 변화를 냅니다. 의도가 아니라 사실입니다. */

@@ -23,6 +23,7 @@ import path from "node:path";
 import { createTossClientFromEnv } from "../toss/toss-client.js";
 import { createTossBroker } from "./toss-broker.js";
 import { buildOrders, realizedFills, reconcile, unresolvedOrders } from "./order-lifecycle.js";
+import { eventsFromLookup } from "./order-outcome.js";
 import { readOrderEvents } from "./order-store.js";
 import { expectedPositions, readBaseline, restrictToManaged } from "./position-baseline.js";
 
@@ -101,14 +102,32 @@ async function main() {
     }
   }
 
+  // 미결이 남아 있으면 9/1 첫 사이클의 1단계가 이것을 조회해 결말을 짓습니다.
+  // **조회가 실패하면 그 자리에서 멈춥니다.** 그래서 여기서 미리 조회해 봅니다 —
+  // `resolveOrders`와 같은 호출이지만 **이벤트를 원장에 쓰지 않습니다.**
+  let wouldResolve = true;
   if (unresolved.length > 0) {
-    console.log("\n[3] 미결 주문");
-    console.log("  ✗ 결말이 안 난 주문이 있습니다. 대사와 별개로 사이클이 멈춥니다.");
-    for (const order of unresolved) line(order.clientOrderId, order.state);
+    console.log("\n[3] 미결 주문 — 9/1 1단계가 풀 수 있는가 (조회만, 기록 안 함)");
+    for (const order of unresolved) {
+      line(order.clientOrderId, order.state);
+      try {
+        const found = await broker.getOrder(order.clientOrderId);
+        const events = eventsFromLookup(order.clientOrderId, found, { at: new Date().toISOString() });
+        const replayed = buildOrders([...order.events, ...events]).get(order.clientOrderId);
+        const stillPending = unresolvedOrders(new Map([[order.clientOrderId, replayed]])).length > 0;
+        line("  브로커 응답", found === null ? "없음(404) — 취소로 닫는다" : `status ${found.status ?? "?"}`);
+        line("  풀리는가", stillPending ? "✗ 안 풀린다" : `✓ ${replayed.state}${replayed.canceled ? " (취소됨)" : ""}`);
+        if (stillPending) wouldResolve = false;
+      } catch (error) {
+        line("  브로커 응답", `조회 실패 — ${error.message}`);
+        line("  풀리는가", "✗ 미결로 남는다 — 사이클이 멈춘다");
+        wouldResolve = false;
+      }
+    }
   }
 
   console.log("");
-  if (!result.matched || unresolved.length > 0) process.exitCode = 1;
+  if (!result.matched || !wouldResolve) process.exitCode = 1;
 }
 
 /** `paper-runner.js`와 같은 규칙입니다. 여럿이면 고르지 않고 멈춥니다. */
