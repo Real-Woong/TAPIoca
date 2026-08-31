@@ -441,6 +441,20 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal, liveRes
       `벤치마크 ${summary.benchmark.symbol} 매수후보유: ` +
         `${summary.benchmark.pnlUsd.toFixed(2)} USD (${summary.benchmark.returnPct}%), ${alpha}`,
     );
+    // 위의 `총손익`은 자금 투입일부터고 초과성과는 기준선 개설일부터입니다.
+    // 구간이 다른 두 줄이 붙어 있어서, 총손익 − 벤치마크로 초과성과를 검산하면
+    // 맞지 않습니다. 배너가 틀린 것처럼 보이는 자리라 **뺄셈이 눈에 보이도록**
+    // 같은 구간의 지갑 손익을 한 줄 더 찍습니다. 새 숫자를 만드는 것이 아니라
+    // alignedAlpha가 이미 쓴 기준 자산을 드러내는 것입니다.
+    const anchorEquityUsd = Number(summary.alphaWindow?.anchorEquityUsd);
+    if (Number.isFinite(Number(summary.alphaUsd)) && Number.isFinite(anchorEquityUsd)) {
+      const windowPnlUsd = summary.equityUsd - anchorEquityUsd;
+      console.log(
+        `  └ 같은 구간 지갑 손익: ${windowPnlUsd.toFixed(2)} USD ` +
+          `(기준 자산 ${anchorEquityUsd.toFixed(2)} USD, ${summary.alphaWindow.anchorSource})` +
+          ` → ${windowPnlUsd.toFixed(2)} − ${summary.benchmark.pnlUsd.toFixed(2)} = ${summary.alphaUsd.toFixed(2)}`,
+      );
+    }
   }
   if (marketSignal) {
     console.log(
