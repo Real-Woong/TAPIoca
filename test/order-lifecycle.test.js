@@ -73,6 +73,41 @@ test("체결이 더 차서 다시 조회되면 나중 누적값이 이긴다", (
 });
 
 /**
+ * 2026-08-07 실측값이다. $2.00을 내면 $1.99가 체결된다 — 금액 주문은 수량 단위
+ * 때문에 항상 요청액보다 조금 적게 찬다.
+ *
+ * 남은 $0.01은 미체결이 아니라 눈금이다. 그런데 달러 실수로 빼면 `2.00 - 1.99`가
+ * 0.01이 아니라 **0.010000000000000009**라, "센트 잔량은 봐준다"고 적어 둔 규칙이
+ * 정작 유일하게 관측된 그 값에서 뒤집혔다. PARTIAL은 미결이므로 그 주문 하나가
+ * 다음 사이클부터 에이전트 전체를 멈춘다. 그래서 센트로 센다.
+ */
+test("브로커가 결말을 안 알려줘도 센트 하나 남은 금액 주문은 FILLED다", () => {
+  // 함정이 사라진 게 아니라 우리가 피해 가는 것임을 먼저 고정한다.
+  assert.equal(2 - 1.99 > 0.01, true);
+
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 2 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    // terminal이 없다 — 브로커 상태를 모를 때만 금액으로 추정한다.
+    { type: "FILL", clientOrderId: "A", filledUsd: 1.99, filledQuantity: 0.05965 },
+  ]);
+
+  assert.equal(orders.get("A").state, ORDER_STATES.FILLED);
+  assert.equal(unresolvedOrders(orders).length, 0);
+});
+
+test("센트 하나보다 많이 남으면 여전히 부분 체결이다", () => {
+  const orders = buildOrders([
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 2 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    { type: "FILL", clientOrderId: "A", filledUsd: 1.5, filledQuantity: 0.045 },
+  ]);
+
+  assert.equal(orders.get("A").state, ORDER_STATES.PARTIAL);
+  assert.equal(unresolvedOrders(orders).length, 1);
+});
+
+/**
  * 2026-09-01의 사고다.
  *
  * 8/07 SCHD 주문 두 건이 PARTIAL로 남아 있다가 9/1 첫 사이클의 1단계 조회에서

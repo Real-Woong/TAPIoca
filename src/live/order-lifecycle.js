@@ -100,17 +100,26 @@ export function buildOrders(events) {
         // 금액 주문은 주식 수량 단위 때문에 **항상 요청액보다 조금 적게**
         // 체결됩니다(2026-08-07 실측: $2.00 요청 → $1.99 체결). 그 잔액을
         // 미체결로 읽으면 주문이 영원히 PARTIAL로 남고, PARTIAL은 미결이므로
-        // **에이전트가 영구 정지합니다.** 실제로 이번 주문은 잔액이 정확히
-        // $0.01이라 간신히 통과했습니다.
+        // **에이전트가 영구 정지합니다.**
         if (event.terminal === true) {
           order.state = ORDER_STATES.FILLED;
           break;
         }
 
-        // 브로커 상태를 모르는 경우에만 금액으로 추정합니다. 센트 미만 잔량은
-        // 체결 단위 때문에 남는 것이지 미체결이 아닙니다.
-        const remaining = (Number(order.requestedUsd) || 0) - order.filledUsd;
-        order.state = remaining > 0.01 ? ORDER_STATES.PARTIAL : ORDER_STATES.FILLED;
+        // 브로커 상태를 모르는 경우에만 금액으로 추정합니다. 센트 하나까지의
+        // 잔량은 체결 단위 때문에 남는 것이지 미체결이 아닙니다.
+        //
+        // **센트로 세는 것이 핵심입니다.** 예전에는 달러 실수로 `remaining >
+        // 0.01`을 봤는데, 우리가 실제로 부딪히는 바로 그 값에서 틀립니다 —
+        // `2.00 - 1.99`는 0.01이 아니라 **0.010000000000000009**입니다(IEEE-754).
+        // 그래서 "센트 미만은 봐준다"고 적어 둔 규칙이 정작 유일하게 관측된
+        // 사례($2.00 → $1.99)를 PARTIAL로 밀어냈고, PARTIAL은 미결이라 그
+        // 주문 하나가 에이전트 전체를 멈춥니다. 토스는 금액을 센트 단위로
+        // 끊어 체결하므로 비교도 센트에서 해야 합니다.
+        const remainingCents = Math.round(
+          (((Number(order.requestedUsd) || 0) - order.filledUsd) * 100),
+        );
+        order.state = remainingCents > 1 ? ORDER_STATES.PARTIAL : ORDER_STATES.FILLED;
         break;
       }
       case "REJECTED":
