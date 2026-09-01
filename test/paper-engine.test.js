@@ -845,6 +845,45 @@ test("정책믹스 기준선은 레짐이 바뀌어도 재조정되지 않는다
   assert.deepEqual(current.policyBenchmark.mix, { VTI: 0.7, SCHD: 0.2, IWM: 0, CASH: 0.1 });
 });
 
+// LIVE에서도 PAPER 장부는 돈다. 이것이 안 돌면 9/1처럼 첫 사이클이 통째로
+// 죽고, 실주문 이전에 결정 자체가 안 나온다.
+test("LIVE 정책으로도 PAPER 장부는 그대로 돈다", () => {
+  const livePolicy = loadTradingPolicy({
+    LIVE_TRADING: "true",
+    MAX_ORDER_USD: "5",
+    MAX_DAILY_BUY_USD: "10",
+    TRADE_COST_RATE: "0",
+  });
+  assert.equal(livePolicy.mode, "LIVE");
+
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA", "BBB", "CCC"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+
+  const result = runPaperCycle(state, prices, livePolicy, new Date("2026-07-14T00:00:00Z"));
+
+  assert.equal(result.state.mode, "PAPER");
+  assert.equal(result.state.dailyBuyUsd["2026-07-14"], 10);
+  assert.ok(result.decisions.length > 0);
+});
+
+// 반대쪽 방어선. 실계좌 장부를 넘기면 멈춰야 한다.
+test("PAPER가 아닌 장부는 거부한다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  state.mode = "LIVE";
+
+  assert.throws(
+    () => runPaperCycle(state, prices, policy, new Date("2026-07-14T00:00:00Z")),
+    /PAPER 장부에서만/,
+  );
+});
+
 function roundTo(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }

@@ -40,9 +40,17 @@ export function createPaperState({ budget, watchlist, now = new Date() }) {
 }
 
 export function runPaperCycle(state, prices, policy, now = new Date(), macroSignal = undefined) {
-  // 방어선을 한 번 더 둡니다. LIVE 설정에서는 PAPER 계산조차 진행하지 않습니다.
-  if (state.mode !== "PAPER" || policy.mode !== "PAPER") {
-    throw new Error("PAPER 엔진은 LIVE 모드에서 실행할 수 없습니다.");
+  // 지키는 것은 **장부**입니다. 이 함수는 가상 지갑만 건드리므로 실계좌 장부를
+  // 넘겨받으면 멈춥니다.
+  //
+  // **정책이 LIVE인지는 보지 않습니다.** 예전에는 봤고, 그것이 9/1에
+  // `LIVE_TRADING=true`를 켠 첫 사이클을 죽였습니다. 8/19에 실행기가 LIVE에서도
+  // PAPER 장부를 그대로 돌리도록 바뀌었는데(`paper-runner.js`) 이 줄이 같이
+  // 안 바뀌었습니다. 두 장부를 같은 신호로 나란히 돌려 그 차이를 봐야 체결
+  // 비용의 실측값이 나옵니다 — LIVE에서 이 계산을 막으면 비교 대상이 사라집니다.
+  // 실주문을 낼지 말지는 여기가 아니라 `runLiveCycle`이 정합니다.
+  if (state.mode !== "PAPER") {
+    throw new Error("PAPER 엔진은 PAPER 장부에서만 실행할 수 있습니다.");
   }
 
   const dateKey = now.toISOString().slice(0, 10);
