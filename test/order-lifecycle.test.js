@@ -48,21 +48,75 @@ test("clientOrderId는 같은 사이클을 재실행해도 같은 값이다", ()
   assert.notEqual(clientOrderId(args), clientOrderId({ ...args, side: "SELL" }));
 });
 
-test("부분 체결이 여러 번 오면 더해서 세고, 다 차야 FILLED다", () => {
+// FILL은 조회가 내는 **스냅샷**이다. 값은 그 주문의 누적 총량이지 증분이 아니다.
+// 그래서 나중 값이 앞 값을 덮어쓴다 — 더하지 않는다.
+test("체결이 더 차서 다시 조회되면 나중 누적값이 이긴다", () => {
   const orders = buildOrders([
     { type: "PLANNED", clientOrderId: "A", symbol: "VTI", side: "BUY", requestedUsd: 10 },
     { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    // 첫 조회: 누적 $4까지 찼다.
     { type: "FILL", clientOrderId: "A", filledUsd: 4, filledQuantity: 0.04 },
   ]);
   assert.equal(orders.get("A").state, ORDER_STATES.PARTIAL);
+  assert.equal(orders.get("A").filledUsd, 4);
 
   const done = buildOrders([
     { type: "PLANNED", clientOrderId: "A", symbol: "VTI", side: "BUY", requestedUsd: 10 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
     { type: "FILL", clientOrderId: "A", filledUsd: 4, filledQuantity: 0.04 },
-    { type: "FILL", clientOrderId: "A", filledUsd: 6, filledQuantity: 0.06 },
+    // 다음 조회: 누적 $10이다. 추가로 $10이 아니라 합쳐서 $10이다.
+    { type: "FILL", clientOrderId: "A", filledUsd: 10, filledQuantity: 0.1 },
   ]);
   assert.equal(done.get("A").state, ORDER_STATES.FILLED);
   assert.equal(done.get("A").filledUsd, 10);
+  assert.equal(done.get("A").filledQuantity, 0.1);
+});
+
+/**
+ * 2026-09-01의 사고다.
+ *
+ * 8/07 SCHD 주문 두 건이 PARTIAL로 남아 있다가 9/1 첫 사이클의 1단계 조회에서
+ * 결말이 났다. 조회는 8/07에 이미 기록된 체결을 그대로 다시 실어 왔고, 접는
+ * 쪽이 그것을 더하면서 장부가 브로커보다 0.356983주 많아졌다
+ * (기대 0.832717 / 실제 0.475734). 대사가 잡아 멈췄고 주문은 나가지 않았다.
+ *
+ * **같은 사실을 두 번 들어도 보유는 안 늘어야 한다.**
+ */
+test("결말 짓느라 다시 조회해도 같은 체결이 두 번 세어지지 않는다", () => {
+  const first = [
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 6 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    { type: "FILL", clientOrderId: "A", filledUsd: 5.99, filledQuantity: 0.178491 },
+  ];
+  // 미결로 남아 다음 사이클이 같은 주문을 다시 조회한다. 브로커는 같은 말을 한다.
+  const again = [
+    ...first,
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    { type: "FILL", clientOrderId: "A", filledUsd: 5.99, filledQuantity: 0.178491 },
+  ];
+
+  const before = realizedFills(buildOrders(first)).get("SCHD");
+  const after = realizedFills(buildOrders(again)).get("SCHD");
+
+  assert.equal(after.quantity, before.quantity);
+  assert.equal(after.quantity, 0.178491);
+  assert.equal(after.usd, 5.99);
+});
+
+// 위 사고를 대사 쪽에서도 고정한다. 브로커가 진실이고, 재조회가 그것을 흔들면 안 된다.
+test("재조회 뒤에도 대사가 그대로 맞는다", () => {
+  const events = [
+    { type: "PLANNED", clientOrderId: "A", symbol: "SCHD", side: "BUY", requestedUsd: 6 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    { type: "FILL", clientOrderId: "A", filledUsd: 5.99, filledQuantity: 0.356983 },
+    { type: "SUBMITTED", clientOrderId: "A", brokerOrderId: "BRK-1" },
+    { type: "FILL", clientOrderId: "A", filledUsd: 5.99, filledQuantity: 0.356983 },
+  ];
+  const ledger = Object.fromEntries(
+    [...realizedFills(buildOrders(events))].map(([symbol, fill]) => [symbol, fill.quantity]),
+  );
+
+  assert.deepEqual(reconcile(ledger, { SCHD: 0.356983 }), { matched: true, differences: [] });
 });
 
 test("끝난 주문에 PLANNED가 다시 와도 상태를 되돌리지 않는다", () => {

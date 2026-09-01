@@ -164,6 +164,10 @@ export function eventsFromLookup(clientOrderId, brokerOrder, { at = new Date().t
 
   if (Number(brokerOrder.filledUsd) > 0) {
     events.push({
+      // **이 수치는 그 주문의 누적 총량입니다 — 증분이 아닙니다.** 조회는
+      // 스냅샷이라, 같은 주문을 두 번 조회하면 같은 체결이 두 번 실려 옵니다.
+      // 접는 쪽(`buildOrders`)이 덮어쓰는 이유입니다. 2026-09-01에 그것을
+      // 더하다가 장부가 0.356983주 부풀었습니다.
       type: "FILL", clientOrderId, at,
       filledUsd: Number(brokerOrder.filledUsd),
       filledQuantity: Number(brokerOrder.filledQuantity) || 0,

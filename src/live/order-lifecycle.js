@@ -38,8 +38,22 @@ export function isTerminal(state) {
 /**
  * 이벤트를 접어 주문별 현재 상태를 만듭니다.
  *
- * 체결은 여러 번 나뉘어 올 수 있으므로 **더하고**, 상태는 마지막 사실로
- * 갱신합니다. 요청 수량을 다 채우면 FILLED, 아니면 PARTIAL입니다.
+ * 상태는 마지막 사실로 갱신합니다. 요청 수량을 다 채우면 FILLED, 아니면 PARTIAL입니다.
+ *
+ * **체결은 더하지 않고 덮어씁니다.** FILL을 내는 곳은 시스템에 하나뿐이고
+ * (`eventsFromLookup`), 그것이 싣는 `filledQuantity`는 브로커의 **누적
+ * 총량**입니다 — 증분이 아닙니다. 제출 경로는 FILL을 만들지 않습니다.
+ * 즉 이 원장의 모든 FILL은 스냅샷이고, 스냅샷을 더하면 같은 체결이 두 번
+ * 세어집니다.
+ *
+ * 2026-09-01에 그 일이 났습니다. 8/07 SCHD 주문 두 건이 PARTIAL로 남아 있다가
+ * 그날 1단계 조회에서 결말이 났는데, 8/07에 이미 기록된 체결을 조회 응답이
+ * 다시 실어 오면서 장부가 브로커보다 0.356983주 많아졌습니다(기대 0.832717 /
+ * 실제 0.475734). 대사가 잡아 멈췄고 주문은 나가지 않았습니다.
+ *
+ * **덮어쓰기는 부분 체결에서도 맞습니다.** 조회 1이 0.1, 조회 2가 누적 0.3을
+ * 말하면 답은 0.3이지 0.4가 아닙니다. 브로커가 아래로 정정해도 마찬가지입니다 —
+ * 브로커가 진실입니다.
  */
 export function buildOrders(events) {
   const orders = new Map();
@@ -76,8 +90,9 @@ export function buildOrders(events) {
         break;
       case "FILL": {
         order.brokerOrderId = event.brokerOrderId ?? order.brokerOrderId;
-        order.filledUsd += Number(event.filledUsd) || 0;
-        order.filledQuantity += Number(event.filledQuantity) || 0;
+        // 누적 총량입니다. 더하지 않습니다 — 위 주석을 보십시오.
+        order.filledUsd = Number(event.filledUsd) || 0;
+        order.filledQuantity = Number(event.filledQuantity) || 0;
 
         // **브로커가 끝났다고 하면 끝난 것입니다.** 우리 산수보다 브로커가
         // 진실입니다.
