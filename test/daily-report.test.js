@@ -289,3 +289,79 @@ test("판정 전인 감성 층이 켜져 있으면 보고서가 경고한다", (
   assert.match(report, /실행 스택: 거시 0 · 감성 1 /);
   assert.match(report, /⚠️ 미검증 층 작동 중: 감성 가중치가 0이 아닙니다/);
 });
+
+/**
+ * 2026-09-02에 찾았다. 9/1에 실거래를 켰는데 그날 밤 보고서는 여전히
+ * `📊 Toss ETF PAPER 일일 보고서` / `PAPER 모드 — 실제 주문 없음`이라고 적었다.
+ * 두 줄 다 문자열로 박혀 있었고 진입점은 정책을 읽지 않았다.
+ *
+ * 그날은 주문이 0건이라 우연히 참이었을 뿐이다. **실주문이 한 건이라도 나가는
+ * 날, 이 줄은 매일 아침 이것만 읽는 사람에게 거짓말을 한다.**
+ */
+function liveState() {
+  return {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 1.5,
+    realizedPnlUsd: 0,
+    positions: {},
+    trades: [],
+  };
+}
+
+test("LIVE면 제목과 마지막 줄이 실거래라고 말한다", () => {
+  const report = formatDailyReport(liveState(), "2026-09-02", {
+    live: { orders: [], unresolvedCount: 0 },
+  });
+
+  assert.match(report, /📊 Toss ETF LIVE 일일 보고서/);
+  assert.match(report, /LIVE 모드 — 실제 주문이 나갑니다/);
+  assert.doesNotMatch(report, /PAPER 모드 — 실제 주문 없음/);
+  // 숫자가 어느 장부의 것인지도 같이 적는다. LIVE 딱지만 붙이면 PAPER 숫자를
+  // 실계좌 잔고로 읽게 된다.
+  assert.match(report, /위 손익·보유는 PAPER 장부의 숫자입니다/);
+  assert.match(report, /오늘의 실주문/);
+});
+
+test("PAPER면 실주문 칸이 아예 없다", () => {
+  const report = formatDailyReport(liveState(), "2026-09-02");
+
+  assert.match(report, /📊 Toss ETF PAPER 일일 보고서/);
+  assert.match(report, /PAPER 모드 — 실제 주문 없음/);
+  assert.doesNotMatch(report, /오늘의 실주문/);
+});
+
+test("오늘 나간 실주문을 요청액·체결액·수량과 함께 적는다", () => {
+  const report = formatDailyReport(liveState(), "2026-09-02", {
+    live: {
+      orders: [
+        { symbol: "SCHD", side: "BUY", state: "FILLED",
+          requestedUsd: 2, filledUsd: 1.99, filledQuantity: 0.05965 },
+      ],
+      unresolvedCount: 0,
+    },
+  });
+
+  // 요청과 체결을 같이 적어야 실행 비용이 보인다. 둘 중 하나만 적으면 안 보인다.
+  assert.match(report, /• BUY SCHD: 요청 \$2\.00 → 체결 \$1\.99 \(0\.059650주\) \[FILLED\]/);
+  // 가상 거래와 같은 칸에 섞지 않는다. 둘의 차이가 재려던 값이다.
+  assert.match(report, /오늘의 가상 거래\n• 없음/);
+});
+
+test("미결 주문이 있으면 매매가 멈춘다는 사실을 적는다", () => {
+  const report = formatDailyReport(liveState(), "2026-09-02", {
+    live: { orders: [], unresolvedCount: 2 },
+  });
+
+  assert.match(report, /⚠️ 결말이 안 난 주문 2건 — 풀릴 때까지 매매가 멈춥니다/);
+});
+
+// 원장을 못 읽는다고 하루치 보고를 통째로 잃으면 사람이 아무것도 모르는 채로
+// 다음 장을 맞는다. 보고서는 나가되, 못 읽었다고 적는다.
+test("실주문 원장을 못 읽으면 보고서가 그 사실을 적는다", () => {
+  const report = formatDailyReport(liveState(), "2026-09-02", {
+    live: { error: "Unexpected token } in JSON at position 12" },
+  });
+
+  assert.match(report, /⚠️ 실주문 원장을 읽지 못했습니다: Unexpected token/);
+  assert.match(report, /LIVE 모드 — 실제 주문이 나갑니다/);
+});

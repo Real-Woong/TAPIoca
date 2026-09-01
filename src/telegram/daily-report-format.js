@@ -1,6 +1,24 @@
 import { summarizePaperState } from "../paper/paper-engine.js";
 
-export function formatDailyReport(state, tradingDate, dateForTrade) {
+/**
+ * 하루치 상태를 사람이 읽는 한 통의 메시지로 만듭니다.
+ *
+ * **여기 적히는 숫자는 언제나 PAPER 장부입니다.** 실제 토스 계좌의 보유나
+ * 예수금은 조회하지 않습니다 — LIVE에서도 마찬가지입니다. 두 장부를 나란히
+ * 굴리는 것이 전환의 목적이라(실행 비용을 그 차이로 재려고), 이 보고서가
+ * 보여 주는 것은 "신호가 무엇을 하려 했는가"입니다.
+ *
+ * **그래서 모드를 반드시 함께 적습니다.** 2026-09-02까지 제목과 마지막 줄이
+ * `PAPER`로 못 박혀 있었습니다. 9/1에 실거래를 켠 뒤에도 보고서는 여전히
+ * "PAPER 모드 — 실제 주문 없음"이라고 적었고, 그날은 주문이 0건이라 우연히
+ * 참이었을 뿐입니다. **실주문이 한 건이라도 나가는 날 그 줄은 거짓이 됩니다** —
+ * 매일 아침 이것만 읽는 사람에게 돈이 움직인 날 "실제 주문 없음"이라고
+ * 말하게 됩니다. 진입점이 정책을 읽어 `live`를 넘기고, 여기서 그 사실을 적습니다.
+ *
+ * @param {object|null} live LIVE일 때만 채웁니다. `{ orders, unresolvedCount }`
+ *   또는 원장을 못 읽었으면 `{ error }`. PAPER면 null입니다.
+ */
+export function formatDailyReport(state, tradingDate, { dateForTrade, live = null } = {}) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 Toss 계좌의 보유 종목이나 예수금은 이 보고서에 포함하지 않습니다.
   const summary = summarizePaperState(state);
@@ -28,7 +46,7 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
   const macroLines = formatMacroLines(state.macro);
 
   return [
-    "📊 Toss ETF PAPER 일일 보고서",
+    `📊 Toss ETF ${live ? "LIVE" : "PAPER"} 일일 보고서`,
     `거래일(뉴욕): ${tradingDate}`,
     "",
     `초기 원금: ${summary.fundingKrw.toLocaleString("ko-KR")}원 ($${summary.fundedUsd.toFixed(2)})`,
@@ -78,9 +96,41 @@ export function formatDailyReport(state, tradingDate, dateForTrade) {
     "",
     "오늘의 가상 거래",
     ...tradeLines,
+    ...(live ? ["", "오늘의 실주문", ...formatLiveLines(live)] : []),
     "",
-    "PAPER 모드 — 실제 주문 없음",
+    live
+      ? "LIVE 모드 — 실제 주문이 나갑니다. 위 손익·보유는 PAPER 장부의 숫자입니다"
+      : "PAPER 모드 — 실제 주문 없음",
   ].join("\n");
+}
+
+/**
+ * 오늘 실제로 나간 주문을 적습니다. **가상 거래와 같은 줄에 섞지 않습니다** —
+ * 둘의 차이가 곧 실행 비용이라, 섞으면 재려던 것이 사라집니다.
+ *
+ * 미결 건수는 오늘 것만이 아니라 **원장 전체**를 셉니다. 미결 하나가 다음
+ * 사이클을 통째로 멈추는데(`unresolvedOrders`), 그것이 8/07에 난 주문 때문이라도
+ * 내일 아침 멈추는 것은 똑같기 때문입니다.
+ */
+function formatLiveLines(live) {
+  // 원장을 못 읽었다고 보고서를 안 보내지는 않습니다. 못 읽었다고 적습니다.
+  if (live.error) return [`⚠️ 실주문 원장을 읽지 못했습니다: ${live.error}`];
+
+  const orders = Array.isArray(live.orders) ? live.orders : [];
+  const lines = orders.length
+    ? orders.map((order) =>
+        `• ${order.side} ${order.symbol}: 요청 $${Number(order.requestedUsd ?? 0).toFixed(2)} → ` +
+        `체결 $${Number(order.filledUsd ?? 0).toFixed(2)} ` +
+        `(${Number(order.filledQuantity ?? 0).toFixed(6)}주) [${order.state}]`,
+      )
+    : ["• 없음"];
+
+  return live.unresolvedCount
+    ? [
+        ...lines,
+        `⚠️ 결말이 안 난 주문 ${live.unresolvedCount}건 — 풀릴 때까지 매매가 멈춥니다`,
+      ]
+    : lines;
 }
 
 // 신호가 왜 비어 있는지 사람이 읽을 수 있는 문장으로 옮깁니다.
