@@ -24,6 +24,7 @@
     "paper:events": "node --env-file=.env src/paper/events-cli.js",
     "paper:signals": "node --env-file=.env src/paper/signal-history-cli.js",
     "paper:alpha": "node --env-file=.env src/paper/alpha-cli.js",
+    "paper:rebase": "node --env-file=.env src/paper/rebase-benchmarks-cli.js",
     "telegram:discover": "node --env-file=.env src/telegram/telegram-discover.js",
     "telegram:test": "node --env-file=.env src/telegram/telegram-check.js",
     "telegram:report": "node --env-file=.env src/telegram/daily-report.js",

@@ -603,8 +603,9 @@ function findSameCycleBuy(trades, symbol, reason, executedAt) {
   return null;
 }
 
-// 벤치마크는 원금 전액을 기준 종목(기본 VTI)에 한 번 넣고 그대로 두는 매수후보유입니다.
-// 공정한 비교를 위해 진입 1회분 거래비용은 벤치마크도 동일하게 부담합니다.
+// 벤치마크는 **개설일의 지갑 자산**을 기준 종목(기본 VTI)에 한 번 넣고 그대로
+// 두는 매수후보유입니다. 공정한 비교를 위해 진입 1회분 거래비용은 벤치마크도
+// 동일하게 부담합니다.
 function updateBenchmark(state, priceMap, now, costRate = 0) {
   const preferred = state.benchmark?.symbol
     ?? (priceMap.has("VTI") ? "VTI" : (state.watchlist ?? []).find((symbol) => priceMap.has(symbol)));
@@ -614,12 +615,12 @@ function updateBenchmark(state, priceMap, now, costRate = 0) {
   if (!Number.isFinite(price) || price <= 0) return;
 
   if (!state.benchmark) {
-    const fundedUsd = state.funding.fundedUsd;
     // 개설 시점의 지갑 자산을 함께 남깁니다. 이 값이 없으면 초과성과를 낼 때
     // **구간이 다른 두 손익을 빼게 됩니다.** 지갑 손익은 자금 투입일부터,
     // 기준선 손익은 개설일부터라서, 그 사이에 벌어진 손익이 통째로 한쪽에만
     // 실립니다. 개설 전에 재야 하므로 state.benchmark를 넣기 전에 계산합니다.
     const walletEquityUsdAtStart = summarizePaperState(state, priceMap).equityUsd;
+    const fundedUsd = benchmarkCapital(walletEquityUsdAtStart, state.funding.fundedUsd);
     state.benchmark = {
       symbol: preferred,
       quantity: (fundedUsd * (1 - costRate)) / price,
@@ -627,6 +628,7 @@ function updateBenchmark(state, priceMap, now, costRate = 0) {
       fundedUsd,
       startedAt: now.toISOString(),
       walletEquityUsdAtStart,
+      walletEquityUsdAtStartSource: "OPEN",
       lastPrice: price,
       lastPriceAt: market.timestamp ?? now.toISOString(),
     };
@@ -663,7 +665,11 @@ function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
   // 한 종목이라도 가격이 없으면 비중이 틀어진 채로 고정되므로 개설을 미룹니다.
   if (!symbols.every((symbol) => Number(priceMap.get(symbol)?.lastPrice) > 0)) return;
 
-  const fundedUsd = state.funding.fundedUsd;
+  // VTI 기준선과 같은 이유로 개설 시점의 지갑 자산을 남깁니다. 이 기준선은
+  // 지갑보다 한참 뒤에 열렸으므로(운영 상태에서는 20일), 이 값 없이 빼면 그
+  // 20일치 손익이 통째로 초과성과에 들어갑니다.
+  const walletEquityUsdAtStart = summarizePaperState(state, priceMap).equityUsd;
+  const fundedUsd = benchmarkCapital(walletEquityUsdAtStart, state.funding.fundedUsd);
   const positions = {};
   for (const symbol of symbols) {
     const price = priceMap.get(symbol).lastPrice;
@@ -671,10 +677,6 @@ function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
     // 우리와 같은 진입 비용을 부담시킵니다.
     positions[symbol] = { quantity: (amountUsd * (1 - costRate)) / price, lastPrice: price };
   }
-  // VTI 기준선과 같은 이유로 개설 시점의 지갑 자산을 남깁니다. 이 기준선은
-  // 지갑보다 한참 뒤에 열렸으므로(운영 상태에서는 20일), 이 값 없이 빼면 그
-  // 20일치 손익이 통째로 초과성과에 들어갑니다.
-  const walletEquityUsdAtStart = summarizePaperState(state, priceMap).equityUsd;
   state.policyBenchmark = {
     mix: { ...mix },
     fundedUsd,
@@ -682,7 +684,29 @@ function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
     positions,
     startedAt: now.toISOString(),
     walletEquityUsdAtStart,
+    walletEquityUsdAtStartSource: "OPEN",
   };
+}
+
+/**
+ * 기준선에 넣을 자본입니다. **투입 원금 전액이 아니라 개설일의 지갑 자산입니다.**
+ *
+ * 2026-08-27까지는 `funding.fundedUsd`(원금 전액)를 넣었다. 그런데 기준선은
+ * 지갑보다 늦게 열린다 — VTI는 07-27, 정책믹스는 08-06인데 지갑은 07-14다.
+ * 그 사이에 지갑은 이미 움직여 있었고(07-27에 $66.71 대 원금 $67.05), 그래서
+ * **초과성과가 규모가 다른 둘을 뺐다.** 기준선은 0.5% 큰 자본으로 벌고 잃는다.
+ *
+ * ⑰에서 구간은 (b)안으로 맞췄지만(개설일부터의 지갑 손익에서만 뺀다) 규모는
+ * 남겨 뒀고, 그것이 (a)안이다. **여기서 닫는다** — 개설 시점 자산으로 열면
+ * 두 곡선이 같은 원금에서 출발하므로 초과성과가 순수한 차이가 된다.
+ *
+ * 지갑 자산을 못 재면(가격이 아직 없는 첫 사이클 같은 경우) 원금으로 물러섭니다.
+ * 기준선을 아예 안 여는 것보다 낫고, 그 경우는 둘이 거의 같습니다.
+ */
+function benchmarkCapital(walletEquityUsdAtStart, fundedUsd) {
+  return Number.isFinite(walletEquityUsdAtStart) && walletEquityUsdAtStart > 0
+    ? walletEquityUsdAtStart
+    : fundedUsd;
 }
 
 /**
@@ -697,9 +721,15 @@ function updatePolicyBenchmark(state, priceMap, now, costRate = 0) {
  * 둘 다 없으면 null입니다. 부르는 쪽은 그때 숫자를 만들어내지 않습니다 —
  * **틀린 숫자를 맞는 것처럼 보여주는 것이 지금 고치고 있는 문제입니다.**
  */
-function walletEquityAtBenchmarkStart(state, benchmark) {
+export function walletEquityAtBenchmarkStart(state, benchmark) {
   const recorded = Number(benchmark?.walletEquityUsdAtStart);
-  if (Number.isFinite(recorded) && recorded > 0) return { equityUsd: recorded, source: "OPEN" };
+  if (Number.isFinite(recorded) && recorded > 0) {
+    // **어떻게 알아낸 값인지 함께 돌려줍니다.** 나중에 소급해서 채운 값은
+    // 개설 시각이 아니라 그날 첫 사이클 직전의 자산이라 몇십 분 어긋납니다.
+    // 보고서가 그 사실을 "개설일 시작 자산 기준"으로 적으므로, 소급 기록이
+    // 그 단서를 지우면 안 됩니다.
+    return { equityUsd: recorded, source: benchmark.walletEquityUsdAtStartSource ?? "OPEN" };
+  }
 
   const startedAt = benchmark?.startedAt;
   if (typeof startedAt !== "string") return null;
@@ -710,13 +740,16 @@ function walletEquityAtBenchmarkStart(state, benchmark) {
 }
 
 /**
- * 지갑과 기준선을 **겹치는 구간에서만** 뺍니다.
+ * 지갑과 기준선을 **겹치는 구간에서만, 같은 규모로** 뺍니다.
  *
- * 남는 어긋남 하나는 그대로 둡니다: 기준선은 개설일에 **원금 전액**을 넣은
- * 것으로 잡히는데, 그날 지갑의 실제 자산은 그보다 조금 적거나 많습니다.
- * 그 차이만큼 규모가 다른 둘을 비교하게 됩니다. 그것까지 맞추려면 기준선을
- * 지갑 시작일 가격으로 다시 여는 수밖에 없고, 그건 상태 파일을 고치는 일입니다.
- * 여기서 없앤 것은 **구간**의 어긋남입니다.
+ * 어긋남이 둘이었습니다. **구간**은 (b)안으로 닫았습니다 — 지갑 손익을 자금
+ * 투입일이 아니라 기준선 개설일부터 셉니다(2026-08-27). **규모**는 (a)안으로
+ * 닫았습니다 — 기준선이 원금 전액이 아니라 개설일의 지갑 자산으로 열립니다
+ * (`benchmarkCapital`, 2026-09-02). 이제 두 곡선은 같은 날 같은 원금에서
+ * 출발하므로 이 뺄셈이 순수한 차이입니다.
+ *
+ * **이미 열려 있던 기준선은 저절로 고쳐지지 않습니다.** 원금 전액으로 열린
+ * 채 남아 있으므로 `paper:rebase`로 한 번 다시 재야 합니다.
  */
 function alignedAlpha(state, benchmarkState, benchmarkSummary, equityUsd) {
   if (!benchmarkSummary) return null;

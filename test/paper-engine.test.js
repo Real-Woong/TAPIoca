@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createPaperState, runPaperCycle } from "../src/paper/paper-engine.js";
+import {
+  createPaperState,
+  runPaperCycle,
+  walletEquityAtBenchmarkStart,
+} from "../src/paper/paper-engine.js";
 import { createUsdBudget } from "../src/paper/trading-budget.js";
 import { loadTradingPolicy } from "../src/paper/trading-policy.js";
 
@@ -882,6 +886,91 @@ test("PAPER가 아닌 장부는 거부한다", () => {
     () => runPaperCycle(state, prices, policy, new Date("2026-07-14T00:00:00Z")),
     /PAPER 장부에서만/,
   );
+});
+
+/**
+ * ⑰의 (a)안이다 (2026-09-02).
+ *
+ * 기준선은 지갑보다 늦게 열린다 — 운영에서 VTI는 07-27, 정책믹스는 08-06인데
+ * 지갑은 07-14다. 그때까지 지갑은 이미 움직여 있었으므로(07-27에 $66.71 대
+ * 원금 $67.05), 기준선에 원금 전액을 넣으면 **초과성과가 규모가 다른 둘을
+ * 뺀다.** 기준선만 0.5% 큰 자본으로 벌고 잃는다.
+ *
+ * 구간은 (b)안으로 이미 맞췄다. 여기서 닫는 것은 규모다.
+ */
+test("나중에 열리는 기준선은 원금이 아니라 그날 지갑 자산으로 연다", () => {
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["AAA", "BBB", "CCC"],
+    now: new Date("2026-07-14T00:00:00Z"),
+  });
+  // 정책믹스 기준선은 VTI·SCHD 가격이 다 있어야 열린다. 매매는 AAA·BBB로 한다.
+  const withPolicyPrices = (bump) => [
+    { symbol: "AAA", lastPrice: 100 * bump },
+    { symbol: "BBB", lastPrice: 50 * bump },
+    { symbol: "CCC", lastPrice: 25 * bump },
+    { symbol: "VTI", lastPrice: 100 * bump },
+    { symbol: "SCHD", lastPrice: 50 * bump },
+  ];
+
+  const first = runPaperCycle(
+    state, withPolicyPrices(1), policy, new Date("2026-07-14T00:00:00Z"), macroSignal("NEUTRAL"),
+  );
+  const funded = first.state.funding.fundedUsd;
+
+  // 기준선이 나중에 추가된 상황을 만든다. 07-27과 08-06에 실제로 그랬다.
+  delete first.state.benchmark;
+  delete first.state.policyBenchmark;
+
+  const second = runPaperCycle(
+    first.state, withPolicyPrices(1.1), policy, new Date("2026-07-15T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+
+  const benchmark = second.state.benchmark;
+  const anchor = benchmark.walletEquityUsdAtStart;
+
+  // 그동안 지갑이 움직였으므로 앵커는 원금과 다르다. 다르지 않으면 이 테스트가
+  // 아무것도 안 재고 있다는 뜻이다.
+  assert.notEqual(anchor, funded);
+  assert.equal(benchmark.fundedUsd, anchor);
+  assert.equal(benchmark.walletEquityUsdAtStartSource, "OPEN");
+  // 수량도 그 자본에서 나온다.
+  assert.ok(Math.abs(benchmark.quantity - anchor / (100 * 1.1)) < 1e-9);
+  // 정책믹스도 같다. 현금 몫은 원금이 아니라 앵커의 10%다.
+  assert.equal(second.state.policyBenchmark.fundedUsd, anchor);
+  assert.equal(second.state.policyBenchmark.cashUsd, roundTo(anchor * 0.1));
+
+  // 기준선이 버는 것은 **그 자본**에 대해서다. 기준 종목이 10% 오르면 앵커의 10%다.
+  const third = runPaperCycle(
+    second.state,
+    [...withPolicyPrices(1.1), { symbol: benchmark.symbol, lastPrice: 100 * 1.21 }],
+    policy,
+    new Date("2026-07-16T00:00:00Z"),
+    macroSignal("NEUTRAL"),
+  );
+  assert.ok(Math.abs(third.summary.benchmark.pnlUsd - anchor * 0.1) < 0.01);
+});
+
+// 소급해서 채운 앵커는 개설 시각이 아니라 그날 첫 사이클 직전의 자산이라 몇십 분
+// 어긋난다. 보고서가 그 사실을 "개설일 시작 자산 기준"이라고 적으므로, 값을
+// 상태에 적어 넣더라도 그 단서를 지우면 안 된다.
+test("소급해서 채운 앵커는 출처를 잃지 않는다", () => {
+  const state = { risk: {} };
+  const benchmark = {
+    startedAt: "2026-07-27T00:00:00Z",
+    walletEquityUsdAtStart: 66.71,
+    walletEquityUsdAtStartSource: "DAY_START",
+  };
+
+  assert.deepEqual(
+    walletEquityAtBenchmarkStart(state, benchmark),
+    { equityUsd: 66.71, source: "DAY_START" },
+  );
+
+  // 출처가 없으면 개설 때 기록한 값이다.
+  delete benchmark.walletEquityUsdAtStartSource;
+  assert.equal(walletEquityAtBenchmarkStart(state, benchmark).source, "OPEN");
 });
 
 function roundTo(value) {
