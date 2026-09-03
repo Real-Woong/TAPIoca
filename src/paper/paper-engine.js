@@ -817,6 +817,12 @@ function compactMacroSignal(signal) {
     trend: signal.trend,
     macdContribution: signal.macdContribution,
     macd: signal.macd,
+    // **가중치를 함께 남깁니다.** 보고서의 `실행 스택` 줄과 그 아래 미검증 층
+    // 경고가 이 값만 읽는데(`daily-report-format.js`의 `formatStackLines`),
+    // 이 화이트리스트가 2026-08-21에 그 줄이 생길 때 같이 안 바뀌어 **한 번도
+    // 찍히지 않았습니다.** 기여도만 적히면 ⑬(감성 가중치가 문서는 0인데 서버만
+    // 1이었던 일)을 잡으려고 만든 줄이 정작 그 상황에서 침묵합니다.
+    weights: signal.weights ?? null,
     volatilityAnnualized: signal.volatilityAnnualized,
     exposureMultiplier: signal.exposureMultiplier,
     layers: signal.layers,

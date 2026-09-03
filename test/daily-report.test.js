@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createPaperState, runPaperCycle } from "../src/paper/paper-engine.js";
+import { createUsdBudget } from "../src/paper/trading-budget.js";
+import { loadTradingPolicy } from "../src/paper/trading-policy.js";
 import { formatDailyReport } from "../src/telegram/daily-report-format.js";
 
 test("일일 보고서에 원금, 손익, 보유종목과 당일 거래를 포함한다", () => {
@@ -287,6 +290,44 @@ test("판정 전인 감성 층이 켜져 있으면 보고서가 경고한다", (
   );
 
   assert.match(report, /실행 스택: 거시 0 · 감성 1 /);
+  assert.match(report, /⚠️ 미검증 층 작동 중: 감성 가중치가 0이 아닙니다/);
+});
+
+/**
+ * 2026-09-04에 찾았다. **위 두 테스트는 통과하는데 실제 보고서에는 그 줄이 없다.**
+ * 두 테스트가 `state.macro`를 손으로 지어 `weights`를 넣기 때문이다. 운영에서
+ * `state.macro`를 만드는 것은 `compactMacroSignal`이고, 그 화이트리스트에
+ * `weights`가 없었다 — 08-21에 이 줄을 만들면서 같이 안 바꿨다.
+ *
+ * 그래서 `실행 스택` 줄은 생긴 날부터 한 번도 안 찍혔고, **미검증 층 경고는
+ * 감성 가중치가 1이어도 침묵한다.** 잡으려던 상황이 정확히 그것이다(⑬).
+ *
+ * 픽스처가 아니라 엔진이 만든 상태를 그대로 넘겨서 그 이음매를 막는다.
+ */
+test("엔진이 만든 상태에도 실행 스택이 남아 보고서에 찍힌다", () => {
+  const policy = loadTradingPolicy({ MAX_ORDER_USD: "5", MAX_DAILY_BUY_USD: "10" });
+  const now = new Date("2026-09-03T14:00:00Z");
+  const state = createPaperState({
+    budget: createUsdBudget("1491.8"),
+    watchlist: ["VTI"],
+    now,
+  });
+
+  runPaperCycle(state, [{ symbol: "VTI", lastPrice: 100 }], policy, now, {
+    fetchedAt: now.toISOString(),
+    evaluatedAt: now.toISOString(),
+    regime: "NEUTRAL",
+    score: 0.948,
+    targetAllocation: { VTI: 0.7, CASH: 0.3 },
+    reasons: ["TEST"],
+    source: "TEST",
+    stale: false,
+    weights: { macro: 0, sentiment: 1, trend: 1, macd: 0, volTarget: 0.15 },
+  });
+
+  const report = formatDailyReport(state, "2026-09-03");
+
+  assert.match(report, /실행 스택: 거시 0 · 감성 1 · 추세 1 · MACD 0 · volTarget 0\.15/);
   assert.match(report, /⚠️ 미검증 층 작동 중: 감성 가중치가 0이 아닙니다/);
 });
 
