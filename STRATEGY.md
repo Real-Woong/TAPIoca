@@ -1815,3 +1815,5 @@ npm run backtest -- --compare <종류> --source cache --blocks 4
 - `trading_method.md` — 매매 방식 상세 명세
 - `file_structure.md` — 파일별 역할
 - `develope-log/` — 날짜별 개발 기록. **확정된 기록이라 고치지 않는다**
+- `STATE/` — 그날 보고서를 읽고 확인한 것. 하루 한 장 (2026-09-04~)
+- `DEVELOPE_IDEA/` — 아직 안 한 것과 지금 안 하는 이유. 기각도 지우지 않는다
