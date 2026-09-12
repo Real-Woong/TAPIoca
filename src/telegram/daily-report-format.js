@@ -31,7 +31,8 @@ export function formatDailyReport(
   { dateForTrade, live = null, account = null } = {},
 ) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
-  // 실제 Toss 계좌의 보유 종목이나 예수금은 이 보고서에 포함하지 않습니다.
+  // 실제 계좌의 **예수금**은 여전히 포함하지 않습니다. 보유 수량만 따로 적습니다
+  // (`formatAccountLines`) — 대사가 수량으로 도는 것과 같은 이유입니다.
   const summary = summarizePaperState(state);
   const toTradingDate = dateForTrade ?? ((date) => new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
