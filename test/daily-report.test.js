@@ -358,8 +358,9 @@ test("LIVE면 제목과 마지막 줄이 실거래라고 말한다", () => {
   assert.match(report, /LIVE 모드 — 실제 주문이 나갑니다/);
   assert.doesNotMatch(report, /PAPER 모드 — 실제 주문 없음/);
   // 숫자가 어느 장부의 것인지도 같이 적는다. LIVE 딱지만 붙이면 PAPER 숫자를
-  // 실계좌 잔고로 읽게 된다.
-  assert.match(report, /위 손익·보유는 PAPER 장부의 숫자입니다/);
+  // 실계좌 잔고로 읽게 된다. **보유는 2026-09-12부터 실계좌를 따로 적으므로**
+  // 이 줄이 말하는 것은 손익·성과다.
+  assert.match(report, /손익·성과는 PAPER 장부이고, 계좌는 «실계좌 보유» 칸입니다/);
   assert.match(report, /오늘의 실주문/);
 });
 
@@ -405,4 +406,83 @@ test("실주문 원장을 못 읽으면 보고서가 그 사실을 적는다", (
 
   assert.match(report, /⚠️ 실주문 원장을 읽지 못했습니다: Unexpected token/);
   assert.match(report, /LIVE 모드 — 실제 주문이 나갑니다/);
+});
+
+/**
+ * 2026-09-12에 찾았다. 사장님이 토스 앱을 열어 보고 물었다 — 보고서는 관리
+ * 3종목을 $65.62로 찍고 있었는데 계좌에는 $20.13뿐이었다(8월 probe 잔해).
+ *
+ * **`위 손익·보유는 PAPER 장부의 숫자입니다` 한 줄로는 안 막힌다.** 그 라벨은
+ * 읽는 사람이 차이를 **이미 알고 있을 때만** 작동한다. 매일 아침 이것만 읽는
+ * 사람에게는 계좌에 없는 포트폴리오가 계좌 잔고로 읽힌다.
+ */
+function accountState() {
+  return {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 1.5,
+    realizedPnlUsd: 0,
+    positions: {
+      VTI: { symbol: "VTI", quantity: 0.123, costUsd: 46.53, lastPrice: 381.22 },
+      SCHD: { symbol: "SCHD", quantity: 0.402, costUsd: 13.56, lastPrice: 34.13 },
+    },
+    trades: [],
+  };
+}
+
+test("LIVE면 실계좌 보유를 함께 적고, 장부와 벌어진 차이를 적는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-11", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.005248, SCHD: 0.475734 } },
+  });
+
+  assert.match(report, /실계좌 보유 \(토스\)/);
+  assert.match(report, /• VTI: 0\.005248주 \(\$2\.00\)/);
+  assert.match(report, /• SCHD: 0\.475734주 \(\$16\.24\)/);
+  // 장부 46.89 + 13.72 = 60.61 대 실계좌 2.00 + 16.24 = 18.24
+  assert.match(report, /⚠️ 장부 \$60\.61 ≠ 실계좌 \$18\.24 — 차이 \$42\.37/);
+  // 장부 칸이 장부라고 말해야 두 칸을 헷갈리지 않는다.
+  assert.match(report, /보유 ETF \(장부\)/);
+});
+
+test("장부와 실계좌가 같으면 경고를 붙이지 않는다", () => {
+  const state = accountState();
+  const report = formatDailyReport(state, "2026-09-11", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.123, SCHD: 0.402 } },
+  });
+
+  assert.match(report, /• VTI: 0\.123000주 \(\$46\.89\)/);
+  assert.doesNotMatch(report, /≠ 실계좌/);
+});
+
+// 계좌 조회는 이 보고서에서 유일하게 네트워크를 탄다. 그것 때문에 하루치
+// 보고를 통째로 잃으면 사람이 아무것도 모르는 채로 다음 장을 맞는다.
+test("실계좌를 조회하지 못해도 보고서는 나가고, 못 읽었다고 적는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-11", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { error: "계좌 조회가 15초 안에 안 왔습니다" },
+  });
+
+  assert.match(report, /⚠️ 실계좌를 조회하지 못했습니다: 계좌 조회가 15초 안에 안 왔습니다/);
+  assert.match(report, /LIVE 모드 — 실제 주문이 나갑니다/);
+  assert.match(report, /보유 ETF \(장부\)/);
+});
+
+// 장부에 없는 종목은 환산할 가격이 없다. 모르는 것을 0으로 더하면 차이가
+// 실제보다 커 보이므로, 수량만 적고 합계를 포기한다.
+test("장부에 가격이 없는 종목은 수량만 적고 차이를 계산하지 않는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-11", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.005248, IWM: 0.006665 } },
+  });
+
+  assert.match(report, /• IWM: 0\.006665주 \(평가액 미상 — 장부에 가격이 없습니다\)/);
+  assert.doesNotMatch(report, /≠ 실계좌/);
+});
+
+test("PAPER면 실계좌 칸이 아예 없다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-11");
+
+  assert.doesNotMatch(report, /실계좌 보유/);
+  assert.match(report, /PAPER 모드 — 실제 주문 없음/);
 });

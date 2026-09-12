@@ -3,10 +3,15 @@ import { summarizePaperState } from "../paper/paper-engine.js";
 /**
  * 하루치 상태를 사람이 읽는 한 통의 메시지로 만듭니다.
  *
- * **여기 적히는 숫자는 언제나 PAPER 장부입니다.** 실제 토스 계좌의 보유나
- * 예수금은 조회하지 않습니다 — LIVE에서도 마찬가지입니다. 두 장부를 나란히
- * 굴리는 것이 전환의 목적이라(실행 비용을 그 차이로 재려고), 이 보고서가
- * 보여 주는 것은 "신호가 무엇을 하려 했는가"입니다.
+ * **손익·보유·성과는 PAPER 장부입니다.** 두 장부를 나란히 굴리는 것이 전환의
+ * 목적이라(실행 비용을 그 차이로 재려고), 그 숫자가 보여 주는 것은 "신호가
+ * 무엇을 하려 했는가"입니다.
+ *
+ * **그러나 LIVE에서는 실계좌 보유를 함께 적습니다(2026-09-12).** 그전까지는
+ * 계좌를 아예 조회하지 않았고, `위 손익·보유는 PAPER 장부의 숫자입니다` 한
+ * 줄에 기대고 있었습니다. 그 줄은 **읽는 사람이 차이를 이미 알 때만** 작동합니다.
+ * 실제로 그날 장부는 $65.62를 찍고 있었고 계좌의 관리 3종목은 $20.13이었습니다
+ * — 8월 probe 잔해뿐이었습니다. 라벨이 아니라 숫자를 나란히 적어야 보입니다.
  *
  * **그래서 모드를 반드시 함께 적습니다.** 2026-09-02까지 제목과 마지막 줄이
  * `PAPER`로 못 박혀 있었습니다. 9/1에 실거래를 켠 뒤에도 보고서는 여전히
@@ -17,8 +22,14 @@ import { summarizePaperState } from "../paper/paper-engine.js";
  *
  * @param {object|null} live LIVE일 때만 채웁니다. `{ orders, unresolvedCount }`
  *   또는 원장을 못 읽었으면 `{ error }`. PAPER면 null입니다.
+ * @param {object|null} account 실계좌 보유. `{ positions, at }` 또는 조회에
+ *   실패했으면 `{ error }`. LIVE일 때만 채웁니다.
  */
-export function formatDailyReport(state, tradingDate, { dateForTrade, live = null } = {}) {
+export function formatDailyReport(
+  state,
+  tradingDate,
+  { dateForTrade, live = null, account = null } = {},
+) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 Toss 계좌의 보유 종목이나 예수금은 이 보고서에 포함하지 않습니다.
   const summary = summarizePaperState(state);
@@ -91,17 +102,77 @@ export function formatDailyReport(state, tradingDate, { dateForTrade, live = nul
       : []),
     ...macroLines,
     "",
-    "보유 ETF",
+    "보유 ETF (장부)",
     ...positionLines,
+    ...(account ? ["", "실계좌 보유 (토스)", ...formatAccountLines(account, state, summary)] : []),
     "",
     "오늘의 가상 거래",
     ...tradeLines,
     ...(live ? ["", "오늘의 실주문", ...formatLiveLines(live)] : []),
     "",
     live
-      ? "LIVE 모드 — 실제 주문이 나갑니다. 위 손익·보유는 PAPER 장부의 숫자입니다"
+      ? "LIVE 모드 — 실제 주문이 나갑니다. 손익·성과는 PAPER 장부이고, 계좌는 «실계좌 보유» 칸입니다"
       : "PAPER 모드 — 실제 주문 없음",
   ].join("\n");
+}
+
+/**
+ * **실제 계좌에 지금 무엇이 있는가**를 적습니다. 관리 종목만 봅니다 — 계좌에는
+ * 사장님이 손수 산 것이 함께 있고, 그것은 이 시스템의 것이 아닙니다.
+ *
+ * **차이가 나면 차이를 적습니다.** 장부는 07-14에 $67로 출발해 이미 비중을
+ * 다 채운 상태이고, LIVE는 장부가 **새로** 내는 결정만 주문으로 옮깁니다
+ * (`paper-bridge.js`). 그래서 초기 매수 경로가 없는 한 두 숫자는 저절로
+ * 만나지 않습니다. 조용히 두면 매일 아침 계좌에 없는 포트폴리오를 보고하게
+ * 됩니다.
+ *
+ * **평가액은 장부의 마지막 가격으로 환산합니다.** 브로커 조회(`getPositions`)는
+ * 수량만 줍니다 — 대사를 수량으로 하는 편이 정확하기 때문입니다. 가격을 따로
+ * 받아오지 않는 이유도 같습니다. 여기 달러는 크기를 보이려는 것이고 대사가
+ * 읽는 값이 아닙니다.
+ */
+function formatAccountLines(account, state, summary) {
+  // 계좌를 못 읽었다고 보고서를 안 보내지는 않습니다. 못 읽었다고 적습니다 —
+  // 실주문 원장과 같은 규칙입니다.
+  if (account.error) return [`⚠️ 실계좌를 조회하지 못했습니다: ${account.error}`];
+
+  const positions = account.positions ?? {};
+  // **장부 칸과 같은 순서로 적습니다.** 두 칸을 눈으로 나란히 읽으라고 붙인
+  // 칸인데 순서가 다르면 그 비교가 안 됩니다. 장부에 없는 종목은 뒤에 붙입니다.
+  const booked = Object.keys(state.positions ?? {});
+  const symbols = [
+    ...booked.filter((symbol) => symbol in positions),
+    ...Object.keys(positions).filter((symbol) => !booked.includes(symbol)).sort(),
+  ];
+  if (symbols.length === 0) return ["• 없음"];
+
+  let accountValueUsd = 0;
+  let priced = true;
+  const lines = symbols.map((symbol) => {
+    const quantity = Number(positions[symbol]) || 0;
+    const book = state.positions?.[symbol];
+    const price = book?.lastPrice ?? book?.entryPrice;
+    if (!(price > 0)) {
+      // 장부에 없는 종목은 환산할 가격이 없습니다. 수량만 적고 합계는 포기합니다
+      // — 모르는 것을 0으로 더하면 차이가 실제보다 커 보입니다.
+      priced = false;
+      return `• ${symbol}: ${quantity.toFixed(6)}주 (평가액 미상 — 장부에 가격이 없습니다)`;
+    }
+    const valueUsd = quantity * price;
+    accountValueUsd += valueUsd;
+    return `• ${symbol}: ${quantity.toFixed(6)}주 ($${valueUsd.toFixed(2)})`;
+  });
+
+  if (!priced) return lines;
+
+  const gapUsd = summary.marketValueUsd - accountValueUsd;
+  if (Math.abs(gapUsd) < 0.01) return lines;
+
+  return [
+    ...lines,
+    `⚠️ 장부 $${summary.marketValueUsd.toFixed(2)} ≠ 실계좌 $${accountValueUsd.toFixed(2)} ` +
+      `— 차이 $${Math.abs(gapUsd).toFixed(2)}. 장부가 새로 내는 주문만 실계좌로 나갑니다`,
+  ];
 }
 
 /**
