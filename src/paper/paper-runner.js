@@ -23,7 +23,7 @@ import { runLiveCycle } from "../live/live-cycle.js";
 import { createTossBroker } from "../live/toss-broker.js";
 import { buildOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
-import { toOrderIntents } from "../live/paper-bridge.js";
+import { planLedgerSync } from "../live/ledger-sync.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
 const statePath = path.join(dataDir, "paper-state.json");
@@ -58,7 +58,7 @@ async function run() {
   const policy = loadTradingPolicy();
   // **LIVE에서도 PAPER 장부는 그대로 돕니다.** 끄면 안 됩니다 — 같은 신호로 두
   // 장부를 나란히 돌려 그 차이를 봐야 체결 비용의 실측값이 나옵니다
-  // (`live-cycle.js`). 실주문은 PAPER 결정을 받아 뒤에 덧붙는 단계입니다.
+  // (`live-cycle.js`). 실주문은 실계좌를 이 장부의 보유에 맞추는 뒤 단계입니다.
   const live = policy.mode === "LIVE";
 
   // ── 배너 ──────────────────────────────────────────────────────────────
@@ -191,25 +191,28 @@ async function run() {
   // **실주문은 장부를 저장하고 기록을 남긴 뒤에 냅니다.** 순서가 반대면, 주문을
   // 낸 뒤 저장에서 죽었을 때 "냈는데 장부에 없는" 상태가 남습니다.
   const liveResult = live
-    ? await submitLiveOrders({ client, session, now, decisions: result.decisions })
+    ? await submitLiveOrders({ client, session, now, policy, prices, ledger: result })
     : null;
 
   printResult(result, exchangeRate, marketSignal, liveResult);
 }
 
 /**
- * PAPER가 낸 결정을 실제 주문으로 옮깁니다.
+ * 실계좌를 PAPER 장부의 보유에 맞춥니다.
+ *
+ * **장부가 이번에 낸 결정이 아니라, 장부가 지금 들고 있는 수량을 따라갑니다**
+ * (2026-09-17, `ledger-sync.js`). 결정만 옮기던 때는 장부가 07-14에 이미 다 채운
+ * 비중을 실계좌가 한 번도 못 따라갔습니다(STRATEGY.md ㉖).
  *
  * 여기서 하는 일은 **연결뿐입니다.** 낼지 말지의 판단은 전부 `runLiveCycle`
  * 안에 있습니다 — 긴급중지·미결 주문·보유 대사·장 시간·금액 주문 창. 그 판단을
  * 이쪽으로 옮기면 안전장치가 두 곳에 흩어져 어느 쪽이 이기는지 알 수 없게 됩니다.
  */
-async function submitLiveOrders({ client, session, now, decisions }) {
-  const { intents, dropped } = toOrderIntents(decisions);
-  // 버린 것을 먼저 말합니다. 조용히 거르면 "왜 주문이 안 나갔는가"를 못 되짚습니다.
-  for (const item of dropped) {
-    console.log(`  실주문 제외: ${item.symbol} ${item.action} — ${item.why}`);
-  }
+async function submitLiveOrders({ client, session, now, policy, prices, ledger }) {
+  const ledgerPositions = Object.fromEntries(
+    Object.entries(ledger.state.positions ?? {}).map(([symbol, position]) => [symbol, position.quantity]),
+  );
+  const priceMap = new Map(prices.map((price) => [price.symbol, price.lastPrice]));
 
   const broker = createTossBroker({
     getAccessToken: () => client.getAccessToken(),
@@ -224,7 +227,15 @@ async function submitLiveOrders({ client, session, now, decisions }) {
   return runLiveCycle({
     dataDir,
     broker,
-    decisions: intents,
+    decide: ({ orders }) => planLedgerSync({
+      ledgerPositions,
+      orders,
+      prices: priceMap,
+      managedSymbols: watchlist,
+      limits: policy,
+      maxLiveValueUsd: ledger.summary.equityUsd,
+      now,
+    }),
     // 우리가 매매하는 종목만 대사합니다. 사용자가 다른 것을 사고팔아도 우리
     // 대사가 깨지면 안 됩니다.
     managedSymbols: watchlist,

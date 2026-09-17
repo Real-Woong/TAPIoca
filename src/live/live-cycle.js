@@ -25,8 +25,12 @@ import { expectedPositions, readBaseline, restrictToManaged } from "./position-b
 export async function runLiveCycle({
   dataDir,
   broker,
-  // PAPER 엔진이 낸 의도입니다: [{ symbol, side, amountUsd }]
+  // 낼 주문입니다: [{ symbol, side, amountUsd }]
   decisions = [],
+  // 주어지면 `decisions` 대신 이것이 주문을 정합니다. **1단계로 결말을 지은 뒤의
+  // 원장**을 받아야 하므로 값이 아니라 함수입니다 — 결말 전 원장으로 계산하면 방금
+  // 체결된 주문을 한 번 더 냅니다. `({ orders }) => ({ intents, notes })`
+  decide = null,
   // 우리가 매매하는 종목입니다. 이 밖의 종목은 대사에서 뺍니다 — 사용자가
   // 다른 것을 사고팔아도 우리 대사가 깨지면 안 됩니다.
   managedSymbols = [],
@@ -88,8 +92,17 @@ export async function runLiveCycle({
     log.push(`보유 조회 실패: ${error.message}`);
   }
 
+  // 대사가 깨졌으면 계산하지 않습니다. 어긋난 원장으로 낸 주문 목록은 틀린 것이고,
+  // 어차피 아래 planCycle이 멈춥니다.
+  let intents = decisions;
+  if (decide && reconciliation.matched) {
+    const planned = decide({ orders });
+    intents = planned.intents;
+    log.push(...planned.notes);
+  }
+
   const plan = planCycle({
-    decisions,
+    decisions: intents,
     orders,
     reconciliation,
     emergencyStop: stop.stopped,

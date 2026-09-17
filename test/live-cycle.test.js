@@ -286,3 +286,48 @@ test("주말에는 두 창이 모두 닫힌다", () => {
   assert.equal(saturday.isOpen, false);
   assert.equal(saturday.isAmountOrderWindow, false);
 });
+
+// 실계좌를 장부에 맞추는 주문(`ledger-sync.js`)은 1단계로 결말을 지은 뒤의 원장으로
+// 계산해야 한다. 결말 전 원장으로 계산하면 방금 체결된 매수를 한 번 더 낸다.
+test("decide는 미결을 조회로 닫은 뒤의 원장을 받는다", async () => {
+  const dataDir = await scratch();
+  const broker = createFakeBroker({ behaviors: [{ accept: true }] });
+  await runLiveCycle({ dataDir, broker, decisions: [DECISION], now: new Date("2026-09-17T14:30:00Z") });
+  // 브로커 쪽에서 체결됐습니다.
+  const [id] = broker._orders.keys();
+  Object.assign(broker._orders.get(id), { status: "FILLED", filledUsd: 5, filledQuantity: 0.05, filledPrice: 100 });
+  broker.getPositions = async () => ({ VTI: 0.05 });
+
+  let seen;
+  const result = await runLiveCycle({
+    dataDir,
+    broker,
+    managedSymbols: ["VTI"],
+    decide: ({ orders }) => {
+      seen = orders.get(id);
+      return { intents: [], notes: ["맞출 것 없음"] };
+    },
+    now: new Date("2026-09-17T14:45:00Z"),
+  });
+
+  assert.equal(seen.state, ORDER_STATES.FILLED);
+  assert.equal(seen.filledQuantity, 0.05);
+  assert.equal(result.halted, false);
+  assert.match(result.log.join(" "), /맞출 것 없음/);
+});
+
+test("대사가 깨졌으면 decide를 부르지 않는다", async () => {
+  const dataDir = await scratch({ VTI: 1 });
+  const broker = createFakeBroker({ positions: { VTI: 1.5 } });
+  let called = false;
+
+  const result = await runLiveCycle({
+    dataDir,
+    broker,
+    managedSymbols: ["VTI"],
+    decide: () => { called = true; return { intents: [DECISION], notes: [] }; },
+  });
+
+  assert.equal(result.reason, HALT_REASONS.RECONCILE_MISMATCH);
+  assert.equal(called, false);
+});
