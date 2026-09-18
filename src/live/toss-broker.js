@@ -170,6 +170,33 @@ export function createTossBroker({
       return positions;
     },
 
+    /**
+     * **주문 직전 호가입니다 — 슬리피지의 기준선입니다.**
+     *
+     * 시장가 주문은 체결가를 우리가 정하지 못하므로, 이 중간가와 실제 체결가의
+     * 차이가 우리가 치른 비용입니다. **주문 전에 안 찍으면 되살릴 수 없습니다.**
+     * `toss-client.js`에도 같은 것이 있지만 운영 사이클은 이 브로커만 쥐고 있어,
+     * 9/17 첫 동기화 체결 4건이 기준선 없이 지나갔습니다(STATE/2026-09-18).
+     *
+     * 파라미터 이름은 `toss-client.js`와 같은 이유로 단수형을 먼저 시도합니다 —
+     * `symbols`로 보냈더니 `invalid-request`가 났습니다(2026-08-07).
+     */
+    async getOrderbook(symbol) {
+      const normalized = String(symbol ?? "").trim();
+      if (!normalized) throw new Error("호가를 조회할 종목이 필요합니다.");
+
+      let lastError = null;
+      for (const parameter of ["symbol", "symbols"]) {
+        try {
+          const query = new URLSearchParams({ [parameter]: normalized });
+          return await request("marketData", `/api/v1/orderbook?${query}`);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
+    },
+
     async cancelOrder(clientOrderId) {
       const brokerOrderId = await lookupBrokerOrderId(clientOrderId);
       // orderId를 모르면 취소할 수 없습니다. **성공으로 보고 넘어가면 안 됩니다** —

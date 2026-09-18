@@ -331,3 +331,37 @@ test("대사가 깨졌으면 decide를 부르지 않는다", async () => {
   assert.equal(result.reason, HALT_REASONS.RECONCILE_MISMATCH);
   assert.equal(called, false);
 });
+
+test("주문 직전 호가를 PLANNED에 함께 남긴다 — 슬리피지의 기준선이다", async () => {
+  const dataDir = await scratch();
+  const broker = createFakeBroker({ behaviors: [{ accept: true }] });
+  const asked = [];
+  broker.getOrderbook = async (symbol) => {
+    asked.push(symbol);
+    return { bidPrice: 33.5, askPrice: 33.54 };
+  };
+
+  await runLiveCycle({ dataDir, broker, decisions: [DECISION] });
+
+  const [planned] = await readOrderEvents(dataDir);
+  assert.equal(planned.type, "PLANNED");
+  assert.deepEqual(asked, ["VTI"]);
+  // 중간가가 곧 기준선입니다. 지나가면 되살릴 수 없어 이벤트에 박아 둡니다.
+  assert.equal(planned.quote.mid, 33.52);
+  // 원본도 버리지 않습니다 — 파서가 틀렸어도 나중에 다시 계산할 수 있습니다.
+  assert.deepEqual(planned.quoteRaw, { bidPrice: 33.5, askPrice: 33.54 });
+});
+
+test("호가 조회가 실패해도 주문은 그대로 나간다", async () => {
+  const dataDir = await scratch();
+  const broker = createFakeBroker({ behaviors: [{ accept: true }] });
+  broker.getOrderbook = async () => { throw new Error("orderbook 503"); };
+
+  const result = await runLiveCycle({ dataDir, broker, decisions: [DECISION] });
+
+  // **측정을 위해 매매를 멈추지 않습니다.** 기준선이 없는 체결이 될 뿐입니다.
+  assert.equal(result.submitted.length, 1);
+  assert.match(result.log.join(" "), /호가 조회 실패/);
+  const [planned] = await readOrderEvents(dataDir);
+  assert.equal(planned.quote, null);
+});

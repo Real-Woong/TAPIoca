@@ -4,6 +4,7 @@ import { buildOrders, realizedFills, reconcile, unresolvedOrders } from "./order
 import { OUTCOMES, classifyOutcome, resolveOrders } from "./order-outcome.js";
 import { appendOrderEvent, clientOrderId, readOrderEvents } from "./order-store.js";
 import { expectedPositions, readBaseline, restrictToManaged } from "./position-baseline.js";
+import { extractQuote } from "./slippage.js";
 
 /**
  * 실거래 한 사이클입니다. PAPER 엔진이 낸 **의도**를 받아 실제 주문으로 옮깁니다.
@@ -120,11 +121,33 @@ export async function runLiveCycle({
   for (const decision of plan.submit) {
     const id = clientOrderId({ cycleAt: at, symbol: decision.symbol, side: decision.side });
 
+    // **주문 직전 호가를 찍습니다.** 이것이 슬리피지의 기준선이고, 지나가면
+    // 되살릴 수 없습니다 — `live-probe.js`가 8월부터 하던 일을 운영 사이클도
+    // 합니다. 안 찍혔던 탓에 9/17 첫 동기화 체결 4건이 `live:slippage`의
+    // «측정 가능»에 안 들어갔습니다(STATE/2026-09-18).
+    //
+    // **조회가 실패해도 주문은 냅니다.** 측정을 위해 매매를 멈추는 것은 본말이
+    // 뒤바뀐 것입니다. 호가를 못 읽는 브로커여도 마찬가지입니다.
+    let quote = null;
+    let quoteRaw = null;
+    if (typeof broker.getOrderbook === "function") {
+      try {
+        quoteRaw = await broker.getOrderbook(decision.symbol);
+        quote = extractQuote(quoteRaw);
+      } catch (quoteError) {
+        log.push(`호가 조회 실패: ${decision.symbol} — ${quoteError.message}`);
+      }
+    }
+
     // **기록이 제출보다 먼저입니다.** 이 순서가 뒤집히면, 기록과 제출 사이에서
     // 죽었을 때 냈는지 안 냈는지 알 방법이 없습니다.
     await appendOrderEvent(dataDir, {
       type: "PLANNED", clientOrderId: id, at,
       symbol: decision.symbol, side: decision.side, requestedUsd: decision.amountUsd,
+      quote,
+      // **원본을 버리지 않습니다.** 파서가 틀렸어도 나중에 고쳐서 과거 측정을
+      // 다시 계산할 수 있습니다(`slippage.js`의 `extractQuote`).
+      quoteRaw: quoteRaw ?? null,
     });
 
     let response = null;

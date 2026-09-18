@@ -25,6 +25,7 @@ export const DEFAULT_LIMITS = Object.freeze({
   holdings: 5,      // ASSET
   accounts: 1,      // ACCOUNT
   marketInfo: 3,    // MARKET_INFO — 환율·장 운영 시간
+  marketData: 10,   // MARKET_DATA — 호가·현재가
 });
 
 /**
