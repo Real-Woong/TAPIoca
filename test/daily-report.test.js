@@ -486,3 +486,63 @@ test("PAPER면 실계좌 칸이 아예 없다", () => {
   assert.doesNotMatch(report, /실계좌 보유/);
   assert.match(report, /PAPER 모드 — 실제 주문 없음/);
 });
+
+test("추세 일봉이 얼어붙으면 나이와 함께 경고한다", () => {
+  const state = {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 67.05,
+    realizedPnlUsd: 0,
+    positions: {},
+    trades: [],
+    macro: {
+      regime: "NEUTRAL",
+      score: 0.826,
+      targetAllocation: { VTI: 0.7, SCHD: 0.17, IWM: 0.08, CASH: 0.05 },
+      trend: {
+        score: 0.825704, confidence: 1, readySymbols: 3, totalSymbols: 3,
+        stale: true,
+        staleSince: "2026-09-17T13:00:00.000Z",
+        evaluatedAt: "2026-09-18T20:24:00.000Z",
+        fetchError: "TWELVEDATA: 응답 오류 429",
+      },
+      layers: [
+        { key: "TREND", label: "추세(200일선)", weight: 1, available: true, contribution: 0.826 },
+      ],
+    },
+  };
+
+  const report = formatDailyReport(state, "2026-09-18");
+
+  // 점수는 나온다 — 죽은 것이 아니라 얼어붙은 것이다. 그래서 «비활성 신호»가 안 잡는다.
+  assert.match(report, /추세\(200일선\): 0\.825704 .*※ 캐시 사용/);
+  assert.match(report, /⚠️ 추세 일봉이 갱신되지 않았습니다 — 캐시는 31\.4시간 전 값이고/);
+  assert.match(report, /TWELVEDATA: 응답 오류 429/);
+});
+
+test("추세 일봉이 일부 종목만 실패하면 비율에 안 보이므로 따로 적는다", () => {
+  const state = {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 67.05,
+    realizedPnlUsd: 0,
+    positions: {},
+    trades: [],
+    macro: {
+      regime: "NEUTRAL",
+      score: 0.9,
+      targetAllocation: { VTI: 0.7, SCHD: 0.2, CASH: 0.1 },
+      // 분모가 관심종목이 아니라 **받아온 종목**이라 2/2로 만점처럼 보인다.
+      trend: {
+        score: 0.9, confidence: 1, readySymbols: 2, totalSymbols: 2,
+        failures: ["IWM: 응답 오류 404"],
+      },
+      layers: [
+        { key: "TREND", label: "추세(200일선)", weight: 1, available: true, contribution: 0.9 },
+      ],
+    },
+  };
+
+  const report = formatDailyReport(state, "2026-09-18");
+
+  assert.match(report, /추세\(200일선\): 0\.9 \(신뢰도 1, 2\/2종목\)/);
+  assert.match(report, /⚠️ 추세 일봉 일부 수집 실패: IWM: 응답 오류 404/);
+});

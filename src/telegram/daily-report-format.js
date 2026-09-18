@@ -232,7 +232,7 @@ function formatMacroLines(macro) {
       ? [`⚠️ 비활성 신호: ${dead.map((layer) => `${layer.label}(${reasonText(layer.reason)})`).join(", ")}`]
       : []),
     formatSentimentLine(macro),
-    formatTrendLine(macro),
+    ...formatTrendLines(macro),
     formatMacdLine(macro),
     ...(Number(macro.exposureMultiplier) < 1
       ? [
@@ -318,16 +318,64 @@ function formatSourceCounts(sourceCounts) {
   return entries.length ? ` — ${entries.map(([name, count]) => `${name} ${count}`).join(", ")}` : "";
 }
 
-function formatTrendLine(macro) {
-  if (macro.trend) {
-    const stale = macro.trend.stale ? " ※ 캐시 사용" : "";
-    return (
-      `추세(200일선): ${macro.trend.score} ` +
-      `(신뢰도 ${macro.trend.confidence}, ` +
-      `${macro.trend.readySymbols}/${macro.trend.totalSymbols}종목)${stale}`
+/**
+ * 추세 줄과, 일봉이 끊겼을 때의 경고입니다.
+ *
+ * **추세가 통째로 죽으면 `⚠️ 비활성 신호`가 이미 잡습니다**(가중치 1 × 사용 불가).
+ * 안 잡히던 것은 **살아 있지만 얼어붙은 경우**입니다 — 수집이 실패해도 캐시가
+ * 있으면 그 종가로 점수가 나오고, 예전에는 `※ 캐시 사용` 넉 자만 붙었습니다.
+ * 값이 어제와 같은 것이 "시장이 안 움직였다"와 구분되지 않습니다. 감성에서
+ * 똑같은 일을 겪고 나이를 찍기로 한 것과 같은 이유입니다(`formatFreshness`).
+ *
+ * **종목 일부만 실패하는 경우는 비율에도 안 나타납니다.** `3/3종목`의 분모는
+ * 관심종목이 아니라 **종가를 받아온 종목**이라, IWM이 빠지면 `2/2종목`이 되어
+ * 여전히 만점처럼 보입니다. 그래서 실패한 종목을 따로 적습니다.
+ */
+function formatTrendLines(macro) {
+  const trend = macro.trend;
+  if (!trend) {
+    return [`추세(200일선): 사용 불가 — ${reasonText(layerOf(macro, "TREND")?.reason)}`];
+  }
+
+  const lines = [
+    `추세(200일선): ${trend.score} ` +
+      `(신뢰도 ${trend.confidence}, ${trend.readySymbols}/${trend.totalSymbols}종목)` +
+      `${trend.stale ? " ※ 캐시 사용" : ""}`,
+  ];
+
+  if (trend.stale) {
+    const age = staleAgeHours(trend);
+    lines.push(
+      "⚠️ 추세 일봉이 갱신되지 않았습니다" +
+        (age === null ? "" : ` — 캐시는 ${age}시간 전 값이고`) +
+        " 점수가 그 시점에 멈춰 있습니다" +
+        (trend.fetchError ? ` (${trend.fetchError})` : ""),
     );
   }
-  return `추세(200일선): 사용 불가 — ${reasonText(layerOf(macro, "TREND")?.reason)}`;
+
+  const failures = Array.isArray(trend.failures) ? trend.failures : [];
+  if (failures.length) {
+    lines.push(
+      `⚠️ 추세 일봉 일부 수집 실패: ${failures.join(", ")} — ` +
+        "남은 종목만으로 점수를 냅니다",
+    );
+  }
+
+  return lines;
+}
+
+/**
+ * 캐시가 몇 시간 전 값인지입니다.
+ *
+ * **지금이 아니라 사이클이 돈 시각(`evaluatedAt`) 기준입니다.** 보고서는 장이
+ * 닫힌 뒤에 나가므로 지금 시각으로 재면 실제보다 늙어 보이고, 우리가 알고
+ * 싶은 것은 **그 점수가 만들어질 때 얼마나 낡아 있었는가**입니다.
+ */
+function staleAgeHours({ staleSince, evaluatedAt }) {
+  const since = new Date(staleSince ?? "").getTime();
+  const at = new Date(evaluatedAt ?? "").getTime();
+  if (!Number.isFinite(since) || !Number.isFinite(at) || at < since) return null;
+  return Math.round(((at - since) / (60 * 60 * 1000)) * 10) / 10;
 }
 
 function formatMacdLine(macro) {

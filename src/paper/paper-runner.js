@@ -491,8 +491,20 @@ function printResult({ decisions, summary }, exchangeRate, marketSignal, liveRes
       console.log(
         `추세(200일선): ${marketSignal.trend.score} ` +
           `(신뢰도 ${marketSignal.trend.confidence}, ` +
-          `${marketSignal.trend.readySymbols}/${marketSignal.trend.totalSymbols}종목)`,
+          `${marketSignal.trend.readySymbols}/${marketSignal.trend.totalSymbols}종목)` +
+          `${marketSignal.trend.stale ? " ※ 캐시 사용" : ""}`,
       );
+      // 살아 있지만 얼어붙은 경우입니다. 보고서와 같은 줄을 저널에도 남깁니다 —
+      // 사이클 로그만 보는 날에도 드러나야 합니다.
+      if (marketSignal.trend.stale) {
+        console.log(
+          `⚠️ 추세 일봉이 갱신되지 않았습니다 — 점수가 캐시 시점에 멈춰 있습니다` +
+            `${marketSignal.trend.fetchError ? ` (${marketSignal.trend.fetchError})` : ""}`,
+        );
+      }
+      if (marketSignal.trend.failures?.length) {
+        console.log(`⚠️ 추세 일봉 일부 수집 실패: ${marketSignal.trend.failures.join(", ")}`);
+      }
     } else {
       console.log("추세(200일선): 준비 중 (일봉 200개 필요)");
     }
