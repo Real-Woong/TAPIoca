@@ -64,6 +64,14 @@ export function formatDailyReport(
     `📊 Toss ETF ${live ? "LIVE" : "PAPER"} 일일 보고서`,
     `거래일(뉴욕): ${tradingDate}`,
     "",
+    // **이 줄 하나가 없어서 9/18에 혼선이 났습니다.** 아래 「실계좌」 칸들은
+    // 스스로 이름을 달고 있는데(`실계좌 보유`·`실계좌 손익`·`오늘의 실주문`),
+    // 정작 맨 위 손익 블록만 라벨이 없었습니다. 그래서 장부의 `실현손익 -$0.25`를
+    // 토스 앱의 실계좌 `-102원`과 나란히 놓고 읽게 됐습니다 — 다른 장부입니다.
+    //
+    // **줄을 옮기지 않고 머리만 답니다.** ㉕에서 출력을 건드리다 숫자가 조용히
+    // 바뀐 적이 있어, 기존 줄은 한 글자도 그대로 둡니다.
+    "── 장부 (가상) · 실제 계좌는 아래 «실계좌» 칸 ──",
     `초기 원금: ${summary.fundingKrw.toLocaleString("ko-KR")}원 ($${summary.fundedUsd.toFixed(2)})`,
     `현재 총자산: $${summary.equityUsd.toFixed(2)}`,
     `현금: $${summary.cashUsd.toFixed(2)}`,
@@ -106,6 +114,10 @@ export function formatDailyReport(
             `당일 ${signedUsd(state.risk.lastCheck.dailyPnlUsd)}) — 매매는 계속합니다`,
         ]
       : []),
+    // `formatMacroLines`는 신호가 없어도 «사용 가능한 신호 없음» 한 줄을 내므로
+    // 이 블록은 항상 있습니다. 조건을 달면 없는 경우를 있는 것처럼 읽게 됩니다.
+    "",
+    "── 신호 ──",
     ...macroLines,
     "",
     "보유 ETF (장부)",

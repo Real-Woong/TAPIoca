@@ -742,3 +742,27 @@ test("실계좌 손익 칸은 실계좌 보유 칸을 건드리지 않는다", (
 
   assert.deepEqual(heldBlock(withPnl).slice(0, 4), heldBlock(without).slice(0, 4));
 });
+
+test("장부 블록에 머리를 달아 실계좌와 가른다", () => {
+  const report = formatDailyReport(pnlState(), "2026-09-17", { live: { orders: [] } });
+  const lines = report.split("\n");
+  const head = lines.findIndex((line) => line.startsWith("── 장부"));
+
+  // 아래 실계좌 칸들은 스스로 이름을 달고 있고, 이 블록만 라벨이 없었다.
+  assert.ok(head > 0);
+  assert.match(lines[head], /실계좌/);
+  assert.ok(lines[head + 1].startsWith("초기 원금:"));
+});
+
+test("신호 머리는 신호를 못 읽은 날에도 붙는다", () => {
+  const state = pnlState();
+  delete state.macro;
+  const report = formatDailyReport(state, "2026-09-17", { live: { orders: [] } });
+  const lines = report.split("\n");
+  const head = lines.indexOf("── 신호 ──");
+
+  // 신호가 없어도 «사용 가능한 신호 없음»이 그 자리에 선다. 머리가 사라지면
+  // 그날만 블록 구분이 없어져, 없는 것을 못 본 것으로 읽게 된다.
+  assert.ok(head > 0);
+  assert.match(lines[head + 1], /통합 시장 상태/);
+});
