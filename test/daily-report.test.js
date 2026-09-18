@@ -546,3 +546,42 @@ test("추세 일봉이 일부 종목만 실패하면 비율에 안 보이므로 
   assert.match(report, /추세\(200일선\): 0\.9 \(신뢰도 1, 2\/2종목\)/);
   assert.match(report, /⚠️ 추세 일봉 일부 수집 실패: IWM: 응답 오류 404/);
 });
+
+test("사이클이 멈추면 조용한 날과 구분되게 나이를 적는다", () => {
+  const base = {
+    funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+    cashUsd: 1.5,
+    realizedPnlUsd: 0,
+    positions: {},
+    trades: [],
+    macro: null,
+  };
+  const at = "2026-09-18T20:00:00.000Z";
+
+  // 정상: 보고서는 마감 10분 뒤에 나가고 사이클은 15분마다 돈다.
+  const healthy = formatDailyReport(
+    { ...base, lastCycleAt: at }, "2026-09-18",
+    { now: new Date("2026-09-18T20:12:00.000Z") },
+  );
+  assert.match(healthy, /마지막 사이클: 12분 전/);
+  assert.doesNotMatch(healthy, /⚠️ 마지막 사이클/);
+
+  // 멈춘 날: 거래 0건·상태 그대로라 본문만 봐서는 조용한 날과 같다.
+  const stalled = formatDailyReport(
+    { ...base, lastCycleAt: at }, "2026-09-18",
+    { now: new Date("2026-09-18T23:30:00.000Z") },
+  );
+  assert.match(stalled, /⚠️ 마지막 사이클: 3\.5시간 전 — 그 뒤로 매매도 대사도 돌지 않았습니다/);
+});
+
+test("이 기록이 없던 예전 장부는 없는 것을 경고로 바꾸지 않는다", () => {
+  const report = formatDailyReport(
+    {
+      funding: { fundingKrw: 100000, fundedUsd: 67.05 },
+      cashUsd: 67.05, realizedPnlUsd: 0, positions: {}, trades: [], macro: null,
+    },
+    "2026-09-18",
+  );
+
+  assert.doesNotMatch(report, /마지막 사이클/);
+});

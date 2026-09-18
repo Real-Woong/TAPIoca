@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { loadMacroSignal } from "../FRED_data/macro-snapshot.js";
@@ -24,6 +24,7 @@ import { createTossBroker } from "../live/toss-broker.js";
 import { buildOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
 import { planLedgerSync } from "../live/ledger-sync.js";
+import { acquireRunLock } from "./run-lock.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
 const statePath = path.join(dataDir, "paper-state.json");
@@ -106,8 +107,13 @@ async function run() {
     console.log(`강제 PAPER 실행: 미국 정규장 밖입니다 (${session.newYorkTime} ET).`);
   }
   await mkdir(dataDir, { recursive: true });
-  // wx 모드는 이미 잠금 파일이 있으면 실패합니다. 실행이 겹쳐 장부가 깨지는 것을 막습니다.
-  lock = await open(lockPath, "wx");
+  // 잠금은 실행이 겹치는 것을 막습니다. **오래된 잠금은 스스로 풉니다** —
+  // 사유와 규칙은 `run-lock.js`에 있습니다.
+  const acquired = await acquireRunLock({ lockPath });
+  if (acquired.recoveredReason) {
+    console.log(`⚠️ 오래된 잠금을 해제했습니다 — ${acquired.recoveredReason}`);
+  }
+  lock = acquired.handle;
 
   const now = new Date();
   const client = createTossClientFromEnv();
@@ -181,6 +187,9 @@ async function run() {
   }
 
   const result = runPaperCycle(state, prices, policy, now, marketSignal);
+  // **사이클이 끝난 시각입니다.** 이것이 없으면 "조용한 날"과 "며칠째 안 도는
+  // 날"이 보고서에서 같은 모양입니다 — 거래 0건에 상태가 그대로이니까요.
+  result.state.lastCycleAt = now.toISOString();
   await writeState(result.state);
   // 모든 사이클을 append-only 로그에 남깁니다. 실패해도 매매·저장은 이미 끝났으므로 진행합니다.
   await appendPaperEvent(dataDir, buildPaperEvent({ now, marketSignal, result, prices }))

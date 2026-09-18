@@ -28,7 +28,7 @@ import { summarizePaperState } from "../paper/paper-engine.js";
 export function formatDailyReport(
   state,
   tradingDate,
-  { dateForTrade, live = null, account = null } = {},
+  { dateForTrade, live = null, account = null, now = new Date() } = {},
 ) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 계좌의 **예수금**은 여전히 포함하지 않습니다. 보유 수량만 따로 적습니다
@@ -92,6 +92,7 @@ export function formatDailyReport(
         ]
       : []),
     `누적 거래: ${summary.tradeCount}건`,
+    ...cycleFreshnessLines(state, now),
     // 손실 한도는 매매를 멈추지 않고 알리기만 합니다. 자동 중단은 폭락 중에
     // 위험관리를 꺼버려 오히려 낙폭을 키웠습니다. 대응은 사람이 판단합니다.
     ...(state.risk?.lastCheck?.alert
@@ -428,6 +429,33 @@ function alphaLine(label, window, startedAt) {
   }
   const approx = window.anchorSource === "DAY_START" ? " · 개설일 시작 자산 기준" : "";
   return `${label}: ${signedUsd(window.alphaUsd)} (${sinceLabel(startedAt)} 같은 구간${approx})`;
+}
+
+/**
+ * **마지막 사이클이 언제였는지 적습니다.**
+ *
+ * 거래 0건에 상태가 그대로인 날은 두 가지입니다 — 밴드 안이라 조용한 날과,
+ * **사이클이 아예 안 돈 날**입니다. 보고서는 별도 타이머라 매매가 멈춰도
+ * 평소처럼 나가므로, 그 둘이 여기서 구분되지 않으면 며칠이 지나도 모릅니다.
+ * (원인은 여럿입니다 — 남은 잠금, 토큰 만료, 디스크, 타이머 정지.)
+ *
+ * 보고서는 장 마감 10분 뒤에 나가고 사이클은 정규장 중 15분마다 도니까,
+ * 건강한 날의 나이는 30분 안입니다. 두 시간을 넘기면 장중 어딘가에서 멈춘 것입니다.
+ */
+const CYCLE_STALE_MS = 2 * 60 * 60 * 1000;
+
+function cycleFreshnessLines(state, now) {
+  const at = Date.parse(state.lastCycleAt ?? "");
+  // 이 기록이 생기기 전의 장부입니다. 없는 것을 경고로 바꾸지 않습니다.
+  if (!Number.isFinite(at)) return [];
+
+  const ageMs = Math.max(0, now.getTime() - at);
+  const age = ageMs < 60 * 60 * 1000
+    ? `${Math.round(ageMs / 60000)}분`
+    : `${Math.round((ageMs / (60 * 60 * 1000)) * 10) / 10}시간`;
+  return ageMs > CYCLE_STALE_MS
+    ? [`⚠️ 마지막 사이클: ${age} 전 — 그 뒤로 매매도 대사도 돌지 않았습니다`]
+    : [`마지막 사이클: ${age} 전`];
 }
 
 function formatRiskReason(reason) {
