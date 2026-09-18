@@ -38,7 +38,8 @@ try {
     const policy = loadTradingPolicy(process.env);
     const live = policy.mode === "LIVE" ? await readLiveSummary(tradingDate) : null;
     const account = policy.mode === "LIVE" ? await readAccountPositions() : null;
-    const text = formatDailyReport(paperState, tradingDate, { live, account });
+    const fx = await readExchangeRate();
+    const text = formatDailyReport(paperState, tradingDate, { live, account, fx });
     await sendTelegramMessage({
       token: process.env.TELEGRAM_BOT_TOKEN,
       chatId: process.env.TELEGRAM_CHAT_ID,
@@ -124,6 +125,28 @@ async function readAccountPositions() {
     });
     const positions = await withTimeout(broker.getPositions(), ACCOUNT_TIMEOUT_MS);
     return { positions: restrictToManaged(positions, watchlist), at: new Date().toISOString() };
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+/**
+ * 오늘 환율을 읽습니다 (2026-09-18).
+ *
+ * **보고서가 원금은 원화로, 수익률은 달러로 적고 있었습니다.** 둘을 곱하면
+ * 24배 틀립니다(9/17 기준 -343원 대 실제 -8,231원). 원화 줄을 적으려면 오늘
+ * 환율 하나가 필요하고, 개설 환율은 이미 장부에 있습니다.
+ *
+ * **`readAccountPositions`와 같은 모양입니다** — 실패해도 보고서는 나갑니다.
+ * 환율 때문에 아침 보고서를 못 받는 것이 환율을 모르는 것보다 나쁩니다.
+ *
+ * **모드와 무관하게 조회합니다.** 원금이 10만 원인 것은 PAPER도 LIVE도 같습니다.
+ */
+async function readExchangeRate() {
+  try {
+    const client = createTossClientFromEnv();
+    const rate = await withTimeout(client.getExchangeRate("USD", "KRW"), ACCOUNT_TIMEOUT_MS);
+    return { rate: rate.rate, at: new Date().toISOString() };
   } catch (error) {
     return { error: error.message };
   }

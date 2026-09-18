@@ -585,3 +585,61 @@ test("이 기록이 없던 예전 장부는 없는 것을 경고로 바꾸지 �
 
   assert.doesNotMatch(report, /마지막 사이클/);
 });
+
+/** 9/17 마감 상태입니다. STATE/2026-09-18.md 「맞는 것 — 장부 정합」과 같은 숫자입니다. */
+function krwState() {
+  return {
+    funding: { fundingKrw: 100000, krwPerUsd: 1491.4, fundedUsd: 67.05 },
+    cashUsd: 1.5,
+    realizedPnlUsd: -0.25,
+    positions: {
+      VTI: { symbol: "VTI", quantity: 1, entryPrice: 65.3, lastPrice: 65.32, costUsd: 65.3 },
+    },
+    trades: [],
+  };
+}
+
+test("원화 손익을 환율 몫과 전략 몫으로 갈라 적는다", () => {
+  const report = formatDailyReport(krwState(), "2026-09-17", { fx: { rate: 1373.38 } });
+
+  // 달러로는 -$0.23인데 원화로는 -8,231원이다. 원금(원화)과 수익률(달러)을
+  // 같은 블록에 두면 읽는 사람이 -343원을 계산한다 — 24배 틀린다.
+  assert.match(report, /원화 환산\(오늘 1,373\.38원\): 91,769원/);
+  assert.match(report, /원금 100,000원 대비 -8,231원 \(-8\.2%\)/);
+  assert.match(report, /└ 환율 -7,913원 \(개설 1,491\.40원\) · 전략 -316원/);
+});
+
+test("환율 몫과 전략 몫과 잔돈을 더하면 원화 손익과 정확히 같다", () => {
+  const report = formatDailyReport(krwState(), "2026-09-17", { fx: { rate: 1373.38 } });
+  const total = Number(report.match(/원금 100,000원 대비 (-?[\d,]+)원/)[1].replace(/,/g, ""));
+  const parts = [...report.matchAll(/(?:환율|전략|미환전) (-?[\d,]+)원/g)]
+    .map((match) => Number(match[1].replace(/,/g, "")));
+
+  assert.equal(parts.length, 3);
+  assert.equal(parts.reduce((sum, part) => sum + part, 0), total);
+});
+
+test("환율을 못 읽으면 조용히 빼지 않고 못 읽었다고 적는다", () => {
+  // 조용히 빼면 원화가 안 보이던 상태로 돌아간다. 그것이 애초의 문제였다.
+  const report = formatDailyReport(krwState(), "2026-09-17", { fx: { error: "timeout" } });
+
+  assert.match(report, /원화 환산: ⚠️ 오늘 환율을 못 읽었습니다 — timeout/);
+  assert.doesNotMatch(report, /└ 환율/);
+});
+
+test("개설 환율이 없던 예전 장부는 없는 것을 경고로 바꾸지 않는다", () => {
+  const state = krwState();
+  delete state.funding.krwPerUsd;
+
+  const report = formatDailyReport(state, "2026-09-17", { fx: { rate: 1373.38 } });
+
+  assert.doesNotMatch(report, /원화 환산/);
+});
+
+test("원화 줄은 달러 줄을 건드리지 않는다", () => {
+  const withFx = formatDailyReport(krwState(), "2026-09-17", { fx: { rate: 1373.38 } });
+  const without = formatDailyReport(krwState(), "2026-09-17");
+  const dollarLines = (text) => text.split("\n").filter((line) => line.includes("$"));
+
+  assert.deepEqual(dollarLines(withFx), dollarLines(without));
+});

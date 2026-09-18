@@ -24,11 +24,13 @@ import { summarizePaperState } from "../paper/paper-engine.js";
  *   또는 원장을 못 읽었으면 `{ error }`. PAPER면 null입니다.
  * @param {object|null} account 실계좌 보유. `{ positions, at }` 또는 조회에
  *   실패했으면 `{ error }`. LIVE일 때만 채웁니다.
+ * @param {object|null} fx 오늘 환율. `{ rate, at }` 또는 조회에 실패했으면
+ *   `{ error }`. PAPER·LIVE 둘 다 채웁니다 — 원금이 원화인 것은 모드와 무관합니다.
  */
 export function formatDailyReport(
   state,
   tradingDate,
-  { dateForTrade, live = null, account = null, now = new Date() } = {},
+  { dateForTrade, live = null, account = null, fx = null, now = new Date() } = {},
 ) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 계좌의 **예수금**은 여전히 포함하지 않습니다. 보유 수량만 따로 적습니다
@@ -69,6 +71,7 @@ export function formatDailyReport(
     `실현손익: ${signedUsd(summary.realizedPnlUsd)}`,
     `미실현손익: ${signedUsd(summary.unrealizedPnlUsd)}`,
     ...(summary.feesUsd ? [`누적 거래비용: -$${summary.feesUsd.toFixed(2)}`] : []),
+    ...formatKrwLines(state, summary, fx),
     // **기준선마다 시작일이 다릅니다.** 지갑은 자금 투입일부터, VTI 기준선과
     // 정책믹스 기준선은 각자 개설일부터입니다. 그래서 시작일을 함께 찍고,
     // 초과성과는 그 기준선이 열린 날부터의 지갑 손익에서만 뺍니다.
@@ -402,6 +405,69 @@ function formatMix(mix) {
     .map(([symbol, weight]) =>
       `${symbol === "CASH" ? "현금" : symbol}${Math.round(Number(weight) * 100)}`)
     .join("·");
+}
+
+/**
+ * 원화로 얼마가 됐는지 적습니다 (2026-09-18).
+ *
+ * **이 보고서는 원금을 원화로 적고 수익률을 달러로 적습니다.** 그 둘이 같은
+ * 블록에 있으면 읽는 사람이 "10만 원의 -0.343% = -343원"을 계산합니다. 9/17
+ * 기준 실제 답은 **-8,231원**이고 24배 틀립니다. **빠진 것이 아니라 틀린
+ * 인상을 주는 배치였습니다** — 그래서 9월 동결에 예외를 뒀습니다.
+ *
+ * 환율은 이 시스템에 한 번만 쓰입니다 — `createUsdBudget`이 10만 원을 $67.05로
+ * 바꾸는 순간뿐이고(`trading-budget.js`), 그 뒤 모든 손익이 달러입니다. 개설
+ * 환율이 `state.funding.krwPerUsd`에 남아 있으므로 **오늘 환율 하나만 더하면**
+ * 원화 손익이 환율 몫과 전략 몫으로 갈립니다.
+ *
+ * 9/17에 잰 값: 원금 대비 -8,231원 중 환율이 -7,915원(96.2%), 전략이 -316원.
+ * **보고서가 다투던 -$0.23이 그 -316원입니다.**
+ *
+ * **점수·비중·주문은 안 바뀝니다.** 재는 것만 늘어납니다.
+ *
+ * **못 읽으면 숨기지 않고 말합니다.** 조용히 빼면 원화가 안 보이던 상태로
+ * 돌아가고, 그것이 애초의 문제였습니다.
+ */
+function formatKrwLines(state, summary, fx) {
+  const openRate = Number(state.funding?.krwPerUsd);
+  // 이 필드가 생기기 전의 장부입니다. 없는 것을 경고로 바꾸지 않습니다.
+  if (!Number.isFinite(openRate) || openRate <= 0) return [];
+
+  const nowRate = Number(fx?.rate);
+  if (!fx || fx.error || !Number.isFinite(nowRate) || nowRate <= 0) {
+    const why = fx?.error ? ` — ${fx.error}` : "";
+    return [`원화 환산: ⚠️ 오늘 환율을 못 읽었습니다${why}`];
+  }
+
+  const krwNow = summary.equityUsd * nowRate;
+  const krwPnl = krwNow - summary.fundingKrw;
+  // **환율 몫은 개설 때 환전한 달러에만 붙습니다.** 전략 몫은 그 뒤 달러가 늘거나
+  // 준 것을 오늘 환율로 본 것입니다. 나머지는 10만 원 중 센트 절사로 환전되지
+  // 않고 남은 잔돈이고(`budget.reserveKrw`), 셋을 더하면 정확히 krwPnl입니다.
+  const fxKrw = summary.fundedUsd * (nowRate - openRate);
+  const stratKrw = (summary.equityUsd - summary.fundedUsd) * nowRate;
+  const restKrw = krwPnl - fxKrw - stratKrw;
+  const pct = summary.fundingKrw > 0 ? (krwPnl / summary.fundingKrw) * 100 : 0;
+
+  return [
+    `원화 환산(오늘 ${krw(nowRate, 2)}원): ${krw(krwNow)}원 — ` +
+      `원금 ${krw(summary.fundingKrw)}원 대비 ${signedKrw(krwPnl)} (${pct.toFixed(1)}%)`,
+    `└ 환율 ${signedKrw(fxKrw)} (개설 ${krw(openRate, 2)}원) · 전략 ${signedKrw(stratKrw)}` +
+      (Math.round(Math.abs(restKrw)) >= 1 ? ` · 미환전 ${signedKrw(restKrw)}` : ""),
+  ];
+}
+
+function krw(value, digits = 0) {
+  return Number(value).toLocaleString("ko-KR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/** `signedUsd`와 같은 규칙입니다 — 부호를 앞에 두고 절대값을 적습니다. */
+function signedKrw(value) {
+  const rounded = Math.round(Number(value));
+  return `${rounded >= 0 ? "+" : "-"}${Math.abs(rounded).toLocaleString("ko-KR")}원`;
 }
 
 function signedUsd(value) {
