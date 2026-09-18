@@ -196,7 +196,11 @@ function formatAccountPnlLines(account, state) {
 
   return [
     "",
-    "실계좌 손익 (토스 기준 · 미실현만)",
+    // **«토스 현재가»라고 못 박습니다.** 바로 위 「실계좌 보유」 칸은 같은 수량을
+    // **장부의 마지막 가격**으로 환산합니다 — 양쪽을 같은 가격으로 봐야 `⚠️ 장부
+    // ≠ 실계좌` 차이가 가격 시차가 아니라 수량 차이만 보여주기 때문입니다. 그래서
+    // 두 칸의 평가액이 다른 것이 정상인데, 기준을 안 적으면 그것이 오류로 읽힙니다.
+    "실계좌 손익 (토스 현재가 기준 · 미실현만)",
     `매입 $${total.purchaseUsd.toFixed(2)} → 평가 $${total.marketUsd.toFixed(2)} · ` +
       `${signedUsd(total.unrealizedUsd)}` +
       (total.unrealizedRate === null ? "" : ` (${signedPct(total.unrealizedRate * 100)})`),

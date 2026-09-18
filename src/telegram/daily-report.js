@@ -6,9 +6,7 @@ import path from "node:path";
 import {
   appendCostBasisSnapshot,
   buildCostBasisSnapshot,
-  hasSnapshotFor,
   normalizeHoldings,
-  readCostBasisSnapshots,
 } from "../live/cost-basis.js";
 import { buildOrders, unresolvedOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
@@ -156,17 +154,18 @@ async function readAccountPositions() {
  * 이 줄들만 있으면 다음 매도부터 **토스 숫자로** 실현손익과 환차가 나옵니다.
  * 자세한 것은 `cost-basis.js`에 있습니다.
  *
- * **실패해도 보고서는 나갑니다.** 그리고 같은 거래일에 두 줄을 남기지 않습니다
- * — `--force`로 다시 보내도 원장은 하루 한 줄입니다.
+ * **실패해도 보고서는 나갑니다.**
+ *
+ * **같은 거래일에 두 줄이 남는 것을 막지 않습니다.** 막았다가 되돌렸습니다 —
+ * 뉴욕 거래일은 한국 새벽에 이미 바뀌어 있어서, 개장 전에 한 번 돌리면 그날 줄이
+ * 먼저 박히고 **마감 뒤 타이머가 돌 때 건너뛰었습니다.** 읽을 때 그 거래일의
+ * 마지막 줄을 쓰면 됩니다(`latestByTradingDate`).
  */
 async function recordCostBasis({ tradingDate, account, fx }) {
   const holdings = account?.holdings;
   if (!Array.isArray(holdings) || holdings.length === 0) return;
 
   try {
-    const snapshots = await readCostBasisSnapshots(dataDir);
-    if (hasSnapshotFor(snapshots, tradingDate)) return;
-
     await appendCostBasisSnapshot(dataDir, buildCostBasisSnapshot({
       tradingDate,
       holdings,

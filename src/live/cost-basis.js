@@ -30,7 +30,8 @@ import path from "node:path";
  * ── 고치지 않는다 ───────────────────────────────────────────────────────────
  *
  * `live-orders.jsonl`과 같은 규칙입니다. 덧붙이기만 하고 지난 줄은 건드리지
- * 않습니다. 하루 한 줄이라 거래일 기준으로 중복을 막습니다.
+ * 않습니다. **같은 거래일에 두 줄이 남는 것을 막지 않습니다** — 읽을 때 마지막
+ * 줄을 씁니다(`latestByTradingDate`에 그 이유가 있습니다).
  */
 
 const COST_BASIS_FILE = "live-cost-basis.jsonl";
@@ -55,8 +56,26 @@ export async function readCostBasisSnapshots(dataDir) {
   return text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
-export function hasSnapshotFor(snapshots, tradingDate) {
-  return (snapshots ?? []).some((snapshot) => snapshot?.tradingDate === tradingDate);
+/**
+ * **거래일마다 마지막 줄이 이깁니다.**
+ *
+ * 처음에는 "그 날짜가 이미 있으면 안 쓴다"로 만들었는데 **틀렸습니다**(2026-09-18에
+ * 잡음). 뉴욕 거래일은 한국 새벽에 이미 바뀌어 있어서, 개장 **전에** 보고서를 한
+ * 번 돌리면 그날 줄이 먼저 박히고 **정작 마감 뒤 타이머가 돌 때는 건너뛰었습니다.**
+ * 원가(`purchaseAmount`)는 가격과 무관해 안 틀리지만 **환율이 장중이 아니라
+ * 새벽 값으로 남습니다.**
+ *
+ * 그래서 막지 않고 덧붙입니다. `live-orders.jsonl`과 같은 규칙입니다 — 지난 줄은
+ * 고치지 않고, 읽을 때 **그 거래일의 마지막 줄**을 씁니다. 강제 실행을 몇 번 하든
+ * 기록이 사라지지 않고, 마감 뒤 줄이 항상 마지막에 옵니다.
+ */
+export function latestByTradingDate(snapshots) {
+  const latest = new Map();
+  for (const snapshot of snapshots ?? []) {
+    if (!snapshot?.tradingDate) continue;
+    latest.set(snapshot.tradingDate, snapshot);
+  }
+  return latest;
 }
 
 /**
