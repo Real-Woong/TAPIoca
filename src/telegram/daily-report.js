@@ -3,6 +3,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  appendCostBasisSnapshot,
+  buildCostBasisSnapshot,
+  hasSnapshotFor,
+  normalizeHoldings,
+  readCostBasisSnapshots,
+} from "../live/cost-basis.js";
 import { buildOrders, unresolvedOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
 import { restrictToManaged } from "../live/position-baseline.js";
@@ -39,6 +46,7 @@ try {
     const live = policy.mode === "LIVE" ? await readLiveSummary(tradingDate) : null;
     const account = policy.mode === "LIVE" ? await readAccountPositions() : null;
     const fx = await readExchangeRate();
+    await recordCostBasis({ tradingDate, account, fx });
     const text = formatDailyReport(paperState, tradingDate, { live, account, fx });
     await sendTelegramMessage({
       token: process.env.TELEGRAM_BOT_TOKEN,
@@ -123,10 +131,50 @@ async function readAccountPositions() {
       getAccessToken: () => client.getAccessToken(),
       accountSeq: await resolveAccountSeq(client),
     });
-    const positions = await withTimeout(broker.getPositions(), ACCOUNT_TIMEOUT_MS);
-    return { positions: restrictToManaged(positions, watchlist), at: new Date().toISOString() };
+    // **한 번만 부릅니다.** `getPositions`가 버리던 부분을 같이 받습니다.
+    const result = await withTimeout(broker.getHoldings(), ACCOUNT_TIMEOUT_MS);
+    const items = result?.items ?? [];
+    const positions = {};
+    for (const item of items) {
+      if (item?.symbol) positions[item.symbol] = Number(item.quantity ?? 0);
+    }
+    return {
+      positions: restrictToManaged(positions, watchlist),
+      holdings: normalizeHoldings(items, watchlist),
+      at: new Date().toISOString(),
+    };
   } catch (error) {
     return { error: error.message };
+  }
+}
+
+/**
+ * 실계좌 원가와 그날 환율을 하루 한 줄 남깁니다 (2026-09-18).
+ *
+ * **계산이 아니라 기록이 급했습니다.** 실현손익은 토스가 안 주고, 우리가 세면
+ * lot 방식이 달라 어긋납니다. `purchaseAmount`가 줄어든 만큼이 판 원가이므로
+ * 이 줄들만 있으면 다음 매도부터 **토스 숫자로** 실현손익과 환차가 나옵니다.
+ * 자세한 것은 `cost-basis.js`에 있습니다.
+ *
+ * **실패해도 보고서는 나갑니다.** 그리고 같은 거래일에 두 줄을 남기지 않습니다
+ * — `--force`로 다시 보내도 원장은 하루 한 줄입니다.
+ */
+async function recordCostBasis({ tradingDate, account, fx }) {
+  const holdings = account?.holdings;
+  if (!Array.isArray(holdings) || holdings.length === 0) return;
+
+  try {
+    const snapshots = await readCostBasisSnapshots(dataDir);
+    if (hasSnapshotFor(snapshots, tradingDate)) return;
+
+    await appendCostBasisSnapshot(dataDir, buildCostBasisSnapshot({
+      tradingDate,
+      holdings,
+      krwPerUsd: Number.isFinite(Number(fx?.rate)) ? Number(fx.rate) : null,
+      at: account.at,
+    }));
+  } catch (error) {
+    console.error(`원가 스냅샷을 못 남겼습니다: ${error.message}`);
   }
 }
 

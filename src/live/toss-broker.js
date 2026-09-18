@@ -171,6 +171,20 @@ export function createTossBroker({
     },
 
     /**
+     * 같은 응답의 **버리지 않은 부분**입니다 (2026-09-18).
+     *
+     * `getPositions`는 수량만 남기는데, 토스는 `averagePurchasePrice`와
+     * `profitLoss`를 함께 줍니다. **실계좌 손익을 우리가 계산할 이유가
+     * 없었습니다** — 브로커가 진실이고, 그 진실을 이미 응답에 담아 보내고
+     * 있었습니다.
+     *
+     * 대사는 여전히 `getPositions`(수량)만 씁니다. 이것은 보고서 전용입니다.
+     */
+    async getHoldings() {
+      return await request("holdings", "/api/v1/holdings");
+    },
+
+    /**
      * **주문 직전 호가입니다 — 슬리피지의 기준선입니다.**
      *
      * 시장가 주문은 체결가를 우리가 정하지 못하므로, 이 중간가와 실제 체결가의

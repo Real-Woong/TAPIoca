@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createPaperState, runPaperCycle } from "../src/paper/paper-engine.js";
 import { createUsdBudget } from "../src/paper/trading-budget.js";
 import { loadTradingPolicy } from "../src/paper/trading-policy.js";
+import { normalizeHoldings } from "../src/live/cost-basis.js";
 import { formatDailyReport } from "../src/telegram/daily-report-format.js";
 
 test("일일 보고서에 원금, 손익, 보유종목과 당일 거래를 포함한다", () => {
@@ -642,4 +643,102 @@ test("원화 줄은 달러 줄을 건드리지 않는다", () => {
   const dollarLines = (text) => text.split("\n").filter((line) => line.includes("$"));
 
   assert.deepEqual(dollarLines(withFx), dollarLines(without));
+});
+
+/** 2026-09-18에 서버에서 실제로 받은 `/api/v1/holdings` 응답입니다. */
+function tossHoldings() {
+  return [
+    { symbol: "IWM", quantity: "0.006665", lastPrice: "285.67", averagePurchasePrice: "300.047561",
+      marketValue: { purchaseAmount: "1.999817", amount: "1.90399", amountAfterCost: "1.90399" },
+      profitLoss: { amount: "-0.095827", amountAfterCost: "-0.095827", rate: "-0.0479" },
+      cost: { commission: "0", tax: null } },
+    { symbol: "SCHD", quantity: "0.402434", lastPrice: "33.92", averagePurchasePrice: "33.611039",
+      marketValue: { purchaseAmount: "13.526225", amount: "13.650561", amountAfterCost: "13.640561" },
+      profitLoss: { amount: "0.124336", amountAfterCost: "0.114336", rate: "0.0091" },
+      cost: { commission: "0.01", tax: null } },
+    { symbol: "VTI", quantity: "0.047685", lastPrice: "376.41", averagePurchasePrice: "375.366299",
+      marketValue: { purchaseAmount: "17.899342", amount: "17.94911", amountAfterCost: "17.93911" },
+      profitLoss: { amount: "0.049768", amountAfterCost: "0.039768", rate: "0.0027" },
+      cost: { commission: "0.01", tax: null } },
+    // 사장님 자산입니다. 이 시스템이 보고할 것이 아닙니다.
+    { symbol: "GOOGL", quantity: "2.236649", lastPrice: "200", averagePurchasePrice: "190",
+      marketValue: { purchaseAmount: "424.96", amount: "447.33" },
+      profitLoss: { amount: "22.37", rate: "0.0526" }, cost: {} },
+  ];
+}
+
+function pnlState() {
+  const state = krwState();
+  state.positions = {
+    VTI: { symbol: "VTI", quantity: 0.124, lastPrice: 376.41, costUsd: 46.53 },
+    SCHD: { symbol: "SCHD", quantity: 0.402, lastPrice: 33.92, costUsd: 13.56 },
+    IWM: { symbol: "IWM", quantity: 0.017, lastPrice: 285.67, costUsd: 5.21 },
+  };
+  return state;
+}
+
+test("실계좌 손익은 토스가 주는 숫자를 그대로 적는다", () => {
+  const account = {
+    positions: { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 },
+    holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
+    at: "2026-09-18T20:10:00Z",
+  };
+
+  const report = formatDailyReport(pnlState(), "2026-09-17", { account, live: { orders: [] } });
+
+  assert.match(report, /매입 \$33\.43 → 평가 \$33\.50 · \+\$0\.08 \(\+0\.23%\)/);
+  assert.match(report, /• SCHD: 평단 \$33\.61 → \$33\.92 · \+\$0\.12 \(\+0\.91%\)/);
+  assert.match(report, /• IWM: 평단 \$300\.05 → \$285\.67 · -\$0\.10 \(-4\.79%\)/);
+  // 실현손익은 어느 엔드포인트에도 없다. 미실현만이라고 칸 이름이 말한다.
+  assert.match(report, /실계좌 손익 \(토스 기준 · 미실현만\)/);
+});
+
+test("실계좌 손익은 관리 종목만 적는다 — 나머지는 사장님 자산이다", () => {
+  const account = {
+    positions: { VTI: 0.047685 },
+    holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
+    at: "2026-09-18T20:10:00Z",
+  };
+
+  const report = formatDailyReport(pnlState(), "2026-09-17", { account, live: { orders: [] } });
+
+  assert.doesNotMatch(report, /GOOGL/);
+});
+
+test("실계좌 손익은 위 보유 칸과 같은 순서로 적는다", () => {
+  const account = {
+    positions: { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 },
+    holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
+    at: "2026-09-18T20:10:00Z",
+  };
+
+  const report = formatDailyReport(pnlState(), "2026-09-17", { account, live: { orders: [] } });
+  const block = report.slice(report.indexOf("실계좌 손익"));
+  const order = [...block.matchAll(/• (VTI|SCHD|IWM):/g)].map((match) => match[1]);
+
+  // 장부 순서다. 알파벳순(IWM·SCHD·VTI)이 아니다 — 두 칸을 나란히 읽는 칸이다.
+  assert.deepEqual(order, ["VTI", "SCHD", "IWM"]);
+});
+
+test("계좌를 못 읽으면 실계좌 손익 칸이 아예 없다", () => {
+  const report = formatDailyReport(pnlState(), "2026-09-17", {
+    account: { error: "timeout" }, live: { orders: [] },
+  });
+
+  assert.doesNotMatch(report, /실계좌 손익/);
+});
+
+test("실계좌 손익 칸은 실계좌 보유 칸을 건드리지 않는다", () => {
+  const holdings = normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]);
+  const positions = { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 };
+  const withPnl = formatDailyReport(pnlState(), "2026-09-17", {
+    account: { positions, holdings, at: "x" }, live: { orders: [] },
+  });
+  const without = formatDailyReport(pnlState(), "2026-09-17", {
+    account: { positions, at: "x" }, live: { orders: [] },
+  });
+  const heldBlock = (text) => text.slice(text.indexOf("실계좌 보유"), text.indexOf("오늘의 가상 거래"))
+    .split("\n").filter((line) => line.startsWith("• ") || line.startsWith("⚠️"));
+
+  assert.deepEqual(heldBlock(withPnl).slice(0, 4), heldBlock(without).slice(0, 4));
 });

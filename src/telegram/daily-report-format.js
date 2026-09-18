@@ -1,3 +1,4 @@
+import { summarizeHoldings } from "../live/cost-basis.js";
 import { summarizePaperState } from "../paper/paper-engine.js";
 
 /**
@@ -110,6 +111,7 @@ export function formatDailyReport(
     "보유 ETF (장부)",
     ...positionLines,
     ...(account ? ["", "실계좌 보유 (토스)", ...formatAccountLines(account, state, summary)] : []),
+    ...formatAccountPnlLines(account, state),
     "",
     "오늘의 가상 거래",
     ...tradeLines,
@@ -135,6 +137,61 @@ export function formatDailyReport(
  * 받아오지 않는 이유도 같습니다. 여기 달러는 크기를 보이려는 것이고 대사가
  * 읽는 값이 아닙니다.
  */
+/**
+ * 실계좌가 실제로 얼마를 벌고 있는지 적습니다 (2026-09-18).
+ *
+ * **토스가 주는 숫자를 그대로 적습니다. 계산하지 않습니다.** `/api/v1/holdings`는
+ * `averagePurchasePrice`·`marketValue.purchaseAmount`·`profitLoss`를 함께 주는데,
+ * `getPositions`가 수량만 남기고 버리고 있었습니다. **브로커가 진실이므로**
+ * 우리가 평균원가를 다시 세면 어긋나기만 합니다 — 9/17 매도에서 우리 평균원가는
+ * $33.6024, 토스가 쓴 원가는 $33.5552였습니다.
+ *
+ * **미실현뿐입니다.** 실현손익은 어느 엔드포인트에도 없습니다. 그래서 같은 날부터
+ * `cost-basis.js`가 원가와 환율을 하루 한 줄씩 쌓습니다 — `purchaseAmount`가
+ * 줄어든 만큼이 판 원가라, **다음 매도부터** 실현손익과 환차를 토스 숫자로 낼 수
+ * 있습니다. 9/17 건은 그 줄이 없어 소급되지 않습니다.
+ *
+ * **위 「실계좌 보유」 칸은 안 건드렸습니다.** 그 칸은 장부 가격으로 환산해 장부와
+ * 나란히 읽는 칸이고, 이 칸은 토스가 말하는 손익입니다. 목적이 다릅니다.
+ */
+function formatAccountPnlLines(account, state) {
+  if (!account || account.error) return [];
+
+  const holdings = (account.holdings ?? []).filter((row) => row.purchaseAmountUsd !== null);
+  if (holdings.length === 0) return [];
+
+  const total = summarizeHoldings(holdings);
+  if (!total) return [];
+
+  // **위 「실계좌 보유」 칸과 같은 순서입니다.** 두 칸을 눈으로 나란히 읽으라고
+  // 붙인 칸인데 하나는 장부 순서, 하나는 알파벳순이면 그 비교가 안 됩니다.
+  const booked = Object.keys(state?.positions ?? {});
+  const ordered = [
+    ...booked
+      .map((symbol) => holdings.find((row) => row.symbol === symbol))
+      .filter(Boolean),
+    ...holdings.filter((row) => !booked.includes(row.symbol)),
+  ];
+
+  const rows = ordered.map((row) => {
+    const rate = row.unrealizedRate === null ? null : signedPct(row.unrealizedRate * 100);
+    const priced = row.averagePriceUsd !== null && row.lastPriceUsd !== null
+      ? `평단 $${row.averagePriceUsd.toFixed(2)} → $${row.lastPriceUsd.toFixed(2)} · `
+      : "";
+    return `• ${row.symbol}: ${priced}${signedUsd(row.unrealizedUsd ?? 0)}` +
+      (rate ? ` (${rate})` : "");
+  });
+
+  return [
+    "",
+    "실계좌 손익 (토스 기준 · 미실현만)",
+    `매입 $${total.purchaseUsd.toFixed(2)} → 평가 $${total.marketUsd.toFixed(2)} · ` +
+      `${signedUsd(total.unrealizedUsd)}` +
+      (total.unrealizedRate === null ? "" : ` (${signedPct(total.unrealizedRate * 100)})`),
+    ...rows,
+  ];
+}
+
 function formatAccountLines(account, state, summary) {
   // 계좌를 못 읽었다고 보고서를 안 보내지는 않습니다. 못 읽었다고 적습니다 —
   // 실주문 원장과 같은 규칙입니다.
@@ -462,6 +519,12 @@ function krw(value, digits = 0) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+/** `signedUsd`와 같은 규칙입니다. 양수에 `+`가 없으면 옆의 금액과 어긋나 보입니다. */
+function signedPct(value) {
+  const number = Number(value);
+  return `${number >= 0 ? "+" : "-"}${Math.abs(number).toFixed(2)}%`;
 }
 
 /** `signedUsd`와 같은 규칙입니다 — 부호를 앞에 두고 절대값을 적습니다. */
