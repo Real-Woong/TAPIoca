@@ -46,6 +46,7 @@ const LABELS = {
   "portfolio-analysis.test.js": "포트폴리오",
   "fred-client.test.js": "FRED",
   "telegram-client.test.js": "텔레그램",
+  "report-window.test.js": "보고서 전송 시점",
 };
 
 function runFile(file) {

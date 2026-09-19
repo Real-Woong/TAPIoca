@@ -15,6 +15,7 @@ import { createTossBroker } from "../live/toss-broker.js";
 import { loadTradingPolicy } from "../paper/trading-policy.js";
 import { createTossClientFromEnv } from "../toss/toss-client.js";
 import { formatDailyReport } from "./daily-report-format.js";
+import { hasPostCloseReport, newYorkDate } from "./report-window.js";
 import { sendTelegramMessage } from "./telegram-client.js";
 
 const dataDir = path.resolve(process.env.PAPER_DATA_DIR || "data");
@@ -34,9 +35,11 @@ try {
   const reportState = await readReportState();
   const forced = process.argv.includes("--force");
 
-  // 같은 뉴욕 거래일에 재실행되어도 Telegram 메시지는 한 번만 보냅니다.
-  if (reportState.lastReportedTradingDate === tradingDate && !forced) {
-    console.log(`${tradingDate} 보고서는 이미 전송했습니다.`);
+  // **마감 뒤에 한 번**만 보냅니다. 같은 거래일이라도 개장 전에 돌린 것은
+  // 하루치 보고가 아니므로 막지 않습니다 — 그것이 2026-09-18 마감 보고서를
+  // 통째로 삼켰습니다(`report-window.js`에 그날 시간표가 있습니다).
+  if (hasPostCloseReport(reportState, tradingDate) && !forced) {
+    console.log(`${tradingDate} 마감 보고서는 이미 전송했습니다.`);
   } else {
     // **보고서가 스스로 모드를 압니다.** 여기서 정책을 안 읽으면 실거래를 켠
     // 뒤에도 메시지는 계속 "PAPER 모드 — 실제 주문 없음"이라고 적습니다.
@@ -239,13 +242,4 @@ async function writeReportState(state) {
   const temporaryPath = `${reportStatePath}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   await rename(temporaryPath, reportStatePath);
-}
-
-function newYorkDate(date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }
