@@ -31,7 +31,7 @@ import { summarizePaperState } from "../paper/paper-engine.js";
 export function formatDailyReport(
   state,
   tradingDate,
-  { dateForTrade, live = null, account = null, fx = null, now = new Date() } = {},
+  { dateForTrade, live = null, account = null, fx = null, costBasis = null, now = new Date() } = {},
 ) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 계좌의 **예수금**은 여전히 포함하지 않습니다. 보유 수량만 따로 적습니다
@@ -124,6 +124,7 @@ export function formatDailyReport(
     ...positionLines,
     ...(account ? ["", "실계좌 보유 (토스)", ...formatAccountLines(account, state, summary)] : []),
     ...formatAccountPnlLines(account, state),
+    ...formatCostBasisLines(costBasis, tradingDate),
     "",
     "오늘의 가상 거래",
     ...tradeLines,
@@ -133,6 +134,43 @@ export function formatDailyReport(
       ? "LIVE 모드 — 실제 주문이 나갑니다. 손익·성과는 PAPER 장부이고, 계좌는 «실계좌 보유» 칸입니다"
       : "PAPER 모드 — 실제 주문 없음",
   ].join("\n");
+}
+
+/**
+ * **그날 원가 스냅샷이 안 남았으면 말합니다** (㊱, 2026-09-19).
+ *
+ * 성공하면 아무 줄도 안 냅니다. 바로 위 「실계좌 손익」 칸이 그 숫자이고,
+ * 잘 된 것을 매일 보고할 이유가 없습니다.
+ *
+ * **다른 ⚠️ 와 급이 다릅니다.** 계좌 조회 실패나 환율 실패는 다음 사이클에
+ * 다시 보이지만, 그날의 `purchaseAmount`와 환율은 **지나가면 못 만듭니다** —
+ * 9/17 매도를 소급하지 못하는 것이 그 값입니다(`cost-basis.js`). 그래서
+ * 조회 실패일 때 이유를 되뇌지 않고 **소급이 안 된다는 사실만** 더합니다.
+ *
+ * **환율만 빈 경우를 따로 적습니다.** 줄은 남았으니 «안 남았다»고 하면
+ * 거짓이고, 달러 원가는 쓸 수 있는데 원화 원가만 비어 있습니다. 9/18에 그
+ * 값이 얼마인지 나왔습니다 — 개장 전 1381.7과 마감 뒤 1391.4는 9.7원 차이고,
+ * 그날 늘어난 $13.40에 대해 130원입니다.
+ */
+function formatCostBasisLines(costBasis, tradingDate) {
+  // PAPER이거나 이 필드가 생기기 전의 호출입니다. 없는 것을 경고로 바꾸지 않습니다.
+  if (!costBasis || costBasis.skipped) return [];
+
+  if (costBasis.missing) {
+    return [
+      `⚠️ ${tradingDate} 원가 스냅샷이 안 남았습니다: ${costBasis.missing} — ` +
+        "그날 원가와 환율은 소급되지 않습니다",
+    ];
+  }
+
+  if (costBasis.recorded && (costBasis.krwPerUsd === null || costBasis.krwPerUsd === undefined)) {
+    return [
+      `⚠️ ${tradingDate} 원가 스냅샷에 환율이 없습니다 — ` +
+        "달러 원가는 남았고 원화 원가만 비어 있습니다",
+    ];
+  }
+
+  return [];
 }
 
 /**

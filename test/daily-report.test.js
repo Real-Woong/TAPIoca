@@ -768,3 +768,69 @@ test("신호 머리는 신호를 못 읽은 날에도 붙는다", () => {
   assert.ok(head > 0);
   assert.match(lines[head + 1], /통합 시장 상태/);
 });
+
+// ㊱ 그날의 `purchaseAmount`와 환율은 지나가면 못 만든다 — 9/17 매도가 소급되지
+// 않는 것이 그 값이다. 조용히 비는 것이 가장 나쁜 쪽이라 보고서가 말하게 한다.
+test("원가 스냅샷이 안 남았으면 소급이 안 된다고 적는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-19", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { error: "계좌 조회가 15초 안에 안 왔습니다" },
+    costBasis: { missing: "실계좌를 조회하지 못했습니다" },
+  });
+
+  assert.match(
+    report,
+    /⚠️ 2026-09-19 원가 스냅샷이 안 남았습니다: 실계좌를 조회하지 못했습니다 — 그날 원가와 환율은 소급되지 않습니다/,
+  );
+  // 위 칸이 이미 이유를 적는다. 되뇌지 않으므로 그 문구는 한 번만 나온다.
+  assert.equal(report.match(/계좌 조회가 15초 안에 안 왔습니다/g).length, 1);
+});
+
+test("기록 자체가 실패하면 서버 로그가 아니라 보고서에 적는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-19", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.123 }, holdings: [] },
+    costBasis: { missing: "기록에 실패했습니다 — EACCES: permission denied" },
+  });
+
+  assert.match(report, /⚠️ 2026-09-19 원가 스냅샷이 안 남았습니다: 기록에 실패했습니다 — EACCES/);
+});
+
+// 줄은 남았으니 «안 남았다»고 하면 거짓이다. 달러 원가는 쓸 수 있고 원화만 빈다.
+test("환율만 못 읽었으면 스냅샷이 남았다고 하고 원화만 비었다고 적는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-19", {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.123 }, holdings: [] },
+    costBasis: { recorded: true, krwPerUsd: null },
+  });
+
+  assert.match(
+    report,
+    /⚠️ 2026-09-19 원가 스냅샷에 환율이 없습니다 — 달러 원가는 남았고 원화 원가만 비어 있습니다/,
+  );
+  assert.doesNotMatch(report, /원가 스냅샷이 안 남았습니다/);
+});
+
+test("스냅샷이 제대로 남으면 아무 줄도 안 늘린다", () => {
+  const options = {
+    live: { orders: [], unresolvedCount: 0 },
+    account: { positions: { VTI: 0.123 }, holdings: [] },
+  };
+  const quiet = formatDailyReport(accountState(), "2026-09-19", {
+    ...options,
+    costBasis: { recorded: true, krwPerUsd: 1391.4 },
+  });
+
+  assert.doesNotMatch(quiet, /원가 스냅샷/);
+  // 이 필드가 생기기 전의 호출과 한 글자도 다르지 않아야 한다.
+  assert.equal(quiet, formatDailyReport(accountState(), "2026-09-19", options));
+});
+
+test("PAPER면 원가 스냅샷을 말하지 않는다", () => {
+  const report = formatDailyReport(accountState(), "2026-09-19", {
+    costBasis: { skipped: "PAPER" },
+  });
+
+  assert.doesNotMatch(report, /원가 스냅샷/);
+  assert.match(report, /PAPER 모드 — 실제 주문 없음/);
+});

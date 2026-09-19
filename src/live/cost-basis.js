@@ -135,6 +135,35 @@ export function summarizeHoldings(holdings) {
   };
 }
 
+/**
+ * **줄을 남길 수 있는지 먼저 판정합니다** (㊱, 2026-09-19).
+ *
+ * 남기는 쪽(`appendCostBasisSnapshot`)과 떼어 둔 이유는 **안 남는 경우가
+ * 세 가지이고 그 셋이 서로 다른 말을 해야** 하기 때문입니다. 전에는 셋 다
+ * 조용히 돌아섰습니다.
+ *
+ * - PAPER: 실계좌가 없습니다. **안 남는 것이 정상이므로 경고가 아닙니다.**
+ * - 조회 실패: 그 거래일 줄이 **영구히 빕니다.** 조회 자체는 다음 사이클에
+ *   다시 되지만 그날의 `purchaseAmount`와 환율은 지나가면 못 만듭니다.
+ * - 보유 0건: 관리 종목이 계좌에서 사라졌거나 `ETF_WATCHLIST`가 어긋났습니다.
+ *   전량 매도라면 **그 줄이 가장 필요한 날**이라 조용히 넘기면 안 됩니다.
+ *
+ * 판정만 합니다 — 파일을 안 건드리므로 테스트가 붙습니다.
+ */
+export function planCostBasisSnapshot({ account, krwPerUsd = null }) {
+  if (!account) return { skipped: "PAPER" };
+  // **이유를 되뇌지 않습니다.** 보고서의 「실계좌 보유」 칸이 이미 원문을 적고,
+  // 여기서 더할 것은 소급이 안 된다는 사실뿐입니다.
+  if (account.error) return { missing: "실계좌를 조회하지 못했습니다" };
+
+  const holdings = account.holdings;
+  if (!Array.isArray(holdings) || holdings.length === 0) {
+    return { missing: "관리 종목 보유가 0건입니다" };
+  }
+
+  return { write: { holdings, krwPerUsd, at: account.at } };
+}
+
 export function buildCostBasisSnapshot({ tradingDate, holdings, krwPerUsd = null, at }) {
   return {
     type: "SNAPSHOT",

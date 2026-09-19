@@ -5,6 +5,7 @@ import {
   buildCostBasisSnapshot,
   latestByTradingDate,
   normalizeHoldings,
+  planCostBasisSnapshot,
   summarizeHoldings,
 } from "../src/live/cost-basis.js";
 
@@ -76,4 +77,56 @@ test("환율을 못 읽은 날은 null로 남는다 — 지어내지 않는다",
   const snapshot = buildCostBasisSnapshot({ tradingDate: "2026-09-18", holdings: [] });
 
   assert.equal(snapshot.krwPerUsd, null);
+});
+
+// ㊱ 안 남는 경우가 셋인데 전에는 셋 다 조용히 돌아섰다. PAPER만 정상이고
+// 나머지 둘은 그 거래일이 영구히 비는 사고다.
+test("PAPER는 줄이 안 남는 것이 정상이라 경고가 아니다", () => {
+  const plan = planCostBasisSnapshot({ account: null, krwPerUsd: 1391.4 });
+
+  assert.equal(plan.skipped, "PAPER");
+  assert.equal(plan.missing, undefined);
+  assert.equal(plan.write, undefined);
+});
+
+test("계좌 조회가 실패하면 그 거래일이 비므로 말해야 한다", () => {
+  const plan = planCostBasisSnapshot({
+    account: { error: "계좌 조회가 15초 안에 안 왔습니다" },
+    krwPerUsd: 1391.4,
+  });
+
+  assert.equal(plan.missing, "실계좌를 조회하지 못했습니다");
+  // 원문은 안 싣는다 — 보고서의 「실계좌 보유」 칸이 이미 적는다.
+  assert.doesNotMatch(plan.missing, /15초/);
+  assert.equal(plan.write, undefined);
+});
+
+// 전량 매도라면 `purchaseAmount`가 0으로 떨어진 날이고, 그 줄이 가장 필요하다.
+test("관리 종목 보유가 0건이면 조용히 넘기지 않는다", () => {
+  for (const holdings of [[], undefined, null]) {
+    const plan = planCostBasisSnapshot({ account: { positions: {}, holdings } });
+    assert.equal(plan.missing, "관리 종목 보유가 0건입니다");
+  }
+});
+
+test("남길 수 있으면 환율과 조회 시각을 그대로 넘긴다", () => {
+  const holdings = normalizeHoldings(TOSS_ITEMS, ["VTI", "SCHD", "IWM"]);
+  const plan = planCostBasisSnapshot({
+    account: { holdings, at: "2026-09-19T00:35:00.514Z" },
+    krwPerUsd: 1391.4,
+  });
+
+  assert.equal(plan.write.krwPerUsd, 1391.4);
+  assert.equal(plan.write.at, "2026-09-19T00:35:00.514Z");
+  assert.equal(plan.write.holdings, holdings);
+  assert.equal(plan.missing, undefined);
+});
+
+// 환율이 없어도 줄은 남는다. 달러 원가는 가격과 무관해 안 틀리고, 원화만 빈다.
+test("환율을 못 읽어도 남기는 것을 막지 않고 null로 넘긴다", () => {
+  const holdings = normalizeHoldings(TOSS_ITEMS, ["SCHD"]);
+  const plan = planCostBasisSnapshot({ account: { holdings } });
+
+  assert.equal(plan.write.krwPerUsd, null);
+  assert.equal(plan.write.holdings.length, 1);
 });

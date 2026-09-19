@@ -7,6 +7,7 @@ import {
   appendCostBasisSnapshot,
   buildCostBasisSnapshot,
   normalizeHoldings,
+  planCostBasisSnapshot,
 } from "../live/cost-basis.js";
 import { buildOrders, unresolvedOrders } from "../live/order-lifecycle.js";
 import { readOrderEvents } from "../live/order-store.js";
@@ -47,8 +48,8 @@ try {
     const live = policy.mode === "LIVE" ? await readLiveSummary(tradingDate) : null;
     const account = policy.mode === "LIVE" ? await readAccountPositions() : null;
     const fx = await readExchangeRate();
-    await recordCostBasis({ tradingDate, account, fx });
-    const text = formatDailyReport(paperState, tradingDate, { live, account, fx });
+    const costBasis = await recordCostBasis({ tradingDate, account, fx });
+    const text = formatDailyReport(paperState, tradingDate, { live, account, fx, costBasis });
     await sendTelegramMessage({
       token: process.env.TELEGRAM_BOT_TOKEN,
       chatId: process.env.TELEGRAM_CHAT_ID,
@@ -163,21 +164,39 @@ async function readAccountPositions() {
  * 뉴욕 거래일은 한국 새벽에 이미 바뀌어 있어서, 개장 전에 한 번 돌리면 그날 줄이
  * 먼저 박히고 **마감 뒤 타이머가 돌 때 건너뛰었습니다.** 읽을 때 그 거래일의
  * 마지막 줄을 쓰면 됩니다(`latestByTradingDate`).
+ *
+ * ── 왜 무엇을 했는지 돌려주는가 (㊱, 2026-09-19) ───────────────────────────
+ *
+ * **유실이 조용했습니다.** 계좌 조회가 실패하면 줄이 안 남고, 보유가 0건이면
+ * 말없이 돌아서고, 기록이 실패하면 서버 로그에만 남았습니다. 세 경우 다
+ * 텔레그램에는 아무 표시가 없었습니다.
+ *
+ * **다른 경고와 급이 다릅니다.** 계좌 조회 실패는 다음 사이클에 다시 보이지만
+ * **그날의 원가 스냅샷은 지나가면 못 만듭니다** — 9/17 매도가 소급되지 않는
+ * 것과 같은 이유입니다(`cost-basis.js`). 조용히 비는 것이 가장 나쁜 쪽입니다.
+ *
+ * 그래서 무엇을 했는지 돌려주고, 보고서가 그것을 한 줄로 말합니다. **판정이
+ * 읽는 숫자는 안 바뀝니다 — 말하는 것만 늘어납니다.**
  */
 async function recordCostBasis({ tradingDate, account, fx }) {
-  const holdings = account?.holdings;
-  if (!Array.isArray(holdings) || holdings.length === 0) return;
+  const krwPerUsd = Number.isFinite(Number(fx?.rate)) ? Number(fx.rate) : null;
+  // 안 남는 세 경우를 갈라 놓은 곳입니다(`planCostBasisSnapshot`). 여기는
+  // 쓰기와 그 실패만 봅니다.
+  const plan = planCostBasisSnapshot({ account, krwPerUsd });
+  if (!plan.write) return plan;
 
   try {
     await appendCostBasisSnapshot(dataDir, buildCostBasisSnapshot({
       tradingDate,
-      holdings,
-      krwPerUsd: Number.isFinite(Number(fx?.rate)) ? Number(fx.rate) : null,
-      at: account.at,
+      ...plan.write,
     }));
   } catch (error) {
+    // **로그에만 남기던 것을 보고서로 올립니다.** 서버 로그는 아무도 매일
+    // 열지 않고, 그 사이 거래일이 조용히 빕니다.
     console.error(`원가 스냅샷을 못 남겼습니다: ${error.message}`);
+    return { missing: `기록에 실패했습니다 — ${error.message}` };
   }
+  return { recorded: true, krwPerUsd };
 }
 
 /**
