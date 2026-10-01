@@ -52,3 +52,33 @@ test("뉴욕 날짜와 시는 한국 시각이 아니라 현지 시각으로 읽
   // 자정을 24로 적는 조합이 있어 hourCycle을 못 박았다. 0이어야 한다.
   assert.equal(newYorkHour(new Date("2026-09-18T04:00:00Z")), 0);
 });
+
+// ── 2026-11-01 서머타임 종료 ─────────────────────────────────────────────
+// 타이머는 `16:10 America/New_York`라 전환을 따라간다(deploy/toss-ai-report.timer).
+// 판정도 뉴욕 현지 시로 해야 한다. **20:10Z를 «마감 뒤»로 박아 두면** 전환 뒤엔
+// 그것이 15:10 ET — 장중 — 이고, 장중 실행이 그날 마감 보고서를 삼킨다(9/18과 같은 사고).
+test("서머타임 종료 뒤 20:10Z는 장중이다 — 마감 보고서를 막지 않는다", () => {
+  const tradingDate = "2026-11-02";
+  const midday = { lastReportedTradingDate: tradingDate, sentAt: "2026-11-02T20:10:00Z" };
+  assert.equal(newYorkHour(new Date(midday.sentAt)), 15);
+  assert.equal(hasPostCloseReport(midday, tradingDate), false);
+
+  const afterClose = { lastReportedTradingDate: tradingDate, sentAt: "2026-11-02T21:10:00Z" };
+  assert.equal(newYorkHour(new Date(afterClose.sentAt)), 16);
+  assert.equal(hasPostCloseReport(afterClose, tradingDate), true);
+});
+
+test("서머타임 종료 전 마지막 거래일은 20:10Z가 마감 뒤다", () => {
+  const tradingDate = "2026-10-30";
+  const state = { lastReportedTradingDate: tradingDate, sentAt: "2026-10-30T20:10:00Z" };
+  assert.equal(newYorkHour(new Date(state.sentAt)), 16);
+  assert.equal(hasPostCloseReport(state, tradingDate), true);
+});
+
+test("전환 뒤 첫 마감 보고서도 그 거래일로 귀속된다 — 한국은 다음 날 아침이다", () => {
+  // 16:10 EST = 21:10Z = 11/3 06:10 KST. 날짜를 한국 시각으로 읽으면 11/3이 된다.
+  assert.equal(newYorkDate(new Date("2026-11-02T21:10:00Z")), "2026-11-02");
+  // 금요일 마감 보고서가 주말을 건너 월요일 기록을 막지 않는다.
+  const friday = { lastReportedTradingDate: "2026-10-30", sentAt: "2026-10-30T20:10:00Z" };
+  assert.equal(hasPostCloseReport(friday, "2026-11-02"), false);
+});

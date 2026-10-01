@@ -7,6 +7,7 @@ import {
   MIN_AUTOCORRELATION_DAYS,
   autocorrelationStandardError,
   judgeAutocorrelation,
+  SENTIMENT_ADOPTION,
   loadSignalHistory,
 } from "./signal-history.js";
 
@@ -154,13 +155,21 @@ if (asJson) {
           "   표준오차가 판정 구간(0.1~0.3)보다 넓은 동안 이 숫자는 아무것도 가르지 못합니다.",
       );
     } else if (verdict.status === "carries") {
-      console.log("→ 값이 이어집니다. 정보를 담고 있을 가능성이 있어 가중치를 정할 근거가 됩니다.");
+      console.log("→ 원 규칙(08-06)으로는 «값이 이어짐» 칸입니다 (≥ 0.3).");
     } else if (verdict.status === "noise") {
-      console.log("→ 매일 새로 뽑히는 값과 구분되지 않습니다. **감성 가중치 0으로 확정합니다.**");
+      console.log("→ 원 규칙(08-06)으로는 «난수와 구분 안 됨» 칸입니다 (≤ 0.1).");
     } else {
+      console.log("→ 원 규칙(08-06·08-21)으로는 «애매» 칸입니다 (0.1~0.3, 연장 없음).");
+    }
+    // **원 규칙의 칸과 채택 결정을 한 문장에 섞지 않습니다.** 예전엔 0.3 이상에서
+    // "가중치를 정할 근거가 됩니다"라고 냈는데, 10/1 결정(§3 ③)과 정반대였습니다.
+    if (verdict.status !== "stuck") {
       console.log(
-        "→ 여전히 애매합니다. **연장은 없습니다 — 감성 가중치 0으로 확정합니다.**\n" +
-          "   2026-08-21에 미리 정한 종료 조건입니다. 판정 불가는 기본값이 이깁니다.",
+        `   **채택: 감성 가중치 ${SENTIMENT_ADOPTION.weight}** ` +
+          `(${SENTIMENT_ADOPTION.decidedOn} 결정, ${SENTIMENT_ADOPTION.rule}). ` +
+          "어느 칸이 나와도 같습니다.\n" +
+          "   표본의 74%가 7일 넘은 글이라 자기상관이 신호인지 이월인지 식별할 수 없습니다.\n" +
+          "   이 숫자는 채택 근거도 기각 근거도 아닙니다 — 「식별 불가로 미채택」입니다.",
       );
     }
   }

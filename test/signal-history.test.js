@@ -5,6 +5,7 @@ import {
   extractSentimentSeries,
   judgeAutocorrelation,
   JUDGMENT_TRADING_DAYS,
+  SENTIMENT_ADOPTION,
   summarizeSentimentSeries,
   toDailySeries,
   UNKNOWN_FINGERPRINT,
@@ -445,4 +446,14 @@ test("60거래일에서 애매하면 연장하지 않고 가중치 0으로 확�
   assert.equal(judgeAutocorrelation(summaryOf(0.3, 60)).status, "carries");
   // 값이 이어진다면 가중치는 그때 정한다. 여기서 미리 숫자를 박지 않는다.
   assert.equal(judgeAutocorrelation(summaryOf(0.42, 60)).weight, null);
+});
+
+test("원 규칙의 칸은 그대로 두고, 채택은 어느 칸이든 0이다 (2026-10-01 §3 ③)", () => {
+  // 원 규칙은 기록이다. 지우거나 문턱을 옮기지 않는다.
+  assert.equal(judgeAutocorrelation(summaryOf(0.504, 60)).status, "carries");
+  assert.equal(judgeAutocorrelation(summaryOf(0.2, 60)).status, "unresolved");
+  assert.equal(judgeAutocorrelation(summaryOf(0.05, 60)).status, "noise");
+  // 채택은 칸과 무관하다. 이월의 방향을 모르므로 높은 값도 낮은 값도 증거가 아니다.
+  assert.equal(SENTIMENT_ADOPTION.weight, 0);
+  assert.equal(SENTIMENT_ADOPTION.decidedOn, "2026-10-01");
 });

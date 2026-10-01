@@ -280,6 +280,25 @@ export function judgeAutocorrelation(summary) {
   return { status: "unresolved", weight: 0 };
 }
 
+/**
+ * **판정표와 채택 결정을 따로 둡니다 (2026-10-01, STRATEGY §3 ③).**
+ *
+ * 위 `judgeAutocorrelation`은 2026-08-06·08-21에 정한 규칙 그대로 두고, 어느 칸이
+ * 나왔는지도 그대로 보여 줍니다. 그러나 **이 계열로는 그 칸을 채택·기각 근거로
+ * 쓰지 않습니다.** 9/30 캐시를 글 작성 시각으로 갈랐더니 464건 중 343건(74%)이
+ * 7일 넘은 글이었고, 글 단위 날짜 필터가 없어 같은 글이 날마다 이월됩니다.
+ * 이월은 자기상관을 올릴 수도 내릴 수도 있습니다(독립 잡음이면 내립니다). 방향을
+ * 모르므로 **높은 값도 낮은 값도 증거가 아닙니다** — 그래서 어느 칸이 나와도 0입니다.
+ *
+ * 규칙을 지우지 않고 결정을 덧붙인 이유: 원 규칙의 칸은 기록으로 남아야 하고,
+ * 이 결정은 숫자(0.504)를 본 뒤의 **사후 정정**이라 원 규칙과 섞이면 안 됩니다.
+ */
+export const SENTIMENT_ADOPTION = Object.freeze({
+  weight: 0,
+  decidedOn: "2026-10-01",
+  rule: "STRATEGY §3 ③",
+});
+
 export function summarizeSentimentSeries(series) {
   const scores = series.map((row) => Number(row.score)).filter(Number.isFinite);
   if (scores.length === 0) {
