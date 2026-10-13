@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
-import { summarizeHoldingsInKrw } from "./krw-summary.js";
+import { APP_SELL_FX_DISCOUNT, summarizeHoldingsInKrw } from "./krw-summary.js";
 
 const args = process.argv.slice(2);
 const json = args.includes("--json");
@@ -64,7 +64,16 @@ function printSummary(portfolio, symbol, summary) {
       );
     }
   }
-  if (!symbol) console.log(`\n전체 계좌 보유 종목 평가액 합계: ${formatKrw(summary.totalKrw)} (예수금 제외)`);
+  if (!symbol) {
+    const rateLabel = summary.usdKrwRate === null ? "" : ` (API 환율 ${summary.usdKrwRate.toLocaleString("ko-KR")})`;
+    console.log(`\n전체 계좌 보유 종목 평가액 합계${rateLabel}: ${formatKrw(summary.totalKrw)} (예수금 제외)`);
+    if (summary.usdKrwRate !== null) {
+      console.log(
+        `토스 앱 기준 추정 (USD 보유를 팔 때 환율 -${(APP_SELL_FX_DISCOUNT * 100).toFixed(2)}%로 평가): ` +
+          `${formatKrw(summary.appEstimateKrw)} — 관측에서 정한 추정치이며 토스가 공개한 값이 아닙니다`,
+      );
+    }
+  }
 }
 
 function formatKrw(value) {
