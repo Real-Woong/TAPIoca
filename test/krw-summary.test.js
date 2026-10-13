@@ -73,3 +73,16 @@ test("기준환율이 없거나 잘못되면 앱 기준 평가액은 null이다"
     assert.equal(summarizeHoldingsInKrw(portfolio, "1000", bad).appEstimateKrw, null);
   }
 });
+
+test("기준환율을 주면 종목별 앱 기준 평가액을 함께 담는다", () => {
+  const summary = summarizeHoldingsInKrw({ accounts: [{ holdings: { items: [
+    { symbol: "VTI", currency: "USD", marketValue: { amount: "10" } },
+    { symbol: "KR", currency: "KRW", marketValue: { amount: "5000" } },
+  ] } }] }, "1000", "990");
+
+  assert.equal(summary.accounts[0].positions[0].valueBaseKrw, 9900);
+  assert.equal(summary.accounts[0].positions[1].valueBaseKrw, 5000);
+  assert.equal(summarizeHoldingsInKrw({ accounts: [{ holdings: { items: [
+    { symbol: "VTI", currency: "USD", marketValue: { amount: "10" } },
+  ] } }] }, "1000").accounts[0].positions[0].valueBaseKrw, null);
+});

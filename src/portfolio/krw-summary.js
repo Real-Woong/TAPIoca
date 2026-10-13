@@ -13,6 +13,9 @@ export function summarizeHoldingsInKrw(portfolio, usdKrwRate, baseRate = null) {
     throw new Error("USD/KRW 환율을 확인할 수 없어 원화 평가액을 계산하지 않았습니다.");
   }
 
+  const base = Number(baseRate);
+  const hasBase = baseRate !== null && baseRate !== undefined && Number.isFinite(base) && base > 0;
+
   let totalKrw = 0;
   let usdAmount = 0;
   let krwAmount = 0;
@@ -31,16 +34,15 @@ export function summarizeHoldingsInKrw(portfolio, usdKrwRate, baseRate = null) {
       if (!Number.isFinite(valueKrw)) {
         throw new Error(`${item.symbol ?? "(종목 미상)"}: 원화 평가액을 계산할 수 없습니다.`);
       }
+      const valueBaseKrw = !hasBase ? null : currency === "USD" ? value * base : value;
       totalKrw += valueKrw;
       if (currency === "USD") usdAmount += value;
       else krwAmount += valueKrw;
-      return { item, currency, valueKrw };
+      return { item, currency, valueKrw, valueBaseKrw };
     });
     return { account, positions };
   });
 
-  const base = Number(baseRate);
-  const hasBase = baseRate !== null && baseRate !== undefined && Number.isFinite(base) && base > 0;
   const appEstimateKrw = hasBase ? krwAmount + usdAmount * base : null;
 
   return {

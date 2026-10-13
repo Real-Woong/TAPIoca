@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
+import path from "node:path";
+
 import { fetchBaseRate } from "./base-fx.js";
+import { krwReturn, loadKrwCostBasis } from "./krw-cost.js";
 import { summarizeHoldingsInKrw } from "./krw-summary.js";
 
 const args = process.argv.slice(2);
@@ -22,14 +25,20 @@ try {
     // 토스 앱 평가용 기준환율. 못 가져와도 API 환율 합계는 그대로 보여줍니다.
     let base = null;
     let baseError = null;
-    if (hasUsdHoldings && !symbol) {
+    if (hasUsdHoldings) {
       try {
         base = await fetchBaseRate();
       } catch (error) {
         baseError = error.message;
       }
     }
-    printSummary(portfolio, symbol, summarizeHoldingsInKrw(portfolio, rate, base?.rate ?? null), base, baseError);
+    let costBasis = null;
+    try {
+      costBasis = await loadKrwCostBasis(path.resolve(process.env.PAPER_DATA_DIR || "data"));
+    } catch (error) {
+      console.error(`원화 매입가 등록부를 읽지 못했습니다: ${error.message}`);
+    }
+    printSummary(portfolio, symbol, summarizeHoldingsInKrw(portfolio, rate, base?.rate ?? null), base, baseError, costBasis);
   }
 } catch (error) {
   printError(error);
@@ -46,7 +55,7 @@ function readOption(args, name) {
   return value;
 }
 
-function printSummary(portfolio, symbol, summary, base, baseError) {
+function printSummary(portfolio, symbol, summary, base, baseError, costBasis) {
   console.log(`조회 시각: ${portfolio.fetchedAt}`);
   if (symbol) console.log(`종목 필터: ${symbol}`);
 
@@ -59,19 +68,19 @@ function printSummary(portfolio, symbol, summary, base, baseError) {
     console.log(`적용 환율: 1 USD = ${summary.usdKrwRate.toLocaleString("ko-KR")} KRW`);
   }
 
+  const krwTotals = { count: 0, cost: 0, profit: 0 };
   for (const { account, positions } of summary.accounts) {
     console.log(`\n계좌 ${maskAccountNo(account.accountNo)} (${account.accountType})`);
     console.log(`보유 종목: ${positions.length}개`);
 
-    for (const { item, currency, valueKrw } of positions) {
-      const profitLossRate = Number(item.profitLoss?.rate);
-      const rateText = item.profitLoss?.rate === null || item.profitLoss?.rate === undefined
-        || !Number.isFinite(profitLossRate)
-        ? "미상" : `${(profitLossRate * 100).toFixed(2)}%`;
+    for (const { item, currency, valueKrw, valueBaseKrw } of positions) {
+      // 앱 기준환율을 알면 평가도 앱과 같은 환율로 보여 줍니다. 모르면 API 환율입니다.
+      const shownKrw = valueBaseKrw ?? valueKrw;
       const original = currency === "USD" ? ` (${item.marketValue.amount} USD)` : "";
+      const returnText = describeReturn(item, currency, valueBaseKrw, costBasis, krwTotals);
       console.log(
         `- ${item.name} (${item.symbol}) | ${item.quantity}주 | ` +
-          `평가 ${formatKrw(valueKrw)}${original} | 손익률 ${rateText}`,
+          `평가 ${formatKrw(shownKrw)}${original} | ${returnText}`,
       );
     }
   }
@@ -86,7 +95,38 @@ function printSummary(portfolio, symbol, summary, base, baseError) {
     } else if (baseError) {
       console.log(`토스 앱 기준 평가액: 기준환율을 가져오지 못해 생략합니다 (${baseError})`);
     }
+    if (krwTotals.count > 0) {
+      const pct = (krwTotals.profit / krwTotals.cost) * 100;
+      console.log(
+        `원화 손익 (매입가 등록 ${krwTotals.count}종목): ${signedKrw(krwTotals.profit)} ` +
+          `(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`,
+      );
+    }
   }
+}
+
+/** 원화 손익률을 앞에, USD 손익률을 뒤에 둡니다. 원화를 못 구하면 이유를 적습니다. */
+function describeReturn(item, currency, valueBaseKrw, costBasis, krwTotals) {
+  const usdRate = Number(item.profitLoss?.rate);
+  const usdText = item.profitLoss?.rate === null || item.profitLoss?.rate === undefined
+    || !Number.isFinite(usdRate)
+    ? "미상" : `${(usdRate * 100).toFixed(2)}%`;
+  if (currency === "KRW") return `손익률 ${usdText}`;
+
+  if (valueBaseKrw === null) return `손익률 USD ${usdText} (기준환율 없음)`;
+  const result = krwReturn({ symbol: item.symbol, quantity: item.quantity, valueKrw: valueBaseKrw }, costBasis);
+  if (result.status === "ok") {
+    krwTotals.count += 1;
+    krwTotals.cost += result.costKrw;
+    krwTotals.profit += result.profitKrw;
+    return `손익률 ${(result.rate * 100).toFixed(2)}% (USD ${usdText})`;
+  }
+  const why = result.status === "stale" ? "수량이 늘어 원화 매입가 갱신 필요" : "원화 매입가 미등록";
+  return `손익률 USD ${usdText} (${why})`;
+}
+
+function signedKrw(value) {
+  return `${value >= 0 ? "+" : "-"}${Math.abs(Math.round(value)).toLocaleString("ko-KR")}원`;
 }
 
 function formatKrw(value) {
