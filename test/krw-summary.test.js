@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { APP_SELL_FX_DISCOUNT, summarizeHoldingsInKrw } from "../src/portfolio/krw-summary.js";
+import { summarizeHoldingsInKrw } from "../src/portfolio/krw-summary.js";
 
 test("모든 계좌의 USD와 KRW 보유 평가액을 원화로 합산한다", () => {
   const portfolio = {
@@ -54,20 +54,22 @@ test("지원하지 않는 통화는 전체 원화 합계로 위장하지 않는�
   assert.throws(() => summarizeHoldingsInKrw(other, null), /지원하지 않는 평가 통화 JPY/);
 });
 
-test("앱 기준 추정은 USD 보유에만 할인을 적용하고 원화 보유는 그대로 둔다", () => {
+test("앱 기준 평가액은 USD 보유만 기준환율로 환산하고 원화 보유는 그대로 둔다", () => {
   const summary = summarizeHoldingsInKrw({ accounts: [{ holdings: { items: [
     { symbol: "VTI", currency: "USD", marketValue: { amount: "10" } },
     { symbol: "KR", currency: "KRW", marketValue: { amount: "5000" } },
-  ] } }] }, "1000");
+  ] } }] }, "1000", "990");
 
   assert.equal(summary.totalKrw, 15000);
-  assert.ok(Math.abs(summary.appEstimateKrw - (15000 - 10000 * APP_SELL_FX_DISCOUNT)) < 1e-9);
+  assert.equal(summary.appEstimateKrw, 14900);
 });
 
-test("USD 보유가 없으면 앱 기준 추정은 합계와 같다", () => {
-  const summary = summarizeHoldingsInKrw({ accounts: [
-    { holdings: { items: [{ symbol: "KR", currency: "KRW", marketValue: { amount: "1000" } }] } },
-  ] }, null);
+test("기준환율이 없거나 잘못되면 앱 기준 평가액은 null이다", () => {
+  const portfolio = { accounts: [{ holdings: { items: [
+    { symbol: "VTI", currency: "USD", marketValue: { amount: "10" } },
+  ] } }] };
 
-  assert.equal(summary.appEstimateKrw, 1000);
+  for (const bad of [undefined, null, 0, -1, "abc"]) {
+    assert.equal(summarizeHoldingsInKrw(portfolio, "1000", bad).appEstimateKrw, null);
+  }
 });
