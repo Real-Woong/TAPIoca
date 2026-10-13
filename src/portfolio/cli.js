@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createTossClientFromEnv, TossApiError } from "../toss/toss-client.js";
+import { summarizeHoldingsInKrw } from "./krw-summary.js";
 
 const args = process.argv.slice(2);
 const json = args.includes("--json");
@@ -13,7 +14,11 @@ try {
   if (json) {
     console.log(JSON.stringify(portfolio, null, 2));
   } else {
-    printSummary(portfolio, symbol);
+    const hasUsdHoldings = portfolio.accounts.some((account) =>
+      (account.holdings?.items ?? []).some((item) => String(item.currency).toUpperCase() === "USD"),
+    );
+    const rate = hasUsdHoldings ? (await client.getExchangeRate("USD", "KRW")).rate : null;
+    printSummary(portfolio, symbol, summarizeHoldingsInKrw(portfolio, rate));
   }
 } catch (error) {
   printError(error);
@@ -30,7 +35,7 @@ function readOption(args, name) {
   return value;
 }
 
-function printSummary(portfolio, symbol) {
+function printSummary(portfolio, symbol, summary) {
   console.log(`조회 시각: ${portfolio.fetchedAt}`);
   if (symbol) console.log(`종목 필터: ${symbol}`);
 
@@ -39,19 +44,31 @@ function printSummary(portfolio, symbol) {
     return;
   }
 
-  for (const account of portfolio.accounts) {
-    console.log(`\n계좌 ${maskAccountNo(account.accountNo)} (${account.accountType})`);
-    const items = account.holdings?.items ?? [];
-    console.log(`보유 종목: ${items.length}개`);
+  if (summary.usdKrwRate !== null) {
+    console.log(`적용 환율: 1 USD = ${summary.usdKrwRate.toLocaleString("ko-KR")} KRW`);
+  }
 
-    for (const item of items) {
-      const rate = Number(item.profitLoss.rate) * 100;
+  for (const { account, positions } of summary.accounts) {
+    console.log(`\n계좌 ${maskAccountNo(account.accountNo)} (${account.accountType})`);
+    console.log(`보유 종목: ${positions.length}개`);
+
+    for (const { item, currency, valueKrw } of positions) {
+      const profitLossRate = Number(item.profitLoss?.rate);
+      const rateText = item.profitLoss?.rate === null || item.profitLoss?.rate === undefined
+        || !Number.isFinite(profitLossRate)
+        ? "미상" : `${(profitLossRate * 100).toFixed(2)}%`;
+      const original = currency === "USD" ? ` (${item.marketValue.amount} USD)` : "";
       console.log(
         `- ${item.name} (${item.symbol}) | ${item.quantity}주 | ` +
-          `평가 ${item.marketValue.amount} ${item.currency} | 손익률 ${rate.toFixed(2)}%`,
+          `평가 ${formatKrw(valueKrw)}${original} | 손익률 ${rateText}`,
       );
     }
   }
+  if (!symbol) console.log(`\n전체 계좌 보유 종목 평가액 합계: ${formatKrw(summary.totalKrw)} (예수금 제외)`);
+}
+
+function formatKrw(value) {
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
 }
 
 function maskAccountNo(accountNo = "") {

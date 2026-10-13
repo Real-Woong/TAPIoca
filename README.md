@@ -48,7 +48,7 @@ npm run doctor
 연결에 성공하면 전체 보유 주식을 조회합니다.
 
 ```bash
-npm run portfolio              # 사람이 읽는 요약
+npm run portfolio              # 전체 계좌의 보유 종목 원화 평가액과 합계 (예수금 제외)
 npm run portfolio -- --json    # 원본 JSON
 npm run portfolio -- --symbol 005930
 npm run portfolio -- --symbol AAPL --json
@@ -56,6 +56,9 @@ npm run portfolio -- --symbol AAPL --json
 
 JSON의 금액·수량·수익률은 토스 API 원본처럼 문자열로 유지됩니다. 금융 숫자를
 JavaScript `number`로 바꾸면서 생길 수 있는 정밀도 손실을 피하기 위한 설계입니다.
+사람이 읽는 요약은 USD 보유액을 조회 시점의 USD/KRW 환율로 환산합니다. 원화 합계에는
+모든 조회 가능 계좌의 보유 종목을 포함하며 예수금은 포함하지 않습니다. `--json`은
+원본 응답을 그대로 출력합니다.
 
 ## 3. 포트폴리오 구조 분석
 
