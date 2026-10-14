@@ -123,7 +123,7 @@ export function formatDailyReport(
     "보유 ETF (장부)",
     ...positionLines,
     ...(account ? ["", "실계좌 보유 (토스)", ...formatAccountLines(account, state, summary)] : []),
-    ...formatAccountPnlLines(account, state),
+    ...formatAccountPnlLines(account, state, fx),
     ...formatCostBasisLines(costBasis, tradingDate),
     "",
     "오늘의 가상 거래",
@@ -204,7 +204,7 @@ function formatCostBasisLines(costBasis, tradingDate) {
  * **위 「실계좌 보유」 칸은 안 건드렸습니다.** 그 칸은 장부 가격으로 환산해 장부와
  * 나란히 읽는 칸이고, 이 칸은 토스가 말하는 손익입니다. 목적이 다릅니다.
  */
-function formatAccountPnlLines(account, state) {
+function formatAccountPnlLines(account, state, fx) {
   if (!account || account.error) return [];
 
   const holdings = (account.holdings ?? []).filter((row) => row.purchaseAmountUsd !== null);
@@ -223,13 +223,18 @@ function formatAccountPnlLines(account, state) {
     ...holdings.filter((row) => !booked.includes(row.symbol)),
   ];
 
+  // 원화는 오늘 환율 하나로 환산합니다. 환율을 못 읽었으면 달러만 적습니다
+  // — 위 «원화 환산» 줄이 이미 못 읽었다고 말하고 있습니다.
+  const nowRate = Number(fx?.rate);
+  const won = (usd) => (!fx?.error && nowRate > 0 ? ` ≈ ${signedKrw(usd * nowRate)}` : "");
+
   const rows = ordered.map((row) => {
     const rate = row.unrealizedRate === null ? null : signedPct(row.unrealizedRate * 100);
     const priced = row.averagePriceUsd !== null && row.lastPriceUsd !== null
       ? `평단 $${row.averagePriceUsd.toFixed(2)} → $${row.lastPriceUsd.toFixed(2)} · `
       : "";
     return `• ${row.symbol}: ${priced}${signedUsd(row.unrealizedUsd ?? 0)}` +
-      (rate ? ` (${rate})` : "");
+      (rate ? ` (${rate})` : "") + won(row.unrealizedUsd ?? 0);
   });
 
   return [
@@ -241,7 +246,8 @@ function formatAccountPnlLines(account, state) {
     "실계좌 손익 (토스 현재가 기준 · 미실현만)",
     `매입 $${total.purchaseUsd.toFixed(2)} → 평가 $${total.marketUsd.toFixed(2)} · ` +
       `${signedUsd(total.unrealizedUsd)}` +
-      (total.unrealizedRate === null ? "" : ` (${signedPct(total.unrealizedRate * 100)})`),
+      (total.unrealizedRate === null ? "" : ` (${signedPct(total.unrealizedRate * 100)})`) +
+      won(total.unrealizedUsd),
     ...rows,
   ];
 }

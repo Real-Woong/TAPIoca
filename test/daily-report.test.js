@@ -695,6 +695,23 @@ test("실계좌 손익은 토스가 주는 숫자를 그대로 적는다", () =>
   assert.match(report, /실계좌 손익 \(토스 현재가 기준 · 미실현만\)/);
 });
 
+test("실계좌 손익에 오늘 환율로 환산한 원화를 덧붙인다", () => {
+  const account = {
+    positions: { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 },
+    holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
+    at: "2026-09-18T20:10:00Z",
+  };
+
+  const report = formatDailyReport(pnlState(), "2026-09-17", {
+    account,
+    fx: { rate: 1400, at: "2026-09-18T00:00:00Z" },
+    live: { orders: [] },
+  });
+
+  assert.match(report, /\+0\.23%\) ≈ \+\d[\d,]*원/);
+  assert.match(report, /• IWM: .*\(-4\.79%\) ≈ -\d[\d,]*원/);
+});
+
 test("실계좌 손익은 관리 종목만 적는다 — 나머지는 사장님 자산이다", () => {
   const account = {
     positions: { VTI: 0.047685 },
