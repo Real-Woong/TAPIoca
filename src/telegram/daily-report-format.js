@@ -1,4 +1,5 @@
 import { summarizeHoldings } from "../live/cost-basis.js";
+import { krwReturn } from "../portfolio/krw-cost.js";
 import { summarizePaperState } from "../paper/paper-engine.js";
 
 /**
@@ -31,7 +32,7 @@ import { summarizePaperState } from "../paper/paper-engine.js";
 export function formatDailyReport(
   state,
   tradingDate,
-  { dateForTrade, live = null, account = null, fx = null, costBasis = null, now = new Date() } = {},
+  { dateForTrade, live = null, account = null, fx = null, costBasis = null, krwBasis = null, now = new Date() } = {},
 ) {
   // 저장된 마지막 가격을 기준으로 가상 자산을 요약합니다.
   // 실제 계좌의 **예수금**은 여전히 포함하지 않습니다. 보유 수량만 따로 적습니다
@@ -123,7 +124,7 @@ export function formatDailyReport(
     "보유 ETF (장부)",
     ...positionLines,
     ...(account ? ["", "실계좌 보유 (토스)", ...formatAccountLines(account, state, summary)] : []),
-    ...formatAccountPnlLines(account, state, fx),
+    ...formatAccountPnlLines(account, state, krwBasis),
     ...formatCostBasisLines(costBasis, tradingDate),
     "",
     "오늘의 가상 거래",
@@ -204,7 +205,7 @@ function formatCostBasisLines(costBasis, tradingDate) {
  * **위 「실계좌 보유」 칸은 안 건드렸습니다.** 그 칸은 장부 가격으로 환산해 장부와
  * 나란히 읽는 칸이고, 이 칸은 토스가 말하는 손익입니다. 목적이 다릅니다.
  */
-function formatAccountPnlLines(account, state, fx) {
+function formatAccountPnlLines(account, state, krwBasis) {
   if (!account || account.error) return [];
 
   const holdings = (account.holdings ?? []).filter((row) => row.purchaseAmountUsd !== null);
@@ -223,10 +224,27 @@ function formatAccountPnlLines(account, state, fx) {
     ...holdings.filter((row) => !booked.includes(row.symbol)),
   ];
 
-  // 원화는 오늘 환율 하나로 환산합니다. 환율을 못 읽었으면 달러만 적습니다
-  // — 위 «원화 환산» 줄이 이미 못 읽었다고 말하고 있습니다.
-  const nowRate = Number(fx?.rate);
-  const won = (usd) => (!fx?.error && nowRate > 0 ? ` ≈ ${signedKrw(usd * nowRate)}` : "");
+  // **원화는 `npm run portfolio`와 같은 방식입니다**(2026-10-14). 달러 손익에 오늘
+  // 환율을 곱하면 환율 몫이 빠져 부호까지 틀립니다 — 달러로 +1.37%인 VTI가 앱에서는
+  // -1.34%였습니다. 앱 기준환율(ECOS)로 평가하고 앱의 원화 매입금(등록부)에서 뺍니다.
+  // 못 구하면 틀린 값을 쓰지 않고 이유를 적습니다.
+  const baseRate = Number(krwBasis?.base?.rate);
+  const hasBase = baseRate > 0;
+  const krwTotals = { count: 0, cost: 0, profit: 0 };
+  const won = (row) => {
+    if (!krwBasis || !hasBase) return "";
+    const result = krwReturn(
+      { symbol: row.symbol, quantity: row.quantity, valueKrw: (row.marketValueUsd ?? 0) * baseRate },
+      krwBasis.cost,
+    );
+    if (result.status === "ok") {
+      krwTotals.count += 1;
+      krwTotals.cost += result.costKrw;
+      krwTotals.profit += result.profitKrw;
+      return ` · 원화 ${signedKrw(result.profitKrw)} (${signedPct(result.rate * 100)})`;
+    }
+    return result.status === "stale" ? " · 원화: 수량이 늘어 매입가 갱신 필요" : " · 원화: 매입가 미등록";
+  };
 
   const rows = ordered.map((row) => {
     const rate = row.unrealizedRate === null ? null : signedPct(row.unrealizedRate * 100);
@@ -234,8 +252,16 @@ function formatAccountPnlLines(account, state, fx) {
       ? `평단 $${row.averagePriceUsd.toFixed(2)} → $${row.lastPriceUsd.toFixed(2)} · `
       : "";
     return `• ${row.symbol}: ${priced}${signedUsd(row.unrealizedUsd ?? 0)}` +
-      (rate ? ` (${rate})` : "") + won(row.unrealizedUsd ?? 0);
+      (rate ? ` (${rate})` : "") + won(row);
   });
+
+  // 등록부로 구한 종목만 더합니다. 일부만 구했으면 몇 종목인지 같이 적습니다.
+  const totalWon = () => {
+    if (krwTotals.count === 0) return "";
+    const pct = (krwTotals.profit / krwTotals.cost) * 100;
+    const partial = krwTotals.count < ordered.length ? `, ${krwTotals.count}/${ordered.length}종목` : "";
+    return ` · 원화 ${signedKrw(krwTotals.profit)} (${signedPct(pct)}${partial})`;
+  };
 
   return [
     "",
@@ -247,8 +273,11 @@ function formatAccountPnlLines(account, state, fx) {
     `매입 $${total.purchaseUsd.toFixed(2)} → 평가 $${total.marketUsd.toFixed(2)} · ` +
       `${signedUsd(total.unrealizedUsd)}` +
       (total.unrealizedRate === null ? "" : ` (${signedPct(total.unrealizedRate * 100)})`) +
-      won(total.unrealizedUsd),
+      totalWon(),
     ...rows,
+    ...(krwBasis && !hasBase
+      ? [`원화: ⚠️ 앱 기준환율을 못 읽어 생략합니다${krwBasis.base?.error ? ` — ${krwBasis.base.error}` : ""}`]
+      : []),
   ];
 }
 

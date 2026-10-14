@@ -15,6 +15,8 @@ import { restrictToManaged } from "../live/position-baseline.js";
 import { createTossBroker } from "../live/toss-broker.js";
 import { loadTradingPolicy } from "../paper/trading-policy.js";
 import { createTossClientFromEnv } from "../toss/toss-client.js";
+import { fetchBaseRate } from "../portfolio/base-fx.js";
+import { loadKrwCostBasis } from "../portfolio/krw-cost.js";
 import { formatDailyReport } from "./daily-report-format.js";
 import { hasPostCloseReport, newYorkDate } from "./report-window.js";
 import { sendTelegramMessage } from "./telegram-client.js";
@@ -49,7 +51,8 @@ try {
     const account = policy.mode === "LIVE" ? await readAccountPositions() : null;
     const fx = await readExchangeRate();
     const costBasis = await recordCostBasis({ tradingDate, account, fx });
-    const text = formatDailyReport(paperState, tradingDate, { live, account, fx, costBasis });
+    const krwBasis = account && !account.error ? await readKrwBasis() : null;
+    const text = formatDailyReport(paperState, tradingDate, { live, account, fx, costBasis, krwBasis });
     await sendTelegramMessage({
       token: process.env.TELEGRAM_BOT_TOKEN,
       chatId: process.env.TELEGRAM_CHAT_ID,
@@ -107,6 +110,25 @@ async function readLiveSummary(tradingDate) {
     // 사실을 메시지에 적어서 보냅니다.
     return { error: error.message };
   }
+}
+
+/**
+ * 토스 앱 기준 원화 손익을 내는 재료입니다 — `npm run portfolio`와 같은 것(2026-10-14).
+ * ECOS 기준환율과 `data/krw-cost-basis.json` 등록부. **못 읽어도 보고서는 나갑니다.**
+ */
+async function readKrwBasis() {
+  const result = { base: null, cost: null };
+  try {
+    result.base = await withTimeout(fetchBaseRate(), ACCOUNT_TIMEOUT_MS);
+  } catch (error) {
+    result.base = { error: error.message };
+  }
+  try {
+    result.cost = await loadKrwCostBasis(dataDir);
+  } catch (error) {
+    console.error(`원화 매입가 등록부를 읽지 못했습니다: ${error.message}`);
+  }
+  return result;
 }
 
 /**

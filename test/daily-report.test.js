@@ -695,21 +695,44 @@ test("실계좌 손익은 토스가 주는 숫자를 그대로 적는다", () =>
   assert.match(report, /실계좌 손익 \(토스 현재가 기준 · 미실현만\)/);
 });
 
-test("실계좌 손익에 오늘 환율로 환산한 원화를 덧붙인다", () => {
+test("실계좌 손익의 원화는 앱 기준환율과 등록한 원화 매입가로 구한다 — 달러가 이익이어도 손실일 수 있다", () => {
   const account = {
     positions: { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 },
     holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
     at: "2026-09-18T20:10:00Z",
   };
+  const krwBasis = {
+    base: { rate: 1335.8, date: "2026-09-18" },
+    cost: {
+      positions: {
+        SCHD: { quantity: 0.402434, avgKrw: 47000 }, // 평가 18,235원 < 매입 18,914원
+        VTI: { quantity: 0.047685, avgKrw: 500000 }, // 평가 23,977원 > 매입 23,842원
+      },
+    },
+  };
 
-  const report = formatDailyReport(pnlState(), "2026-09-17", {
-    account,
-    fx: { rate: 1400, at: "2026-09-18T00:00:00Z" },
-    live: { orders: [] },
-  });
+  const report = formatDailyReport(pnlState(), "2026-09-17", { account, krwBasis, live: { orders: [] } });
 
-  assert.match(report, /\+0\.23%\) ≈ \+\d[\d,]*원/);
-  assert.match(report, /• IWM: .*\(-4\.79%\) ≈ -\d[\d,]*원/);
+  // SCHD는 달러로 +0.91%지만 원화로는 손실이다. 달러 손익 × 환율이었다면 +가 나왔다.
+  assert.match(report, /• SCHD: .*\(\+0\.91%\) · 원화 -680원 \(-3\.60%\)/);
+  assert.match(report, /• VTI: .* · 원화 \+134원/);
+  assert.match(report, /• IWM: .* · 원화: 매입가 미등록/);
+  // 합계는 등록한 종목만 더하고 몇 종목인지 적는다.
+  assert.match(report, /· 원화 -546원 \(-1\.28%, 2\/3종목\)/);
+});
+
+test("앱 기준환율을 못 읽으면 원화를 틀리게 적지 않고 못 읽었다고 적는다", () => {
+  const account = {
+    positions: { VTI: 0.047685, SCHD: 0.402434, IWM: 0.006665 },
+    holdings: normalizeHoldings(tossHoldings(), ["VTI", "SCHD", "IWM"]),
+    at: "2026-09-18T20:10:00Z",
+  };
+  const krwBasis = { base: { error: "ECOS 응답 오류" }, cost: { positions: {} } };
+
+  const report = formatDailyReport(pnlState(), "2026-09-17", { account, krwBasis, live: { orders: [] } });
+
+  assert.match(report, /원화: ⚠️ 앱 기준환율을 못 읽어 생략합니다 — ECOS 응답 오류/);
+  assert.doesNotMatch(report, /원화 [+-]\d/);
 });
 
 test("실계좌 손익은 관리 종목만 적는다 — 나머지는 사장님 자산이다", () => {
